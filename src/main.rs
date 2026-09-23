@@ -5,7 +5,9 @@ use app::settings;
 
 mod app;
 mod backup;
+mod constants;
 mod core;
+mod debug;
 
 pub use app::error::Error;
 

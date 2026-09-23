@@ -5,7 +5,6 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::{env, process};
 
-use ashpd::url::Url;
 use cosmic::app::{message, Core, Task};
 use cosmic::iced::alignment::{Horizontal, Vertical};
 use cosmic::iced::{event, keyboard::Event as KeyEvent, window, Event, Subscription};
@@ -20,7 +19,9 @@ use views::content::{self, Content};
 use crate::app::config::{AppTheme, Repository, CONFIG_VERSION};
 use crate::app::key_bind::key_binds;
 use crate::backup;
-use crate::fl;
+use crate::backup::location::url_to_path;
+use crate::debug::{CONFIG, ENGINE, UI};
+use crate::{debug_log, error_log, fl, Error};
 
 use self::icon_cache::IconCache;
 
@@ -29,6 +30,7 @@ pub mod error;
 pub mod icon_cache;
 mod key_bind;
 pub mod menu;
+pub mod migrate;
 pub mod settings;
 pub mod views;
 
@@ -43,6 +45,9 @@ pub struct App {
     context_page: ContextPage,
     dialog_pages: VecDeque<DialogPage>,
     dialog_text_input: widget::Id,
+    /// Localized once: `text_input::label` borrows its text for the life of
+    /// the view, so it cannot take a temporary.
+    password_label: String,
     key_binds: HashMap<KeyBind, Action>,
     modifiers: Modifiers,
 }
@@ -56,16 +61,19 @@ pub enum Message {
     ToggleContextPage(ContextPage),
     LaunchUrl(String),
     AppTheme(usize),
-    SystemThemeModeChange(cosmic_theme::ThemeMode),
+    SystemThemeModeChange,
+    /// Settings changed on disk, for example from another window.
+    ConfigChanged(config::StellarshotConfig),
     Key(Modifiers, Key),
     Modifiers(Modifiers),
     WindowClose,
     WindowNew,
     Repository(RepositoryAction),
-    CreateSnapshot(Vec<Url>),
+    CreateSnapshot(Vec<PathBuf>),
     RequestFileForRepository,
-    OpenCreateRepositoryDialog(String),
-    OpenCreateSnapshotDialog(Vec<Url>),
+    OpenCreateRepositoryDialog(PathBuf),
+    OpenCreateSnapshotDialog(Vec<PathBuf>),
+    ShowError(String),
     DeleteRepositoryDialog,
     RequestFilesForSnapshot,
     OpenPasswordDialog(Repository),
@@ -74,9 +82,8 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum RepositoryAction {
-    Init(String, String),
+    Init(PathBuf, String),
     Created(Repository),
-    Error(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,9 +104,35 @@ impl ContextPage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DialogPage {
     Password(Repository, String),
-    CreateRepository(String, String),
-    CreateSnapshot(Vec<Url>),
+    CreateRepository(PathBuf, String),
+    CreateSnapshot(Vec<PathBuf>),
     DeleteRepository,
+    /// A localized explanation of something that failed.
+    Error(String),
+}
+
+/// Turn an error into a message a user can act on. Known cases get a
+/// localized explanation; anything else keeps the technical detail, since it
+/// comes from the backup engine and cannot be translated.
+fn describe_error(context: String, error: &Error) -> String {
+    match error {
+        Error::LocationNotEmpty(path) => {
+            fl!("location-not-empty", path = path.display().to_string())
+        }
+        other => format!(
+            "{context}\n\n{}",
+            fl!("error-details", details = other.to_string())
+        ),
+    }
+}
+
+/// The paths a file-chooser portal response refers to. Anything that is not a
+/// local file is dropped.
+fn portal_paths(
+    result: ashpd::Result<ashpd::desktop::file_chooser::SelectedFiles>,
+) -> Result<Vec<PathBuf>, String> {
+    let files = result.map_err(|err| err.to_string())?;
+    Ok(files.uris().iter().filter_map(url_to_path).collect())
 }
 
 #[derive(Clone, Debug)]
@@ -139,7 +172,7 @@ impl App {
         cosmic::app::command::set_theme(self.config.app_theme.theme())
     }
 
-    fn settings(&self) -> Element<Message> {
+    fn settings(&self) -> Element<'_, Message> {
         let app_theme_selected = match self.config.app_theme {
             AppTheme::Dark => 1,
             AppTheme::Light => 2,
@@ -162,7 +195,7 @@ impl App {
         &mut self,
         repository: Repository,
         icon: &'static str,
-    ) -> EntityMut<SingleSelect> {
+    ) -> EntityMut<'_, SingleSelect> {
         self.nav_model
             .insert()
             .icon(IconCache::get(icon, 18))
@@ -178,7 +211,7 @@ impl Application for App {
 
     type Message = Message;
 
-    const APP_ID: &'static str = "com.github.cosmic-utils.Stellarshot";
+    const APP_ID: &'static str = "io.github.stldave314.Stellarshot";
 
     fn core(&self) -> &Core {
         &self.core
@@ -188,7 +221,7 @@ impl Application for App {
         &mut self.core
     }
 
-    fn header_start(&self) -> Vec<Element<Self::Message>> {
+    fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
         vec![menu::menu_bar(&self.key_binds)]
     }
 
@@ -201,17 +234,15 @@ impl Application for App {
         let about = About::default()
             .name(fl!("stellarshot"))
             .icon(Self::APP_ID)
-            .version("0.1.0")
-            .author("Stellarshot Developers")
-            .license("GPL-3.0")
+            .version(env!("CARGO_PKG_VERSION"))
+            .author(fl!("about-author"))
+            .comments(fl!("about-credits"))
+            .license(env!("CARGO_PKG_LICENSE"))
             .links([
-                (
-                    fl!("repository"),
-                    "https://github.com/cosmic-utils/stellarshot/",
-                ),
+                (fl!("repository"), env!("CARGO_PKG_REPOSITORY")),
                 (
                     fl!("support"),
-                    "https://github.com/cosmic-utils/stellarshot/issues",
+                    concat!(env!("CARGO_PKG_REPOSITORY"), "/issues"),
                 ),
             ])
             .developers([
@@ -229,6 +260,7 @@ impl Application for App {
             config: flags.config,
             dialog_pages: VecDeque::new(),
             dialog_text_input: widget::Id::unique(),
+            password_label: fl!("password"),
             key_binds: key_binds(),
             modifiers: Modifiers::empty(),
         };
@@ -241,7 +273,9 @@ impl Application for App {
         (app, Task::none())
     }
 
-    fn context_drawer(&self) -> Option<cosmic::app::context_drawer::ContextDrawer<Self::Message>> {
+    fn context_drawer(
+        &self,
+    ) -> Option<cosmic::app::context_drawer::ContextDrawer<'_, Self::Message>> {
         if !self.core.window.show_context {
             return None;
         }
@@ -263,11 +297,8 @@ impl Application for App {
         })
     }
 
-    fn dialog(&self) -> Option<Element<Message>> {
-        let dialog_page = match self.dialog_pages.front() {
-            Some(some) => some,
-            None => return None,
-        };
+    fn dialog(&self) -> Option<Element<'_, Message>> {
+        let dialog_page = self.dialog_pages.front()?;
 
         let spacing = cosmic::theme::active().cosmic().spacing;
 
@@ -283,11 +314,14 @@ impl Application for App {
                 )
                 .control(
                     widget::column::with_children(vec![
-                        widget::text::body(format!("{}: {}", fl!("repo-location"), directory))
-                            .into(),
+                        widget::text::body(fl!(
+                            "repo-location-value",
+                            path = directory.display().to_string()
+                        ))
+                        .into(),
                         widget::text_input("", password)
                             .password()
-                            .label("Password")
+                            .label(self.password_label.as_str())
                             .id(self.dialog_text_input.clone())
                             .on_input(move |password| {
                                 Message::DialogUpdate(DialogPage::CreateRepository(
@@ -307,7 +341,7 @@ impl Application for App {
                     widget::column::with_children(
                         files
                             .iter()
-                            .map(|file| widget::text::body(file.path()).into())
+                            .map(|file| widget::text::body(file.display().to_string()).into())
                             .collect(),
                     )
                     .spacing(spacing.space_xxs),
@@ -320,7 +354,7 @@ impl Application for App {
                     widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
                 ),
             DialogPage::Password(repository, password) => widget::dialog()
-                .title(format!("{} for {}", fl!("password"), repository.name))
+                .title(fl!("password-for", name = repository.name.clone()))
                 .primary_action(
                     widget::button::suggested(fl!("ok"))
                         .on_press_maybe(Some(Message::DialogComplete)),
@@ -331,7 +365,7 @@ impl Application for App {
                 .control(
                     widget::text_input("", password)
                         .password()
-                        .label("Password")
+                        .label(self.password_label.as_str())
                         .id(self.dialog_text_input.clone())
                         .on_input(move |password| {
                             Message::DialogUpdate(DialogPage::Password(
@@ -351,6 +385,12 @@ impl Application for App {
                 .secondary_action(
                     widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
                 ),
+            DialogPage::Error(message) => widget::dialog()
+                .title(fl!("error-title"))
+                .body(message.as_str())
+                .primary_action(
+                    widget::button::suggested(fl!("ok")).on_press(Message::DialogCancel),
+                ),
         };
 
         Some(dialog.into())
@@ -361,7 +401,7 @@ impl Application for App {
         self.nav_model.activate(entity);
 
         if let Some(repository) = self.nav_model.data::<Repository>(entity) {
-            println!("Selected: {:?}", repository);
+            debug_log!(UI, "selected repository {}", repository.path.display());
             let name = repository.name.clone();
             commands.push(self.update(Message::OpenPasswordDialog(repository.clone())));
             let window_title = format!("{} - {}", name, fl!("stellarshot"));
@@ -373,7 +413,7 @@ impl Application for App {
         Task::batch(commands)
     }
 
-    fn view(&self) -> Element<Self::Message> {
+    fn view(&self) -> Element<'_, Self::Message> {
         widget::container(self.content.view().map(Message::Content))
             .apply(widget::container)
             .width(Length::Fill)
@@ -398,20 +438,21 @@ impl Application for App {
                 }
                 _ => None,
             }),
-            cosmic_config::config_subscription(
+            cosmic_config::config_subscription::<_, config::StellarshotConfig>(
                 TypeId::of::<ConfigSubscription>(),
                 Self::APP_ID.into(),
                 CONFIG_VERSION,
             )
             .map(|update| {
                 if !update.errors.is_empty() {
-                    log::info!(
+                    debug_log!(
+                        CONFIG,
                         "errors loading config {:?}: {:?}",
                         update.keys,
                         update.errors
                     );
                 }
-                Message::SystemThemeModeChange(update.config)
+                Message::ConfigChanged(update.config)
             }),
             cosmic_config::config_subscription::<_, cosmic_theme::ThemeMode>(
                 TypeId::of::<ThemeSubscription>(),
@@ -420,13 +461,14 @@ impl Application for App {
             )
             .map(|update| {
                 if !update.errors.is_empty() {
-                    log::info!(
+                    debug_log!(
+                        CONFIG,
                         "errors loading theme mode {:?}: {:?}",
                         update.keys,
                         update.errors
                     );
                 }
-                Message::SystemThemeModeChange(update.config)
+                Message::SystemThemeModeChange
             }),
         ];
 
@@ -441,7 +483,8 @@ impl Application for App {
                         match paste::paste! { self.config.[<set_ $name>](config_handler, $value) } {
                             Ok(_) => {}
                             Err(err) => {
-                                log::warn!(
+                                error_log!(
+                                    CONFIG,
                                     "failed to save config {:?}: {}",
                                     stringify!($name),
                                     err
@@ -451,7 +494,8 @@ impl Application for App {
                     }
                     None => {
                         self.config.$name = $value;
-                        log::warn!(
+                        error_log!(
+                            CONFIG,
                             "failed to save config {:?}: no config handler",
                             stringify!($name)
                         );
@@ -462,34 +506,38 @@ impl Application for App {
 
         match message {
             Message::Content(message) => {
-                let commands = self.content.update(message);
-                for command in commands {
-                    match command {
-                        content::Task::FetchSnapshots(repository, password) => {
-                            return Task::perform(
+                // Every task the content view asks for runs; returning from
+                // inside the loop used to drop all but the first.
+                let tasks =
+                    self.content
+                        .update(message)
+                        .into_iter()
+                        .map(|task| match task {
+                            content::Task::FetchSnapshots(repository, password) => Task::perform(
                                 async move { Content::snapshots(&repository, &password) },
                                 |result| {
-                                    cosmic::app::Message::App(Message::Content(
-                                        content::Message::SetSnapshots(result),
-                                    ))
+                                    message::app(Message::Content(content::Message::SetSnapshots(
+                                        result,
+                                    )))
                                 },
-                            )
-                        }
-                        content::Task::DeleteSnapshots(repository, password, snapshots) => {
-                            return Task::perform(
-                                async move {
-                                    backup::snapshot::delete(&repository, &password, snapshots)
-                                },
-                                |result| match result {
-                                    Ok(_) => cosmic::app::Message::App(Message::Content(
-                                        content::Message::ReloadSnapshots,
-                                    )),
-                                    Err(_) => cosmic::app::Message::None,
-                                },
-                            )
-                        }
-                    }
-                }
+                            ),
+                            content::Task::DeleteSnapshots(repository, password, snapshots) => {
+                                Task::perform(
+                                    async move {
+                                        backup::snapshot::delete(&repository, &password, snapshots)
+                                    },
+                                    |result| match result {
+                                        Ok(()) => message::app(Message::Content(
+                                            content::Message::ReloadSnapshots,
+                                        )),
+                                        Err(err) => message::app(Message::ShowError(
+                                            describe_error(fl!("delete-snapshot-failed"), &err),
+                                        )),
+                                    },
+                                )
+                            }
+                        });
+                return Task::batch(tasks);
             }
             Message::ToggleContextPage(context_page) => {
                 //TODO: ensure context menus are closed
@@ -501,65 +549,62 @@ impl Application for App {
                 }
             }
             Message::RequestFileForRepository => {
+                let title = fl!("select-repo-folder");
                 return Task::perform(
-                    async {
-                        ashpd::desktop::file_chooser::SelectedFiles::open_file()
-                            .title("Select a directory for the repository")
+                    async move {
+                        match ashpd::desktop::file_chooser::SelectedFiles::open_file()
+                            .title(title.as_str())
                             .directory(true)
                             .multiple(false)
                             .send()
                             .await
+                        {
+                            Ok(request) => portal_paths(request.response()),
+                            Err(err) => Err(err.to_string()),
+                        }
                     },
                     |result| match result {
-                        Ok(result) => {
-                            let Ok(files) = result.response() else {
-                                log::error!("response error");
-                                return cosmic::app::Message::None;
-                            };
-
-                            let Some(file) = files.uris().get(0) else {
-                                log::error!("no file selected");
-                                return cosmic::app::Message::None;
-                            };
-
-                            cosmic::app::Message::App(Message::OpenCreateRepositoryDialog(
-                                file.path().to_string(),
-                            ))
-                        }
+                        Ok(paths) => match paths.into_iter().next() {
+                            Some(path) => message::app(Message::OpenCreateRepositoryDialog(path)),
+                            // Cancelled, or a non-local location was picked.
+                            None => cosmic::app::Message::None,
+                        },
                         Err(err) => {
-                            log::error!("failed to open file chooser: {}", err);
+                            debug_log!(UI, "file chooser for repository: {err}");
                             cosmic::app::Message::None
                         }
                     },
-                )
+                );
             }
             Message::RequestFilesForSnapshot => {
+                let title = fl!("select-snapshot-files");
                 return Task::perform(
-                    async {
-                        ashpd::desktop::file_chooser::SelectedFiles::open_file()
-                            .title("Select files to store in the repository")
+                    async move {
+                        match ashpd::desktop::file_chooser::SelectedFiles::open_file()
+                            .title(title.as_str())
                             .directory(false)
                             .multiple(true)
                             .send()
                             .await
+                        {
+                            Ok(request) => portal_paths(request.response()),
+                            Err(err) => Err(err.to_string()),
+                        }
                     },
                     |result| match result {
-                        Ok(result) => {
-                            let Ok(files) = result.response() else {
-                                log::error!("response error");
-                                return cosmic::app::Message::None;
-                            };
-
-                            cosmic::app::Message::App(Message::OpenCreateSnapshotDialog(
-                                files.uris().to_vec(),
-                            ))
+                        Ok(paths) if !paths.is_empty() => {
+                            message::app(Message::OpenCreateSnapshotDialog(paths))
                         }
+                        Ok(_) => cosmic::app::Message::None,
                         Err(err) => {
-                            log::error!("failed to open file chooser: {}", err);
+                            debug_log!(UI, "file chooser for snapshot: {err}");
                             cosmic::app::Message::None
                         }
                     },
-                )
+                );
+            }
+            Message::ShowError(message) => {
+                self.dialog_pages.push_back(DialogPage::Error(message));
             }
             Message::OpenCreateRepositoryDialog(path) => {
                 self.dialog_pages
@@ -583,60 +628,67 @@ impl Application for App {
             }
             Message::Repository(state) => match state {
                 RepositoryAction::Init(path, password) => {
-                    let init_path = path.clone();
-                    let name = PathBuf::from(&path)
+                    let name = path
                         .file_name()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .to_string();
                     let repository = Repository {
                         name,
-                        path: PathBuf::from(&path),
+                        path: path.clone(),
                     };
-                    self.create_nav_item(repository.clone(), "timer-sand-symbolic");
+                    // The sidebar entry is only added once the repository
+                    // exists, so a refused or failed creation leaves nothing
+                    // behind.
                     return Task::perform(
-                        async move { crate::backup::init(&init_path, &password) },
+                        async move { crate::backup::init(&path, &password) },
                         move |result| match result {
-                            Ok(_) => message::app(Message::Repository(RepositoryAction::Created(
+                            Ok(()) => message::app(Message::Repository(RepositoryAction::Created(
                                 repository.clone(),
                             ))),
-                            Err(e) => message::app(Message::Repository(RepositoryAction::Error(
-                                e.to_string(),
+                            Err(err) => message::app(Message::ShowError(describe_error(
+                                fl!("create-repo-failed"),
+                                &err,
                             ))),
                         },
                     );
                 }
                 RepositoryAction::Created(repository) => {
-                    if self.nav_model.active_data::<Repository>().is_some() {
-                        let entity = self.nav_model.active();
-                        self.nav_model
-                            .icon_set(entity, IconCache::get("harddisk-symbolic", 18));
-                    }
+                    debug_log!(CONFIG, "adding repository {}", repository.path.display());
+                    self.create_nav_item(repository.clone(), "harddisk-symbolic");
                     let mut repositories = self.config.repositories.clone();
-                    repositories.push(repository);
+                    if !repositories.iter().any(|r| r.path == repository.path) {
+                        repositories.push(repository);
+                    }
                     config_set!(repositories, repositories);
                 }
-                RepositoryAction::Error(error) => log::error!("{}", error),
             },
             Message::DeleteRepositoryDialog => {
-                self.dialog_pages.push_back(DialogPage::DeleteRepository);
+                // Delete acts on the repository selected in the sidebar, which
+                // need not have been unlocked with its password first.
+                if self.nav_model.active_data::<Repository>().is_some() {
+                    self.dialog_pages.push_back(DialogPage::DeleteRepository);
+                }
             }
             Message::CreateSnapshot(files) => {
                 if let Some(repository) = &self.content.repository {
                     let Some(path) = repository.path.to_str() else {
-                        return Task::none();
+                        return self.update(Message::ShowError(fl!(
+                            "error-details",
+                            details = Error::NonUtf8Path(repository.path.clone()).to_string()
+                        )));
                     };
-                    match crate::backup::snapshot(
-                        path,
-                        &self.content.password,
-                        files.iter().map(|f| f.path()).collect(),
-                    ) {
-                        Ok(_) => {
+                    let sources: Vec<&str> = files.iter().filter_map(|f| f.to_str()).collect();
+                    match crate::backup::snapshot(path, &self.content.password, sources) {
+                        Ok(()) => {
                             return self.update(Message::Content(content::Message::ReloadSnapshots))
                         }
-                        Err(e) => {
-                            // TODO: Show error to user.
-                            log::error!("failed to create snapshot: {}", e)
+                        Err(err) => {
+                            error_log!(ENGINE, "failed to create snapshot: {err}");
+                            return self.update(Message::ShowError(describe_error(
+                                fl!("snapshot-failed"),
+                                &err,
+                            )));
                         }
                     }
                 }
@@ -661,26 +713,52 @@ impl Application for App {
                             )));
                         }
                         DialogPage::DeleteRepository => {
-                            if let Some(repository) = self.content.repository.clone() {
-                                if let Ok(_) = std::fs::remove_dir_all(&repository.path) {
-                                    let repositories = self.config.repositories.clone();
-                                    let repositories = repositories
-                                        .into_iter()
+                            let entity = self.nav_model.active();
+                            let Some(repository) =
+                                self.nav_model.data::<Repository>(entity).cloned()
+                            else {
+                                return Task::none();
+                            };
+                            // Only the repository's own entries are removed;
+                            // anything else in the folder is left alone.
+                            match backup::location::delete_repository(&repository.path) {
+                                Ok(remaining) => {
+                                    debug_log!(
+                                        ENGINE,
+                                        "deleted repository {}; left {} other entries",
+                                        repository.path.display(),
+                                        remaining.len()
+                                    );
+                                    let repositories = self
+                                        .config
+                                        .repositories
+                                        .iter()
                                         .filter(|r| r.path != repository.path)
+                                        .cloned()
                                         .collect();
                                     config_set!(repositories, repositories);
-                                    let entity = self.nav_model.active();
                                     self.nav_model.remove(entity);
-                                    self.content.repository = None;
+                                    if self.content.repository.as_ref() == Some(&repository) {
+                                        self.content.repository = None;
+                                    }
+                                }
+                                Err(err) => {
+                                    error_log!(ENGINE, "failed to delete repository: {err}");
+                                    return self.update(Message::ShowError(describe_error(
+                                        fl!("delete-repo-failed"),
+                                        &Error::Io(err),
+                                    )));
                                 }
                             }
                         }
+                        DialogPage::Error(_) => {}
                     }
                 }
             }
             Message::DialogUpdate(dialog_page) => {
-                //TODO: panicless way to do this?
-                self.dialog_pages[0] = dialog_page;
+                if let Some(front) = self.dialog_pages.front_mut() {
+                    *front = dialog_page;
+                }
             }
             Message::WindowClose => {
                 if let Some(win_id) = self.core.main_window_id() {
@@ -691,17 +769,17 @@ impl Application for App {
                 Ok(exe) => match process::Command::new(&exe).spawn() {
                     Ok(_child) => {}
                     Err(err) => {
-                        eprintln!("failed to execute {:?}: {}", exe, err);
+                        error_log!(UI, "failed to execute {:?}: {}", exe, err);
                     }
                 },
                 Err(err) => {
-                    eprintln!("failed to get current executable path: {}", err);
+                    error_log!(UI, "failed to get current executable path: {}", err);
                 }
             },
             Message::LaunchUrl(url) => match open::that_detached(&url) {
                 Ok(()) => {}
                 Err(err) => {
-                    log::warn!("failed to open {:?}: {}", url, err);
+                    error_log!(UI, "failed to open {:?}: {}", url, err);
                 }
             },
             Message::Key(modifiers, key) => {
@@ -723,7 +801,13 @@ impl Application for App {
                 config_set!(app_theme, app_theme);
                 return self.update_config();
             }
-            Message::SystemThemeModeChange(_) => {
+            Message::ConfigChanged(config) => {
+                if config != self.config {
+                    self.config = config;
+                    return self.update_config();
+                }
+            }
+            Message::SystemThemeModeChange => {
                 return self.update_config();
             }
             Message::CloseContextDrawer => {

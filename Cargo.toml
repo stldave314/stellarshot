@@ -2,14 +2,26 @@
 name = "stellarshot"
 version = "0.1.0"
 edition = "2021"
-license = "GPL-3.0"
+rust-version = "1.93"
+license = "GPL-3.0-only"
+description = "A backup application for the COSMIC desktop, built on rustic"
+repository = "https://github.com/stldave314/stellarshot"
+homepage = "https://github.com/stldave314/stellarshot"
+readme = "README.md"
+keywords = ["cosmic", "backup", "restic", "rustic", "snapshot"]
+categories = ["gui", "filesystem"]
+
+[features]
+default = []
+# Forces developer debug logging off at compile time. Every packaging target
+# passes this so a release can never ship with logging enabled.
+release-build = []
 
 [dependencies]
 i18n-embed-fl = "0.8"
 once_cell = "1.19.0"
 rust-embed = "8.3.0"
 log = "0.4"
-env_logger = "0.11"
 open = "5.0.2"
 serde = { version = "1.0.202", features = ["serde_derive"] }
 tracing = "0.1.40"
@@ -17,7 +29,6 @@ paste = "1.0"
 rustic_core = "0.2.0"
 rustic_backend = "0.1.1"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-slotmap = "1.0.7"
 ashpd = "0.9.1"
 thiserror = "2.0.3"
 anyhow = "1.0.93"
@@ -30,3 +41,49 @@ features = ["multi-window", "tokio", "winit", "wgpu", "about"]
 [dependencies.i18n-embed]
 version = "0.14"
 features = ["fluent-system", "desktop-requester"]
+
+[dev-dependencies]
+tempfile = "3"
+
+# Packaging. `install.sh` drives both of these; the `release-build` feature has
+# to be passed to `cargo deb` explicitly because it runs its own build.
+[package.metadata.deb]
+# Deliberately the GitHub no-reply address, not a personal one.
+maintainer = "stldave314 <stldave314@users.noreply.github.com>"
+copyright = "2024-2026, the Stellarshot contributors"
+license-file = ["LICENSE", "0"]
+extended-description = """
+A backup application for the COSMIC desktop. Stellarshot keeps encrypted,
+deduplicated snapshots of your folders in a restic-compatible repository, so
+your backups stay readable with the restic and rustic command-line tools."""
+section = "utils"
+priority = "optional"
+depends = "$auto"
+recommends = "rclone"
+assets = [
+    ["target/release/stellarshot", "usr/bin/", "755"],
+    ["res/io.github.stldave314.Stellarshot.desktop", "usr/share/applications/", "644"],
+    ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["res/io.github.stldave314.Stellarshot.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["README.md", "usr/share/doc/stellarshot/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+summary = "A backup application for the COSMIC desktop, built on rustic"
+license = "GPL-3.0-only"
+recommends = { rclone = "*" }
+assets = [
+    { source = "target/release/stellarshot", dest = "/usr/bin/stellarshot", mode = "755" },
+    { source = "res/io.github.stldave314.Stellarshot.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.desktop", mode = "644" },
+    { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", mode = "644" },
+    { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", mode = "644" },
+    { source = "res/io.github.stldave314.Stellarshot.metainfo.xml", dest = "/usr/share/metainfo/io.github.stldave314.Stellarshot.metainfo.xml", mode = "644" },
+    { source = "LICENSE", dest = "/usr/share/licenses/stellarshot/LICENSE", mode = "644" },
+]
+
+[profile.release]
+lto = "thin"
+opt-level = 2
+strip = true
+codegen-units = 4

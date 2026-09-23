@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.stldave314.Stellarshot</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Stellarshot</name>
+  <summary>Back up your files with encrypted snapshots</summary>
+  <developer id="io.github.stldave314">
+    <name>stldave314</name>
+  </developer>
+  <description>
+    <p>
+      Stellarshot is a backup application for the COSMIC desktop. It keeps
+      encrypted, deduplicated snapshots of your folders in a restic-compatible
+      repository, so your backups remain readable with the restic and rustic
+      command-line tools even without this app.
+    </p>
+    <p>
+      Stellarshot is a fork of the cosmic-utils Stellarshot project and is under
+      active development.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/stldave314/stellarshot</url>
+  <url type="bugtracker">https://github.com/stldave314/stellarshot/issues</url>
+  <url type="vcs-browser">https://github.com/stldave314/stellarshot</url>
+  <launchable type="desktop-id">io.github.stldave314.Stellarshot.desktop</launchable>
+  <content_rating type="oars-1.1" />
+  <branding>
+    <color type="primary" scheme_preference="light">#9ac6d8</color>
+    <color type="primary" scheme_preference="dark">#1f3a46</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <caption>A repository and its snapshots, dark theme</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/main-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A repository and its snapshots, light theme</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/main-light.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0" date="2026-09-23">
+      <description>
+        <p>First release of the fork: new application ID, safe repository deletion, and packaged builds.</p>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>Utility</category>
+    <category>Archiving</category>
+  </categories>
+  <keywords>
+    <keyword>backup</keyword>
+    <keyword>restore</keyword>
+    <keyword>snapshot</keyword>
+    <keyword>restic</keyword>
+  </keywords>
+  <provides>
+    <binary>stellarshot</binary>
+  </provides>
+</component>

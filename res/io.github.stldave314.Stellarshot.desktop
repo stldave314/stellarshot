@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Stellarshot
+Comment=Back up your files with encrypted, deduplicated snapshots
+Exec=stellarshot
+Terminal=false
+Type=Application
+StartupNotify=true
+Icon=io.github.stldave314.Stellarshot
+Categories=Utility;Archiving;
+Keywords=Backup;Backups;Snapshot;Restore;restic;rustic;

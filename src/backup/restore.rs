@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use crate::Error;
 use rustic_backend::BackendOptions;
 use rustic_core::{LocalDestination, LsOptions, Repository, RepositoryOptions, RestoreOptions};

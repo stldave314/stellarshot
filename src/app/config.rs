@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use std::path::PathBuf;
 
 use crate::app::App;
@@ -24,7 +26,7 @@ impl StellarshotConfig {
         match Self::config_handler() {
             Some(config_handler) => {
                 StellarshotConfig::get_entry(&config_handler).unwrap_or_else(|(errs, config)| {
-                    log::info!("errors loading config: {:?}", errs);
+                    crate::debug_log!(crate::debug::CONFIG, "errors loading config: {:?}", errs);
                     config
                 })
             }

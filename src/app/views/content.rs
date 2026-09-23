@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
 use cosmic::{
     iced::{
         alignment::{Horizontal, Vertical},
@@ -46,13 +48,13 @@ impl Content {
         match fetch(repository, password) {
             Ok(snapshots) => snapshots,
             Err(err) => {
-                log::error!("error getting snapshots: {:?}", err);
+                crate::error_log!(crate::debug::ENGINE, "error getting snapshots: {err}");
                 Vec::new()
             }
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
         let Some(ref repository) = self.repository else {
             return widget::container(
@@ -92,13 +94,23 @@ impl Content {
             }
             Message::SetSnapshots(snapshots) => self.snapshots = Some(snapshots),
             Message::Delete(id, password) => {
-                let path = self.repository.as_ref().unwrap().path.display().to_string();
-                commands.push(Task::DeleteSnapshots(path, password, vec![id]))
+                if let Some(repository) = &self.repository {
+                    let path = repository.path.display().to_string();
+                    commands.push(Task::DeleteSnapshots(path, password, vec![id]))
+                }
             }
-            Message::Select(_) => todo!(),
+            // Snapshot details arrive with the restore browser; selecting a
+            // snapshot must not crash the app until then.
+            Message::Select(id) => {
+                crate::debug_log!(crate::debug::UI, "selected snapshot {id}");
+            }
             Message::ReloadSnapshots => {
-                let path = self.repository.as_ref().unwrap().path.display().to_string();
-                commands.push(Task::FetchSnapshots(path, "password".into()))
+                if let Some(repository) = &self.repository {
+                    let path = repository.path.display().to_string();
+                    // The password the repository was unlocked with, not a
+                    // placeholder: reloading after a delete used to fail.
+                    commands.push(Task::FetchSnapshots(path, self.password.clone()))
+                }
             }
         }
         commands
@@ -189,7 +201,7 @@ impl Content {
             .into()
     }
 
-    pub fn loading(&self) -> Element<Message> {
+    pub fn loading(&self) -> Element<'_, Message> {
         widget::container(
             widget::column::with_children(vec![
                 IconCache::get("hourglass-symbolic", 56).into(),

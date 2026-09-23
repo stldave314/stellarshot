@@ -1,25 +1,49 @@
 stellarshot = Stellarshot
-app-title = stellarshot
-welcome = Erstelle häufig Momentaufnahmen! ✨
+
+# Content
+no-repository-selected = Kein Archiv ausgewählt.
+no-repository-suggestion = Verwende das Menü, um ein Archiv zu erstellen.
+no-snapshots = Keine Momentaufnahmen gefunden.
+no-snapshots-suggestion = Verwende das Menü, um eine Momentaufnahme zu erstellen.
+loading = Wird geladen …
+loading-snapshots = Momentaufnahmen werden geladen.
 
 # Dialogs
 save = Speichern
+ok = OK
 create = Erstellen
+delete = Löschen
 cancel = Abbrechen
-confirm = Bestätigen
 create-repo = Neues Archiv erstellen
 delete-repo = Archiv löschen
-selected-repo = Ausgewähltes Archiv
-repo-location = Speicherort des Archivs
+repo-location-value = Speicherort des Archivs: { $path }
+snapshots = Momentaufnahmen
 create-snapshot = Neue Momentaufnahme erstellen
-delete-snapshot = Momentaufnahme löschen
+delete-repository = Archiv löschen
+delete-repository-description = Dadurch werden das Archiv und alle darin enthaltenen Momentaufnahmen entfernt. Andere Dateien im selben Ordner bleiben unberührt.
 snapshot-description = Eine Momentaufnahme ist eine Kopie deines Archivs zu einem bestimmten Zeitpunkt
+password = Passwort
+password-for = Passwort für { $name }
+select-repo-folder = Wähle einen Ordner für das Archiv
+select-snapshot-files = Wähle die zu sichernden Dateien
+
+# Errors
+error-title = Etwas ist schiefgelaufen
+error-details = Details: { $details }
+location-not-empty = { $path } enthält bereits andere Dateien. Wähle einen leeren Ordner oder einen Ordner, der bereits ein Archiv enthält.
+create-repo-failed = Das Archiv konnte nicht erstellt werden.
+delete-repo-failed = Das Archiv konnte nicht gelöscht werden.
+delete-snapshot-failed = Die Momentaufnahme konnte nicht gelöscht werden.
+snapshot-failed = Die Momentaufnahme konnte nicht erstellt werden.
 
 # Context Pages
 
 ## About
 about = Über
-git-description = Git Commit {$hash}  am {$date}
+about-author = Die Stellarshot-Mitwirkenden
+about-credits = Basiert auf Stellarshot vom Projekt cosmic-utils.
+repository = Quellcode
+support = Hilfe
 
 ## Settings
 settings = Einstellungen
@@ -42,7 +66,6 @@ quit = Verlassen
 
 ## Edit
 edit = Bearbeiten
-cut = Schneiden
 
 ## View
 view = Ansicht

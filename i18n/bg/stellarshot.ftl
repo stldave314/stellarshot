@@ -1,6 +1,4 @@
 stellarshot = Stellarshot
-app-title = stellarshot
-welcome = Прави резервни копия често! ✨
 
 # Content
 no-repository-selected = Няма избрано хранилище.
@@ -16,23 +14,34 @@ ok = Добре
 create = Създаване
 delete = Изтриване
 cancel = Отказване
-confirm = Потвърждаване
 create-repo = Създаване на ново хранилище
 delete-repo = Изтриване на хранилището
-repo-location = Местоположение на хранилището
-selected-repo = Избрано хранилище
+repo-location-value = Местоположение на хранилището: { $path }
 snapshots = Моментни състояния
 create-snapshot = Създаване на моментно състояние
 delete-repository = Изтриване на хранилището
-delete-repository-description = Изтриването на хранилището ще премахне всички моментни състояния и файлове.
-delete-snapshot = Изтриване на моментното състояние
+delete-repository-description = Това премахва хранилището и всички моментни състояния в него. Другите файлове в същата папка не се засягат.
 snapshot-description = Моментното състояние е копие на вашето хранилище в определен момент.
 password = Парола
+password-for = Парола за { $name }
+select-repo-folder = Изберете папка за хранилището
+select-snapshot-files = Изберете файлове за резервно копие
+
+# Errors
+error-title = Нещо се обърка
+error-details = Подробности: { $details }
+location-not-empty = { $path } вече съдържа други файлове. Изберете празна папка или папка, която вече съдържа хранилище.
+create-repo-failed = Хранилището не можа да бъде създадено.
+delete-repo-failed = Хранилището не можа да бъде изтрито.
+delete-snapshot-failed = Моментното състояние не можа да бъде изтрито.
+snapshot-failed = Моментното състояние не можа да бъде създадено.
 
 # Context Pages
 
 ## About
 about = Относно
+about-author = Сътрудниците на Stellarshot
+about-credits = Базирано на Stellarshot от проекта cosmic-utils.
 repository = Хранилище
 support = Поддръжка
 
@@ -57,7 +66,6 @@ quit = Спиране на програмата
 
 ## Edit
 edit = Редактиране
-cut = Отрязване
 
 ## View
 view = Изглед

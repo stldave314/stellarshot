@@ -1,6 +1,4 @@
 stellarshot = Stellarshot
-app-title = stellarshot
-welcome = Säkerhetskopiera ofta! ✨
 
 # Innehåll
 no-repository-selected = Ingen lagringsplats vald.
@@ -16,27 +14,39 @@ ok = Ok
 create = Skapa
 delete = Ta bort
 cancel = Avbryt
-confirm = Bekräfta
 create-repo = Skapa en ny lagringsplats
 delete-repo = Ta bort lagringsplats
-repo-location = Lagringsplats
-selected-repo = Vald lagringsplats
+repo-location-value = Lagringsplats: { $path }
 snapshots = Ögonblicksbilder
 create-snapshot = Skapa en ny ögonblicksbild
 delete-repository = Ta bort lagringsplats
-delete-repository-description = Att ta bort en lagringsplats kommer att ta bort alla ögonblicksbilder och filer.
-delete-snapshot = Ta bort ögonblicksbild
+delete-repository-description = Detta tar bort lagringsplatsen och alla ögonblicksbilder i den. Andra filer i samma mapp påverkas inte.
 snapshot-description = En ögonblicksbild är en punkt-i-tid kopia av din lagringsplats.
 password = Lösenord
+password-for = Lösenord för { $name }
+select-repo-folder = Välj en mapp för lagringsplatsen
+select-snapshot-files = Välj filer att säkerhetskopiera
+
+# Fel
+error-title = Något gick fel
+error-details = Detaljer: { $details }
+location-not-empty = { $path } innehåller redan andra filer. Välj en tom mapp, eller en mapp som redan innehåller en lagringsplats.
+create-repo-failed = Lagringsplatsen kunde inte skapas.
+delete-repo-failed = Lagringsplatsen kunde inte tas bort.
+delete-snapshot-failed = Ögonblicksbilden kunde inte tas bort.
+snapshot-failed = Ögonblicksbilden kunde inte skapas.
 
 # Context sidor
 
 ## Om
 about = Om
-git-description = Git commit {$hash}  på {$date}
+about-author = Stellarshots bidragsgivare
+about-credits = Baserat på Stellarshot från projektet cosmic-utils.
+repository = Källkod
+support = Support
 
 ## Inställningar
-settings = ## Inställningar
+settings = Inställningar
 
 ### Utseende
 appearance = Utseende
@@ -56,7 +66,6 @@ quit = Avsluta
 
 ## Editera
 edit = Editera
-cut = Klipp ut
 
 ## Visa
 view = Visa

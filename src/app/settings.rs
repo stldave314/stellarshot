@@ -2,18 +2,18 @@
 
 use std::sync::Mutex;
 
-use super::config::{StellarshotConfig, CONFIG_VERSION};
-use super::icon_cache::{IconCache, ICON_CACHE};
+use super::config::{CONFIG_VERSION, StellarshotConfig};
+use super::icon_cache::{ICON_CACHE, IconCache};
 use super::migrate;
 use crate::app::{App, Flags};
 use crate::constants::{WINDOW_HEIGHT, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_WIDTH};
 use crate::debug::CONFIG;
 use crate::{debug_log, error_log};
+use cosmic::Application;
 use cosmic::app::Settings;
 use cosmic::iced::{Limits, Size};
-use cosmic::Application;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init() -> (Settings, Flags) {
     set_logger();

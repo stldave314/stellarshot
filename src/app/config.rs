@@ -4,8 +4,9 @@ use std::path::PathBuf;
 
 use crate::app::App;
 use cosmic::{
-    cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, Config, CosmicConfigEntry},
-    theme, Application,
+    Application,
+    cosmic_config::{self, Config, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry},
+    theme,
 };
 use serde::{Deserialize, Serialize};
 

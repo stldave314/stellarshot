@@ -18,3 +18,7 @@ pub const WINDOW_MIN_WIDTH: f32 = 400.0;
 
 /// Smallest height the window may be resized to.
 pub const WINDOW_MIN_HEIGHT: f32 = 180.0;
+
+/// Shortest interval between two progress reports from one operation. rustic
+/// reports per blob; anything faster than this only costs redraws.
+pub const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);

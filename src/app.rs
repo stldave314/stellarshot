@@ -5,32 +5,35 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::{env, process};
 
-use cosmic::app::{message, Core, Task};
+use cosmic::app::{Core, Task, message};
 use cosmic::iced::alignment::{Horizontal, Vertical};
-use cosmic::iced::{event, keyboard::Event as KeyEvent, window, Event, Subscription};
+use cosmic::iced::{Event, Subscription, event, keyboard::Event as KeyEvent, window};
 use cosmic::iced_core::keyboard::{Key, Modifiers};
 use cosmic::widget::about::About;
 use cosmic::widget::menu::{action::MenuAction, key_bind::KeyBind};
 use cosmic::widget::segmented_button::{self, EntityMut, SingleSelect};
-use cosmic::{cosmic_config, cosmic_theme, iced::Length, ApplicationExt};
-use cosmic::{widget, Application, Apply, Element};
+use cosmic::{Application, Apply, Element, widget};
+use cosmic::{ApplicationExt, cosmic_config, cosmic_theme, iced::Length};
 use views::content::{self, Content};
 
-use crate::app::config::{AppTheme, Repository, CONFIG_VERSION};
+use crate::app::config::{AppTheme, CONFIG_VERSION, Repository};
 use crate::app::key_bind::key_binds;
-use crate::backup;
-use crate::backup::location::url_to_path;
 use crate::debug::{CONFIG, ENGINE, UI};
-use crate::{debug_log, error_log, fl, Error};
+use crate::engine::{self, EngineError, ErrorKind, Location, Probe, Secret};
+use crate::runner::{Job, Operation};
+use crate::{debug_log, error_log, fl};
 
 use self::icon_cache::IconCache;
 
+pub mod child;
 pub mod config;
-pub mod error;
+pub mod errors;
+pub mod format;
 pub mod icon_cache;
 mod key_bind;
 pub mod menu;
 pub mod migrate;
+pub mod portal;
 pub mod settings;
 pub mod views;
 
@@ -82,7 +85,7 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum RepositoryAction {
-    Init(PathBuf, String),
+    Init(PathBuf, Secret),
     Created(Repository),
 }
 
@@ -111,28 +114,24 @@ pub enum DialogPage {
     Error(String),
 }
 
-/// Turn an error into a message a user can act on. Known cases get a
-/// localized explanation; anything else keeps the technical detail, since it
-/// comes from the backup engine and cannot be translated.
-fn describe_error(context: String, error: &Error) -> String {
-    match error {
-        Error::LocationNotEmpty(path) => {
-            fl!("location-not-empty", path = path.display().to_string())
-        }
-        other => format!(
-            "{context}\n\n{}",
-            fl!("error-details", details = other.to_string())
-        ),
-    }
+/// Run blocking engine work off the UI thread.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, EngineError> + Send + 'static,
+) -> Result<T, EngineError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .unwrap_or_else(|err| Err(EngineError::new(ErrorKind::Internal, err.to_string())))
 }
 
-/// The paths a file-chooser portal response refers to. Anything that is not a
-/// local file is dropped.
-fn portal_paths(
-    result: ashpd::Result<ashpd::desktop::file_chooser::SelectedFiles>,
-) -> Result<Vec<PathBuf>, String> {
-    let files = result.map_err(|err| err.to_string())?;
-    Ok(files.uris().iter().filter_map(url_to_path).collect())
+/// Add the repository at `path`: open it if one is already there, create it
+/// if the folder is empty, refuse anything else.
+fn create_or_open(path: PathBuf, secret: Secret) -> Result<(), EngineError> {
+    let location = Location::local(path);
+    match engine::probe(&location)? {
+        Probe::Repository => engine::open(&location, &secret).map(drop),
+        Probe::Empty => engine::init(&location, &secret).map(drop),
+        Probe::NotEmpty => Err(EngineError::location_not_empty(location.path())),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -178,16 +177,18 @@ impl App {
             AppTheme::Light => 2,
             AppTheme::System => 0,
         };
-        widget::settings::view_column(vec![widget::settings::section()
-            .title(fl!("appearance"))
-            .add(
-                widget::settings::item::builder(fl!("theme")).control(widget::dropdown(
-                    &self.app_themes,
-                    Some(app_theme_selected),
-                    Message::AppTheme,
-                )),
-            )
-            .into()])
+        widget::settings::view_column(vec![
+            widget::settings::section()
+                .title(fl!("appearance"))
+                .add(
+                    widget::settings::item::builder(fl!("theme")).control(widget::dropdown(
+                        &self.app_themes,
+                        Some(app_theme_selected),
+                        Message::AppTheme,
+                    )),
+                )
+                .into(),
+        ])
         .into()
     }
 
@@ -507,36 +508,44 @@ impl Application for App {
         match message {
             Message::Content(message) => {
                 // Every task the content view asks for runs; returning from
-                // inside the loop used to drop all but the first.
-                let tasks =
-                    self.content
-                        .update(message)
-                        .into_iter()
-                        .map(|task| match task {
-                            content::Task::FetchSnapshots(repository, password) => Task::perform(
-                                async move { Content::snapshots(&repository, &password) },
+                // inside a loop used to drop all but the first.
+                let mut tasks = Vec::new();
+                for task in self.content.update(message) {
+                    match task {
+                        content::Task::FetchSnapshots(location, secret) => {
+                            tasks.push(Task::perform(
+                                blocking(move || engine::open(&location, &secret)?.snapshots()),
                                 |result| {
                                     message::app(Message::Content(content::Message::SetSnapshots(
                                         result,
                                     )))
                                 },
-                            ),
-                            content::Task::DeleteSnapshots(repository, password, snapshots) => {
-                                Task::perform(
-                                    async move {
-                                        backup::snapshot::delete(&repository, &password, snapshots)
-                                    },
-                                    |result| match result {
-                                        Ok(()) => message::app(Message::Content(
-                                            content::Message::ReloadSnapshots,
-                                        )),
-                                        Err(err) => message::app(Message::ShowError(
-                                            describe_error(fl!("delete-snapshot-failed"), &err),
-                                        )),
-                                    },
-                                )
-                            }
-                        });
+                            ));
+                        }
+                        content::Task::DeleteSnapshots(location, secret, ids) => {
+                            let job = Job {
+                                repository: location,
+                                password: secret,
+                                request: None,
+                                snapshot: None,
+                                destination: None,
+                                ids,
+                            };
+                            tasks.push(Task::run(
+                                child::run(Operation::DeleteSnapshots, job),
+                                |event| {
+                                    message::app(Message::Content(
+                                        content::Message::SnapshotsDeleted(event),
+                                    ))
+                                },
+                            ));
+                        }
+                        content::Task::ShowError(context, error) => {
+                            self.dialog_pages
+                                .push_back(DialogPage::Error(errors::describe(&context, &error)));
+                        }
+                    }
+                }
                 return Task::batch(tasks);
             }
             Message::ToggleContextPage(context_page) => {
@@ -559,7 +568,7 @@ impl Application for App {
                             .send()
                             .await
                         {
-                            Ok(request) => portal_paths(request.response()),
+                            Ok(request) => portal::selected_paths(request.response()),
                             Err(err) => Err(err.to_string()),
                         }
                     },
@@ -587,7 +596,7 @@ impl Application for App {
                             .send()
                             .await
                         {
-                            Ok(request) => portal_paths(request.response()),
+                            Ok(request) => portal::selected_paths(request.response()),
                             Err(err) => Err(err.to_string()),
                         }
                     },
@@ -641,13 +650,13 @@ impl Application for App {
                     // exists, so a refused or failed creation leaves nothing
                     // behind.
                     return Task::perform(
-                        async move { crate::backup::init(&path, &password) },
+                        blocking(move || create_or_open(path, password)),
                         move |result| match result {
                             Ok(()) => message::app(Message::Repository(RepositoryAction::Created(
                                 repository.clone(),
                             ))),
-                            Err(err) => message::app(Message::ShowError(describe_error(
-                                fl!("create-repo-failed"),
+                            Err(err) => message::app(Message::ShowError(errors::describe(
+                                &fl!("create-repo-failed"),
                                 &err,
                             ))),
                         },
@@ -671,27 +680,27 @@ impl Application for App {
                 }
             }
             Message::CreateSnapshot(files) => {
-                if let Some(repository) = &self.content.repository {
-                    let Some(path) = repository.path.to_str() else {
-                        return self.update(Message::ShowError(fl!(
-                            "error-details",
-                            details = Error::NonUtf8Path(repository.path.clone()).to_string()
-                        )));
-                    };
-                    let sources: Vec<&str> = files.iter().filter_map(|f| f.to_str()).collect();
-                    match crate::backup::snapshot(path, &self.content.password, sources) {
-                        Ok(()) => {
-                            return self.update(Message::Content(content::Message::ReloadSnapshots))
-                        }
-                        Err(err) => {
-                            error_log!(ENGINE, "failed to create snapshot: {err}");
-                            return self.update(Message::ShowError(describe_error(
-                                fl!("snapshot-failed"),
-                                &err,
-                            )));
-                        }
-                    }
+                let Some((location, secret)) = self.content.unlocked() else {
+                    return Task::none();
+                };
+                if self.content.is_backing_up() {
+                    return Task::none();
                 }
+                let job = Job {
+                    repository: location,
+                    password: secret,
+                    request: Some(engine::BackupRequest {
+                        sources: files,
+                        ..engine::BackupRequest::default()
+                    }),
+                    snapshot: None,
+                    destination: None,
+                    ids: Vec::new(),
+                };
+                let _ = self.content.update(content::Message::BackupStarted);
+                return Task::run(child::run(Operation::Backup, job), |event| {
+                    message::app(Message::Content(content::Message::Backup(event)))
+                });
             }
             Message::DialogCancel => {
                 self.dialog_pages.pop_front();
@@ -701,7 +710,8 @@ impl Application for App {
                     match dialog_page {
                         DialogPage::CreateRepository(path, password) => {
                             return self.update(Message::Repository(RepositoryAction::Init(
-                                path, password,
+                                path,
+                                Secret::new(password),
                             )));
                         }
                         DialogPage::CreateSnapshot(files) => {
@@ -709,7 +719,8 @@ impl Application for App {
                         }
                         DialogPage::Password(repository, password) => {
                             return self.update(Message::Content(content::Message::SetRepository(
-                                repository, password,
+                                repository,
+                                Secret::new(password),
                             )));
                         }
                         DialogPage::DeleteRepository => {
@@ -719,9 +730,23 @@ impl Application for App {
                             else {
                                 return Task::none();
                             };
+                            // Nothing may be writing to it while it is removed:
+                            // not this window, not a scheduled run.
+                            let location = Location::local(&repository.path);
+                            let lock = match engine::lock::acquire(&location) {
+                                Ok(lock) => lock,
+                                Err(err) => {
+                                    return self.update(Message::ShowError(errors::describe(
+                                        &fl!("delete-repo-failed"),
+                                        &err,
+                                    )));
+                                }
+                            };
                             // Only the repository's own entries are removed;
                             // anything else in the folder is left alone.
-                            match backup::location::delete_repository(&repository.path) {
+                            let deleted = engine::location::delete_repository(&repository.path);
+                            drop(lock);
+                            match deleted {
                                 Ok(remaining) => {
                                     debug_log!(
                                         ENGINE,
@@ -739,14 +764,14 @@ impl Application for App {
                                     config_set!(repositories, repositories);
                                     self.nav_model.remove(entity);
                                     if self.content.repository.as_ref() == Some(&repository) {
-                                        self.content.repository = None;
+                                        self.content.clear();
                                     }
                                 }
                                 Err(err) => {
                                     error_log!(ENGINE, "failed to delete repository: {err}");
-                                    return self.update(Message::ShowError(describe_error(
-                                        fl!("delete-repo-failed"),
-                                        &Error::Io(err),
+                                    return self.update(Message::ShowError(errors::describe(
+                                        &fl!("delete-repo-failed"),
+                                        &EngineError::from(err),
                                     )));
                                 }
                             }

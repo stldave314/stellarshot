@@ -7,6 +7,13 @@ no-snapshots = No snapshots found.
 no-snapshots-suggestion = To create a snapshot use the menu.
 loading = Loading...
 loading-snapshots = Loading snapshots.
+progress-starting = Starting…
+progress-preparing = Preparing…
+progress-backing-up = Backing up…
+progress-restoring = Restoring…
+progress-checking = Checking…
+progress-amount = { $done } of { $total }
+snapshot-row = { $id } · { $size } · { $added } new
 
 # Dialogs
 save = Save
@@ -35,6 +42,14 @@ create-repo-failed = The repository could not be created.
 delete-repo-failed = The repository could not be deleted.
 delete-snapshot-failed = The snapshot could not be deleted.
 snapshot-failed = The snapshot could not be created.
+open-repo-failed = The repository could not be opened.
+error-wrong-password = The password is incorrect.
+error-not-a-repository = There is no repository at { $path }.
+error-already-exists = { $path } already holds a repository.
+error-destination-unavailable = { $path } cannot be reached. If it is on a removable drive or a network share, check that it is connected.
+error-locked = Another backup is already using this repository. Try again when it has finished.
+error-cancelled = The operation was cancelled. Nothing was changed.
+error-repository-damaged = The repository check found problems. Do not delete other copies of your data until this is resolved.
 
 # Context Pages
 

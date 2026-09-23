@@ -16,6 +16,12 @@ pub struct IconCache {
     cache: HashMap<IconCacheKey, icon::Handle>,
 }
 
+impl Default for IconCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IconCache {
     pub fn new() -> Self {
         let mut cache = HashMap::new();

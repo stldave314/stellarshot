@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Backups run with a per-repository lock.** rustic takes no lock of its own,
+  so two backups (or a backup and a delete) could write to one repository at
+  once. Every write now holds an exclusive lock, which the kernel releases if
+  the process dies, so it can never be left stale.
+- **The password reaches the backup process on stdin only**, never in its
+  command line or environment, which other programs running as the same user
+  can read.
 - **Deleting a repository no longer deletes the folder it is in.** Upstream
   called `remove_dir_all` on the repository's folder. A repository created in
   the home directory, which upstream allowed, would have taken the whole home
@@ -24,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A new backup engine** on rustic 0.13 (from 0.2), in one module that is
+  the only code touching rustic. Errors are typed (wrong password, not a
+  repository, destination unreachable, busy, cancelled, damaged) and each has
+  its own localized message.
+- **Backups run in the background, with progress and Cancel.** Each write runs
+  in a `stellarshot --run` child process, so the window never freezes and a
+  backup can be stopped at any point. Closing the window lets a running backup
+  finish.
+- Snapshot rows show the date and time, the short ID, the size and how much
+  new data the snapshot added.
+- Integrity checking in the engine, used by the tests and by scheduled
+  checks later.
 - Application ID `io.github.stldave314.Stellarshot`, with a desktop entry,
   AppStream metadata (screenshots, release notes, branding) and a symbolic icon.
 - Settings are copied once from the upstream application ID on first launch,
@@ -50,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Opening a repository, listing snapshots and creating a repository run off
+  the UI thread.
+- A wrong password now says so, and returns the view to "no repository
+  selected" instead of showing an empty snapshot list.
 - Settings subscribe to the application's real configuration type, so a theme
   changed in one window applies to the others.
 - `RUST_LOG` is respected rather than overwritten on every launch.

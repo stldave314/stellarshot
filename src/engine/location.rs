@@ -13,8 +13,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-use ashpd::url::Url;
-
 /// Entries rustic creates at the root of a repository. Nothing else is ever
 /// deleted.
 pub const REPOSITORY_ENTRIES: &[&str] = &["config", "keys", "data", "index", "snapshots", "locks"];
@@ -88,14 +86,6 @@ pub fn delete_repository(path: &Path) -> io::Result<Vec<PathBuf>> {
         std::fs::remove_dir(path)?;
     }
     Ok(remaining)
-}
-
-/// Convert a `file://` URL from the file-chooser portal into a real path.
-///
-/// `Url::path()` keeps percent escapes, so a folder called `My Backups` comes
-/// back as `My%20Backups` — a different directory. `to_file_path` decodes it.
-pub fn url_to_path(url: &Url) -> Option<PathBuf> {
-    url.to_file_path().ok()
 }
 
 #[cfg(test)]
@@ -204,19 +194,5 @@ mod tests {
         delete_repository(&repo).unwrap();
 
         assert!(elsewhere.join("keep.txt").exists());
-    }
-
-    #[test]
-    fn url_with_space_becomes_real_path() {
-        let url = Url::parse("file:///tmp/My%20Backups").unwrap();
-        assert_eq!(url_to_path(&url), Some(PathBuf::from("/tmp/My Backups")));
-        // What upstream stored instead:
-        assert_eq!(url.path(), "/tmp/My%20Backups");
-    }
-
-    #[test]
-    fn non_file_urls_are_rejected() {
-        let url = Url::parse("https://example.com/backup").unwrap();
-        assert_eq!(url_to_path(&url), None);
     }
 }

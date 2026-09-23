@@ -21,9 +21,9 @@ snapshot you ever made.
 ![A repository and its snapshots](docs/screenshots/main-dark.png)
 
 > **Status: early, and not yet something to trust with your only copy.** The
-> version here creates repositories, backs files up, lists and deletes
-> snapshots, and deletes repositories safely. Restore, folders, schedules and
-> cloud storage are still to come. Keep another backup, and follow the
+> version here creates repositories, backs files up in the background with
+> progress and Cancel, lists and deletes snapshots, and deletes repositories
+> safely. Restore, folders, schedules and cloud storage are still to come. Keep another backup, and follow the
 > [3-2-1 rule](https://www.backblaze.com/blog/the-3-2-1-backup-strategy/).
 
 **[Roadmap](ROADMAP.md)** · **[Changelog](CHANGELOG.md)** ·
@@ -43,7 +43,17 @@ snapshot you ever made.
 - **Recognises an existing repository.** Choosing a folder that already holds
   one opens it with the password you give, and never initialises over it. A
   wrong password is an error, not a reason to start again.
-- **Backs up files.** Choose files and take a snapshot of them.
+- **Backs up files in the background.** Choose files and take a snapshot of
+  them. The backup runs in its own process: the window stays responsive,
+  shows how far it has got, and **Cancel** stops it. A cancelled or
+  interrupted backup never leaves a half-written snapshot, and the repository
+  stays sound (this is tested by killing a backup midway).
+- **Only one backup writes to a repository at a time.** A second attempt is
+  told the repository is busy instead of racing the first. If Stellarshot or
+  the computer stops mid-backup, the lock goes with it; there is never a
+  stale lock to clear.
+- **Incremental.** Unchanged files are not stored again, and identical data
+  is stored once however many files contain it.
 - **Lists and deletes snapshots** in the selected repository.
 - **Deletes a repository safely.** Only the entries the repository format
   creates (`config`, `keys`, `data`, `index`, `snapshots`, `locks`) are
@@ -58,18 +68,16 @@ snapshot you ever made.
 
 In the order it will land (the detail is in [ROADMAP.md](ROADMAP.md)):
 
-1. **A new backup engine**, on the current rustic release, that runs backups
-   without freezing the window and can cancel them.
-2. **Backup profiles and a new main screen**: "Back Up Now" on the front page,
+1. **Backup profiles and a new main screen**: "Back Up Now" on the front page,
    a setup wizard with include and exclude folders, a live estimate of how
    much will be backed up, and passwords remembered in your keyring.
-3. **Storage locations**: USB drives recognised wherever they are mounted,
+2. **Storage locations**: USB drives recognised wherever they are mounted,
    SFTP servers, and Google Drive, OneDrive or any other rclone remote, with
    sign-in handled inside the app. Import from Déjà Dup.
-4. **A complete restore**: browse snapshots, restore single files or folders,
+3. **A complete restore**: browse snapshots, restore single files or folders,
    see every version of a file, find deleted files, compare two snapshots, and
    preview exactly what a restore will do.
-5. **Automation**: scheduled backups, retention policies, notifications and
+4. **Automation**: scheduled backups, retention policies, notifications and
    periodic integrity checks.
 
 ---
@@ -144,8 +152,11 @@ Select the repository in the sidebar and enter its password. Then **File →
 Create snapshot** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) opens the
 file chooser, and the chosen files are backed up as one snapshot.
 
-For now the chooser selects files, not folders, and the window stops
-responding until the snapshot finishes. Both are fixed by the new engine; see
+A progress card shows the current phase and how much has been stored. Press
+**Cancel** to stop; nothing half-finished is kept. Closing the window does
+*not* stop a backup that is already running: it finishes on its own.
+
+For now the chooser selects files, not folders; see
 [Known limitations](#known-limitations).
 
 ### Deleting
@@ -221,6 +232,15 @@ cp -r ~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1 \
       ~/.config/cosmic/io.github.stldave314.Stellarshot/
 ```
 
+**"Another backup is already using this repository."**
+Only one process may write to a repository at a time. Wait for the other
+backup to finish. If none is running, nothing is holding the lock either: it
+is released automatically when a process ends, even when it crashes.
+
+**"The password is incorrect."**
+The password is the one set when the repository was created. There is no
+way to recover or reset it.
+
 **"The repository could not be created" with a rustic error underneath.**
 The details line is the engine's own message. The most common causes are a
 folder you do not have write access to, or a network mount that disappeared.
@@ -238,9 +258,6 @@ written to stderr too.
 
 - **The password is asked for every time** you select a repository. Keyring
   storage arrives with backup profiles.
-- **Snapshots are taken on the UI thread.** The window stops responding until a
-  snapshot finishes, and a snapshot cannot be cancelled. The new engine runs
-  backups in a separate process with progress and Cancel.
 - **The snapshot chooser picks files, not folders.** Folder selection, include
   and exclude lists arrive with backup profiles.
 - **There is no restore in the app yet.** Use `restic restore` or
@@ -257,33 +274,43 @@ written to stderr too.
 ## How it works
 
 ```
-  ┌──────────────────────────────────────────────┐
-  │  COSMIC application (libcosmic)              │
-  │  sidebar of repositories, snapshot list,     │
-  │  dialogs, settings                           │
-  └───────────────┬──────────────────────────────┘
-                  │
-  ┌───────────────▼──────────────────────────────┐
-  │  backup: init · snapshot · location          │
-  │  (safe create / delete, path handling)       │
-  └───────────────┬──────────────────────────────┘
-                  │
-  ┌───────────────▼──────────────────────────────┐
-  │  rustic_core + rustic_backend                │
-  │  restic repository format: encryption,       │
-  │  deduplication, compression                  │
-  └───────────────┬──────────────────────────────┘
-                  │
-            local folder
+  ┌────────────────────────────────────┐        job on stdin (JSON,
+  │  window  (libcosmic)               │        including the password)
+  │  sidebar, snapshot list, dialogs,  │ ───────────────────────────┐
+  │  progress card                     │                            │
+  └──────┬─────────────────────────────┘                            ▼
+         │ reads on blocking threads          ┌──────────────────────────────┐
+         │ (list snapshots, open, create)     │  stellarshot --run backup    │
+         │                                    │  one write, in its own       │
+         │ ◀──── progress and outcome ─────── │  process; holds the lock     │
+         │       as JSON lines on stdout      └──────────────┬───────────────┘
+         ▼                                                   ▼
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  engine: the only code that talks to rustic                              │
+  │  open · init · probe · snapshots · backup · restore · check · lock       │
+  └──────────────────────────────────┬───────────────────────────────────────┘
+                                     ▼
+                    rustic_core → restic-format repository
 ```
+
+Writes (backup, restore, check, deleting snapshots) run in a child process,
+`stellarshot --run <operation>`, because rustic cannot be interrupted once an
+operation starts and a process can. The password reaches the child on stdin,
+never in its command line or environment, both of which other programs
+running as you can read.
 
 | Module | Responsibility |
 | --- | --- |
-| `app` | The application: sidebar, dialogs, menus, settings, message handling |
-| `app::views::content` | The snapshot list for the selected repository |
+| `engine` | Everything that touches rustic: opening and creating repositories, backup, restore, integrity checks, snapshot listing and deletion. Synchronous, plain types, typed errors |
+| `engine::location` | Whether a folder may hold a repository; deleting only a repository's own entries |
+| `engine::lock` | One writer per repository, shared by every process; released by the kernel if the holder dies |
+| `engine::progress` | Turns rustic's per-blob progress calls into a few reports a second |
+| `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
+| `app` | The window: sidebar, dialogs, menus, settings |
+| `app::child` | Spawns `--run`, streams its events into the UI, cancels it |
+| `app::views::content` | The snapshot list and the progress card |
+| `app::errors` | A localized explanation for every kind of engine error |
 | `app::migrate` | One-time copy of settings from the upstream application ID |
-| `backup::location` | Whether a folder may hold a repository; deleting only a repository's own entries; decoding file-chooser URLs |
-| `backup::init` / `backup::snapshot` | Create or open a repository; take, list and delete snapshots |
 | `constants` | Implementation tuning values |
 | `debug` | Developer logging to a file, compiled out of release builds |
 

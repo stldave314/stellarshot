@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use crate::app::App;
-use app::settings;
+use std::process::ExitCode;
 
-mod app;
-mod backup;
-mod constants;
-mod core;
-mod debug;
+use stellarshot::app::{App, settings};
 
-pub use app::error::Error;
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--run") {
+        return stellarshot::runner::main(&args[1..]);
+    }
 
-fn main() -> cosmic::iced::Result {
     let (settings, flags) = settings::init();
-    cosmic::app::run::<App>(settings, flags)
+    match cosmic::app::run::<App>(settings, flags) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("stellarshot: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }

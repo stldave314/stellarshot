@@ -7,6 +7,13 @@ no-snapshots = Няма намерени моментни състояния
 no-snapshots-suggestion = За да създадете моментно състояние, използвайте менюто.
 loading = Зареждане...
 loading-snapshots = Зареждане на моментните състояния.
+progress-starting = Започване…
+progress-preparing = Подготовка…
+progress-backing-up = Създаване на резервно копие…
+progress-restoring = Възстановяване…
+progress-checking = Проверка…
+progress-amount = { $done } от { $total }
+snapshot-row = { $id } · { $size } · { $added } нови
 
 # Dialogs
 save = Запазване
@@ -35,6 +42,14 @@ create-repo-failed = Хранилището не можа да бъде създ
 delete-repo-failed = Хранилището не можа да бъде изтрито.
 delete-snapshot-failed = Моментното състояние не можа да бъде изтрито.
 snapshot-failed = Моментното състояние не можа да бъде създадено.
+open-repo-failed = Хранилището не можа да бъде отворено.
+error-wrong-password = Паролата е грешна.
+error-not-a-repository = В { $path } няма хранилище.
+error-already-exists = { $path } вече съдържа хранилище.
+error-destination-unavailable = { $path } е недостъпно. Ако е на преносимо устройство или мрежов ресурс, проверете дали е свързано.
+error-locked = Друго резервно копиране вече използва това хранилище. Опитайте отново, когато приключи.
+error-cancelled = Операцията беше отменена. Нищо не беше променено.
+error-repository-damaged = Проверката на хранилището откри проблеми. Не изтривайте други копия на данните си, докато това не бъде решено.
 
 # Context Pages
 

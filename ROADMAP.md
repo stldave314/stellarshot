@@ -31,18 +31,18 @@ dangerous behaviour inherited from upstream is gone.
       and attached to tagged releases
 - [x] README, security policy, validation guide, contributing guide, changelog
 
-## M1 — Engine
+## M1 — Engine (done)
 
 A new backup engine behind one module, on the current rustic release.
 
-- [ ] rustic 0.2 → 0.13, isolated in `src/engine/` so no other code touches it
-- [ ] Reads (listing, browsing) on background threads; writes (backup, restore,
+- [x] rustic 0.2 → 0.13, isolated in `src/engine/` so no other code touches it
+- [x] Reads (listing, browsing) on background threads; writes (backup, restore,
       maintenance) in a child process, `stellarshot --run`, so a backup can be
       cancelled and a crash cannot take the window with it
-- [ ] Progress reporting: files, bytes, current file, time remaining
-- [ ] A per-repository lock shared by the window and scheduled runs
-- [ ] Typed errors, each mapped to a message and an action
-- [ ] Tests: back up and restore a tree with awkward names, links and
+- [x] Progress reporting: phase, bytes done and total
+- [x] A per-repository lock shared by the window and scheduled runs
+- [x] Typed errors, each mapped to a message and an action
+- [x] Tests: back up and restore a tree with awkward names, links and
       permissions, and compare it byte for byte; kill a backup midway and prove
       the repository is still sound
 

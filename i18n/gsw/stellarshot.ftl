@@ -7,6 +7,13 @@ no-snapshots = Kei Momentuufnahme gfunde.
 no-snapshots-suggestion = Zum e Momentuufnahm mache, bruuch s Menü.
 loading = Lade …
 loading-snapshots = Momentuufnahme wärded glade.
+progress-starting = Fangt a …
+progress-preparing = Wird vorbereitet …
+progress-backing-up = Wird gsicheret …
+progress-restoring = Wird widerhergstellt …
+progress-checking = Wird prüeft …
+progress-amount = { $done } vo { $total }
+snapshot-row = { $id } · { $size } · { $added } neu
 
 # Dialogs
 save = Speichere
@@ -35,6 +42,14 @@ create-repo-failed = S Archiv hät nöd chöne gmacht wärde.
 delete-repo-failed = S Archiv hät nöd chöne glöscht wärde.
 delete-snapshot-failed = D Momentuufnahm hät nöd chöne glöscht wärde.
 snapshot-failed = D Momentuufnahm hät nöd chöne gmacht wärde.
+open-repo-failed = S Archiv hät nöd chöne göffnet wärde.
+error-wrong-password = S Passwort isch falsch.
+error-not-a-repository = Under { $path } git's kei Archiv.
+error-already-exists = { $path } hät scho es Archiv drin.
+error-destination-unavailable = { $path } isch nöd erreichbar. Wänn's uf emne Wächseldatenträger oder emne Netzwerk-Ordner isch, lueg, öb's verbunde isch.
+error-locked = Es anders Sichere bruucht das Archiv grad. Probier's nomal, wänn's fertig isch.
+error-cancelled = De Vorgang isch abbroche worde. Es isch nüt veränderet worde.
+error-repository-damaged = D Prüefig vom Archiv hät Problem gfunde. Lösch kei anderi Kopie vo dine Date, bis das glöst isch.
 
 # Context Pages
 

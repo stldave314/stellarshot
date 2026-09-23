@@ -7,6 +7,13 @@ no-snapshots = Keine Momentaufnahmen gefunden.
 no-snapshots-suggestion = Verwende das Menü, um eine Momentaufnahme zu erstellen.
 loading = Wird geladen …
 loading-snapshots = Momentaufnahmen werden geladen.
+progress-starting = Wird gestartet …
+progress-preparing = Wird vorbereitet …
+progress-backing-up = Wird gesichert …
+progress-restoring = Wird wiederhergestellt …
+progress-checking = Wird geprüft …
+progress-amount = { $done } von { $total }
+snapshot-row = { $id } · { $size } · { $added } neu
 
 # Dialogs
 save = Speichern
@@ -35,6 +42,14 @@ create-repo-failed = Das Archiv konnte nicht erstellt werden.
 delete-repo-failed = Das Archiv konnte nicht gelöscht werden.
 delete-snapshot-failed = Die Momentaufnahme konnte nicht gelöscht werden.
 snapshot-failed = Die Momentaufnahme konnte nicht erstellt werden.
+open-repo-failed = Das Archiv konnte nicht geöffnet werden.
+error-wrong-password = Das Passwort ist falsch.
+error-not-a-repository = Unter { $path } gibt es kein Archiv.
+error-already-exists = { $path } enthält bereits ein Archiv.
+error-destination-unavailable = { $path } ist nicht erreichbar. Wenn es sich auf einem Wechseldatenträger oder einer Netzwerkfreigabe befindet, prüfe, ob es verbunden ist.
+error-locked = Eine andere Sicherung verwendet dieses Archiv bereits. Versuche es erneut, wenn sie abgeschlossen ist.
+error-cancelled = Der Vorgang wurde abgebrochen. Es wurde nichts verändert.
+error-repository-damaged = Die Prüfung des Archivs hat Probleme gefunden. Lösche keine anderen Kopien deiner Daten, bis das behoben ist.
 
 # Context Pages
 

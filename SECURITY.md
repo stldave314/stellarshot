@@ -34,6 +34,9 @@ note in the [README](README.md).
   backups.
 - **Passwords are never written to disk by Stellarshot.** The current version
   asks for the password each time and keeps it in memory for that session.
+  Backups run in a separate process; the password is handed to it on its
+  standard input, never on its command line or in its environment, which
+  other programs running as you can read from `/proc`.
   When keyring support arrives, passwords will go to the Secret Service keyring
   (GNOME Keyring or KWallet) and nowhere else.
 - **Deletion only touches the repository.** Deleting a repository removes the
@@ -41,6 +44,10 @@ note in the [README](README.md).
   symlinks. Creating a repository in a folder that already holds other files is
   refused. Both rules exist because the upstream code could have deleted a home
   directory; see the [changelog](CHANGELOG.md).
+- **One writer per repository.** Every backup, restore, check and deletion
+  holds an exclusive lock on the repository, so two of them can never write
+  to it at once. The lock lives in your private runtime directory and is
+  released by the kernel when the holder exits or crashes.
 - **Release builds cannot carry debug logging.** Developer logging is compiled
   out by the `release-build` feature that every packaging target passes. CI
   proves this by checking the built binary, not by trusting the source.

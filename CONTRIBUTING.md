@@ -63,7 +63,15 @@ alternative caused a real problem.
 **Never delete what you did not create.** Anything that removes files removes
 only entries it can prove are its own, and does not follow symlinks. Upstream
 Stellarshot deleted a repository with `remove_dir_all` on its folder; see
-`src/backup/location.rs` for why that could have taken a home directory.
+`src/engine/location.rs` for why that could have taken a home directory.
+
+**Only the engine talks to rustic.** No `rustic_core` type may appear outside
+`src/engine/`. Everything else works with the engine's plain types, so a
+rustic upgrade is contained in one module.
+
+**Writes run in a child process.** Anything that writes to a repository goes
+through `stellarshot --run` and holds the repository lock. rustic cannot be
+interrupted; a process can.
 
 **Prove behaviour against real files.** Tests that delete, write or restore
 work on real directories in temporary folders, and assert on what must survive

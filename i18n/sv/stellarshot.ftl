@@ -7,6 +7,13 @@ no-snapshots = Inga ögonblicksbilder hittades.
 no-snapshots-suggestion = För att skapa en ögonblicksbild använd menyn.
 loading = Laddar...
 loading-snapshots = Laddar ögonblicksbilder.
+progress-starting = Startar…
+progress-preparing = Förbereder…
+progress-backing-up = Säkerhetskopierar…
+progress-restoring = Återställer…
+progress-checking = Kontrollerar…
+progress-amount = { $done } av { $total }
+snapshot-row = { $id } · { $size } · { $added } nytt
 
 # Dialogrutor
 save = Spara
@@ -35,6 +42,14 @@ create-repo-failed = Lagringsplatsen kunde inte skapas.
 delete-repo-failed = Lagringsplatsen kunde inte tas bort.
 delete-snapshot-failed = Ögonblicksbilden kunde inte tas bort.
 snapshot-failed = Ögonblicksbilden kunde inte skapas.
+open-repo-failed = Lagringsplatsen kunde inte öppnas.
+error-wrong-password = Lösenordet är fel.
+error-not-a-repository = Det finns ingen lagringsplats i { $path }.
+error-already-exists = { $path } innehåller redan en lagringsplats.
+error-destination-unavailable = { $path } kan inte nås. Om den finns på en flyttbar enhet eller en nätverksresurs, kontrollera att den är ansluten.
+error-locked = En annan säkerhetskopiering använder redan den här lagringsplatsen. Försök igen när den är klar.
+error-cancelled = Åtgärden avbröts. Ingenting ändrades.
+error-repository-damaged = Kontrollen av lagringsplatsen hittade problem. Ta inte bort andra kopior av dina data förrän detta är löst.
 
 # Context sidor
 

@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use cosmic::iced::keyboard::key::Named;
 use cosmic::iced::keyboard::Key;
+use cosmic::iced::keyboard::key::Named;
 use cosmic::widget::menu::key_bind::KeyBind;
 use cosmic::widget::menu::key_bind::Modifier;
 

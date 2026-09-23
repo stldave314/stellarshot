@@ -151,8 +151,8 @@ What we checked in rustic 0.13:
 
 ### 5.3 Locking, progress files and pruning
 
-- Every write takes an **`flock` on `$XDG_RUNTIME_DIR/stellarshot/<profile-id>.lock`**. This covers the UI, the timer and a second UI instance.
-- A child holding the lock also writes throttled progress to **`<profile-id>.progress`** next to it. If the UI finds the lock held by a process it didn't start, such as a timer run, it shows "Backup in progress" and **follows that file**. It never starts a second write.
+- Every write takes an **`flock` on `$XDG_RUNTIME_DIR/stellarshot/<location-key>.lock`**, where the key is derived from the repository's location. This covers the UI, the timer and a second UI instance. *(Changed in M1 from a profile-ID key: two profiles pointing at one repository must share a lock.)*
+- A child holding the lock also writes throttled progress to **`<location-key>.progress`** next to it. If the UI finds the lock held by a process it didn't start, such as a timer run, it shows "Backup in progress" and **follows that file**. It never starts a second write.
 - Because rustic doesn't lock, prune is dangerous when another machine shares the destination.
   - `forget` (removing snapshot records under the retention policy) always runs after a scheduled backup.
   - **Automatic `prune`** (actually deleting unreferenced data) is **on by default for `Local` and `Removable`** destinations and **off by default for `Sftp` and `Rclone`** destinations. Those can be shared, and the user turns prune on per profile.

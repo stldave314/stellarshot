@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-3.0-only
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: Build, test and package
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libxkbcommon-dev libwayland-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Test
+        run: cargo test --all-features
+
+      # Proves the release feature really removes developer logging, instead of
+      # trusting that the constant does what it says.
+      - name: Verify release-build strips debug logging
+        run: ./scripts/verify-release-build.sh
+
+      # The same path the release workflow takes, so a packaging break shows up
+      # on main rather than after a tag has been pushed.
+      - name: Build packages
+        run: ./install.sh package
+
+      - name: Inspect the .deb
+        run: |
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+
+  metadata:
+    name: Validate packaging metadata
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            desktop-file-utils appstream
+
+      # Shared with local runs so the two cannot drift. Every finding from
+      # desktop-file-validate and appstreamcli is a hard failure; the script
+      # is deliberately not a blanket `|| true`.
+      - name: Validate desktop entry and AppStream metadata
+        run: ./scripts/validate-metadata.sh

@@ -1,38 +1,112 @@
+# Application
 stellarshot = Stellarshot
 
-# Content
-no-repository-selected = Kein Archiv ausgewählt.
-no-repository-suggestion = Verwende das Menü, um ein Archiv zu erstellen.
-no-snapshots = Keine Momentaufnahmen gefunden.
-no-snapshots-suggestion = Verwende das Menü, um eine Momentaufnahme zu erstellen.
-loading = Wird geladen …
-loading-snapshots = Momentaufnahmen werden geladen.
+# Empty state
+empty-title = Halte deine Dateien sicher
+empty-body = Sichere deine Ordner auf ein anderes Laufwerk oder in einen anderen Ordner. Sicherungen sind verschlüsselt, und nach der ersten werden nur Änderungen gespeichert.
+create-backup = Sicherung erstellen …
+open-existing = Vorhandene Sicherung öffnen
+
+# Profile page
+never-backed-up = Noch nicht gesichert
+backed-up-just-now = Gerade eben gesichert
+backed-up-minutes-ago = Letzte Sicherung vor { $count ->
+    [one] einer Minute
+   *[other] { $count } Minuten
+}
+backed-up-hours-ago = Letzte Sicherung vor { $count ->
+    [one] einer Stunde
+   *[other] { $count } Stunden
+}
+backed-up-days-ago = Letzte Sicherung vor { $count ->
+    [one] einem Tag
+   *[other] { $count } Tagen
+}
+status-detail = { $destination } · { $count ->
+    [one] eine Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+}
+back-up-now = Jetzt sichern
+choose-what-title = Wähle, was gesichert wird
+choose-what-body = Für diese Sicherung sind noch keine Ordner ausgewählt.
+choose-what-button = Ordner wählen …
+unlock-title = Gib das Passwort dieser Sicherung ein
+unlock = Entsperren
+remember-password = Passwort merken
+remember-password-description = Wird in deinem Schlüsselbund gespeichert. Geplante Sicherungen brauchen es.
+recent-snapshots = Letzte Momentaufnahmen
+no-snapshots-yet = Noch keine Momentaufnahmen. Drücke „Jetzt sichern“ für die erste.
+snapshot-row = { $id } · { $size } · { $added } neu
+show-all-snapshots = Alle { $count } Momentaufnahmen anzeigen
+manage = Verwalten
+edit-backup = Was gesichert wird
+edit-backup-description = Ein- und ausgeschlossene Ordner ändern.
+remove-backup = Aus Stellarshot entfernen
+remove-backup-description = Stellarshot vergisst diese Sicherung. Die Sicherung selbst bleibt, wo sie ist.
+delete-backup = Sicherung und alle Daten löschen
+delete-backup-description = Löscht jede Momentaufnahme dieser Sicherung endgültig.
 progress-starting = Wird gestartet …
 progress-preparing = Wird vorbereitet …
 progress-backing-up = Wird gesichert …
 progress-restoring = Wird wiederhergestellt …
 progress-checking = Wird geprüft …
 progress-amount = { $done } von { $total }
-snapshot-row = { $id } · { $size } · { $added } neu
 
-# Dialogs
-save = Speichern
+# Wizard
+wizard-create-title = Neue Sicherung
+wizard-open-title = Vorhandene Sicherung öffnen
+wizard-edit-title = Was „{ $name }“ sichert
+wizard-step = Schritt { $current } von { $total }
+wizard-what-intro = Wähle die zu sichernden Ordner und was darin ausgelassen werden soll.
+wizard-include = Einschließen
+wizard-exclude = Ausschließen
+wizard-exclude-outside = Liegt in keinem eingeschlossenen Ordner und ändert daher nichts
+wizard-add-folders = Ordner hinzufügen …
+wizard-pick-sources = Zu sichernde Ordner wählen
+wizard-pick-excludes = Auszulassende Ordner wählen
+wizard-advanced = Erweitert
+wizard-pattern-placeholder = Passende Namen auslassen, z. B. *.tmp oder node_modules
+wizard-one-file-system = Auf demselben Laufwerk bleiben
+wizard-one-file-system-description = Keinen anderen Laufwerken oder Netzwerkfreigaben folgen, die in diesen Ordnern eingehängt sind.
+wizard-estimate-label = Geschätzte Größe der Sicherung
+wizard-estimate = { $size } · { $files } Dateien
+wizard-estimate-counting = Wird gezählt …
+wizard-estimate-note = Die erste Sicherung ist nach Kompression und Deduplizierung meist kleiner. Spätere Sicherungen speichern nur Änderungen.
+wizard-where-intro = Wähle, wo die Sicherung aufbewahrt wird: ein leerer Ordner, am besten auf einem anderen Laufwerk.
+wizard-where-title = Speicherort
+wizard-no-folder = Kein Ordner gewählt
+wizard-choose-folder = Ordner wählen …
+select-repo-folder = Wähle einen Ordner für das Archiv
+wizard-where-new = Hier wird eine neue Sicherung erstellt.
+wizard-where-existing = Dieser Ordner enthält bereits eine Sicherung. Füge sie stattdessen über „Vorhandene Sicherung öffnen“ hinzu.
+wizard-where-found = Hier wurde eine Sicherung gefunden.
+wizard-where-no-repository = In diesem Ordner gibt es keine Sicherung.
+wizard-where-not-empty = Dieser Ordner enthält bereits andere Dateien. Wähle einen leeren Ordner.
+wizard-name = Name
+wizard-name-placeholder = Zum Beispiel: Persönlicher Ordner auf USB-Laufwerk
+wizard-secure-intro = Wähle ein Passwort. Deine Sicherung wird damit verschlüsselt.
+wizard-open-intro = Gib das Passwort ein, mit dem diese Sicherung erstellt wurde.
+wizard-confirm = Passwort bestätigen
+wizard-mismatch = Die Passwörter stimmen nicht überein.
+wizard-password-warning = Wenn du dieses Passwort verlierst, können deine Sicherungen nicht wiederhergestellt werden. Niemand kann es für dich wiederherstellen.
+wizard-finish-create = Erstellen und jetzt sichern
+wizard-finish-open = Öffnen
+
+# Dialogs and buttons
 ok = OK
-create = Erstellen
+save = Speichern
+add = Hinzufügen
+back = Zurück
+next = Weiter
+edit = Bearbeiten
+remove = Entfernen
 delete = Löschen
 cancel = Abbrechen
-create-repo = Neues Archiv erstellen
-delete-repo = Archiv löschen
-repo-location-value = Speicherort des Archivs: { $path }
-snapshots = Momentaufnahmen
-create-snapshot = Neue Momentaufnahme erstellen
-delete-repository = Archiv löschen
-delete-repository-description = Dadurch werden das Archiv und alle darin enthaltenen Momentaufnahmen entfernt. Andere Dateien im selben Ordner bleiben unberührt.
-snapshot-description = Eine Momentaufnahme ist eine Kopie deines Archivs zu einem bestimmten Zeitpunkt
 password = Passwort
-password-for = Passwort für { $name }
-select-repo-folder = Wähle einen Ordner für das Archiv
-select-snapshot-files = Wähle die zu sichernden Dateien
+remove-title = „{ $name }“ entfernen?
+remove-body = Stellarshot vergisst diese Sicherung und ihr gespeichertes Passwort. Die Sicherung und ihre Momentaufnahmen werden nicht gelöscht und können später wieder geöffnet werden.
+delete-title = „{ $name }“ und alle Daten löschen?
+delete-body = Dadurch werden die Sicherung und jede Momentaufnahme darin endgültig gelöscht. Andere Dateien im selben Ordner bleiben unberührt. Gib { $name } zur Bestätigung ein.
 
 # Errors
 error-title = Etwas ist schiefgelaufen
@@ -51,19 +125,15 @@ error-locked = Eine andere Sicherung verwendet dieses Archiv bereits. Versuche e
 error-cancelled = Der Vorgang wurde abgebrochen. Es wurde nichts verändert.
 error-repository-damaged = Die Prüfung des Archivs hat Probleme gefunden. Lösche keine anderen Kopien deiner Daten, bis das behoben ist.
 
-# Context Pages
-
-## About
+# About
 about = Über
 about-author = Die Stellarshot-Mitwirkenden
 about-credits = Basiert auf Stellarshot vom Projekt cosmic-utils.
 repository = Quellcode
 support = Hilfe
 
-## Settings
+# Settings
 settings = Einstellungen
-
-### Appearance
 appearance = Aussehen
 theme = Färbung
 match-desktop = An den Desktop angeglichen
@@ -71,18 +141,11 @@ dark = Dunkel
 light = Hell
 
 # Menu
-
-## File
 file = Datei
-new-repo = Neues Archiv
-new-snap = Neue Momentaufnahme
+menu-new-backup = Neue Sicherung …
+new-backup = Neue Sicherung
 new-window = Neues Fenster
 quit = Verlassen
-
-## Edit
-edit = Bearbeiten
-
-## View
 view = Ansicht
 menu-settings = Einstellungen
 menu-about = Informationen über Stellarshot

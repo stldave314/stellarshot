@@ -1,92 +1,96 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! The application window: the sidebar of backups, the page for the selected
+//! one, the setup wizard, and the dialogs that confirm destructive actions.
+
 use std::any::TypeId;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
 use std::{env, process};
 
-use cosmic::app::{Core, Task, message};
-use cosmic::iced::alignment::{Horizontal, Vertical};
-use cosmic::iced::{Event, Subscription, event, keyboard::Event as KeyEvent, window};
-use cosmic::iced_core::keyboard::{Key, Modifiers};
+use cosmic::app::{Core, Task};
+use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers};
+use cosmic::iced::{Event, Length, Subscription, event, window};
 use cosmic::widget::about::About;
 use cosmic::widget::menu::{action::MenuAction, key_bind::KeyBind};
-use cosmic::widget::segmented_button::{self, EntityMut, SingleSelect};
-use cosmic::{Application, Apply, Element, widget};
-use cosmic::{ApplicationExt, cosmic_config, cosmic_theme, iced::Length};
-use views::content::{self, Content};
+use cosmic::widget::{self, nav_bar};
+use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme};
 
-use crate::app::config::{AppTheme, CONFIG_VERSION, Repository};
+use crate::app::config::{AppTheme, CONFIG_VERSION, StellarshotConfig};
 use crate::app::key_bind::key_binds;
+use crate::app::pages::profile::{self, ProfileState};
+use crate::app::wizard::{Mode, Wizard};
 use crate::debug::{CONFIG, ENGINE, UI};
-use crate::engine::{self, EngineError, ErrorKind, Location, Probe, Secret};
+use crate::engine::{self, EngineError};
+use crate::profile::Profile;
 use crate::runner::{Job, Operation};
 use crate::{debug_log, error_log, fl};
-
-use self::icon_cache::IconCache;
 
 pub mod child;
 pub mod config;
 pub mod errors;
 pub mod format;
-pub mod icon_cache;
 mod key_bind;
 pub mod menu;
 pub mod migrate;
+pub mod pages;
 pub mod portal;
 pub mod settings;
-pub mod views;
+pub mod tasks;
+pub mod wizard;
+
+/// The application ID: desktop entry, icon, settings and keyring items.
+pub const APP_ID: &str = "io.github.stldave314.Stellarshot";
+
+/// How often relative times ("2 hours ago") are refreshed.
+const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 pub struct App {
     core: Core,
-    nav_model: segmented_button::SingleSelectModel,
+    nav: nav_bar::Model,
     about: About,
-    content: Content,
     app_themes: Vec<String>,
     config_handler: Option<cosmic_config::Config>,
-    config: config::StellarshotConfig,
+    config: StellarshotConfig,
     context_page: ContextPage,
-    dialog_pages: VecDeque<DialogPage>,
-    dialog_text_input: widget::Id,
-    /// Localized once: `text_input::label` borrows its text for the life of
-    /// the view, so it cannot take a temporary.
-    password_label: String,
+    dialog: Option<Dialog>,
+    pages: HashMap<String, ProfileState>,
+    wizard: Option<Wizard>,
     key_binds: HashMap<KeyBind, Action>,
     modifiers: Modifiers,
+    now: i64,
+}
+
+/// What a sidebar entry leads to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NavItem {
+    Profile(String),
+    New,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Content(content::Message),
-    DialogCancel,
-    DialogComplete,
-    DialogUpdate(DialogPage),
     ToggleContextPage(ContextPage),
+    CloseContextDrawer,
     LaunchUrl(String),
     AppTheme(usize),
     SystemThemeModeChange,
     /// Settings changed on disk, for example from another window.
-    ConfigChanged(config::StellarshotConfig),
+    ConfigChanged(StellarshotConfig),
     Key(Modifiers, Key),
     Modifiers(Modifiers),
     WindowClose,
     WindowNew,
-    Repository(RepositoryAction),
-    CreateSnapshot(Vec<PathBuf>),
-    RequestFileForRepository,
-    OpenCreateRepositoryDialog(PathBuf),
-    OpenCreateSnapshotDialog(Vec<PathBuf>),
-    ShowError(String),
-    DeleteRepositoryDialog,
-    RequestFilesForSnapshot,
-    OpenPasswordDialog(Repository),
-    CloseContextDrawer,
-}
-
-#[derive(Debug, Clone)]
-pub enum RepositoryAction {
-    Init(PathBuf, Secret),
-    Created(Repository),
+    Tick,
+    NewBackup,
+    OpenExisting,
+    BackUpSelected,
+    Profile(String, profile::Message),
+    Wizard(wizard::Message),
+    WizardFinished(Result<tasks::Finished, EngineError>),
+    Dialog(DialogMessage),
+    Noop,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,48 +108,56 @@ impl ContextPage {
     }
 }
 
+/// A modal dialog.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DialogPage {
-    Password(Repository, String),
-    CreateRepository(PathBuf, String),
-    CreateSnapshot(Vec<PathBuf>),
-    DeleteRepository,
+pub enum Dialog {
     /// A localized explanation of something that failed.
     Error(String),
+    /// Forget a profile; its data stays.
+    Remove { id: String, name: String },
+    /// Delete a profile's repository and everything in it.
+    DeleteAll {
+        id: String,
+        name: String,
+        typed: String,
+        busy: bool,
+    },
 }
 
-/// Run blocking engine work off the UI thread.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T, EngineError> + Send + 'static,
-) -> Result<T, EngineError> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .unwrap_or_else(|err| Err(EngineError::new(ErrorKind::Internal, err.to_string())))
-}
-
-/// Add the repository at `path`: open it if one is already there, create it
-/// if the folder is empty, refuse anything else.
-fn create_or_open(path: PathBuf, secret: Secret) -> Result<(), EngineError> {
-    let location = Location::local(path);
-    match engine::probe(&location)? {
-        Probe::Repository => engine::open(&location, &secret).map(drop),
-        Probe::Empty => engine::init(&location, &secret).map(drop),
-        Probe::NotEmpty => Err(EngineError::location_not_empty(location.path())),
+impl Dialog {
+    /// Deleting everything needs the profile's name typed exactly: not
+    /// trimmed, not case-folded. A slip of the finger must not qualify.
+    pub fn can_confirm(&self) -> bool {
+        match self {
+            Self::DeleteAll {
+                name, typed, busy, ..
+            } => !busy && typed == name,
+            _ => true,
+        }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum DialogMessage {
+    Close,
+    Confirm,
+    Typed(String),
+    Deleted(String, Result<(), EngineError>),
 }
 
 #[derive(Clone, Debug)]
 pub struct Flags {
     pub config_handler: Option<cosmic_config::Config>,
-    pub config: config::StellarshotConfig,
+    pub config: StellarshotConfig,
+    /// Open the setup wizard as soon as the window appears.
+    pub start_wizard: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
     About,
-    CreateRepository,
-    CreateSnapshot,
-    DeleteRepository,
+    NewBackup,
+    BackUpNow,
     Settings,
     WindowClose,
     WindowNew,
@@ -156,9 +168,8 @@ impl MenuAction for Action {
     fn message(&self) -> Self::Message {
         match self {
             Action::About => Message::ToggleContextPage(ContextPage::About),
-            Action::CreateRepository => Message::RequestFileForRepository,
-            Action::CreateSnapshot => Message::RequestFilesForSnapshot,
-            Action::DeleteRepository => Message::DeleteRepositoryDialog,
+            Action::NewBackup => Message::NewBackup,
+            Action::BackUpNow => Message::BackUpSelected,
             Action::Settings => Message::ToggleContextPage(ContextPage::Settings),
             Action::WindowClose => Message::WindowClose,
             Action::WindowNew => Message::WindowNew,
@@ -166,13 +177,18 @@ impl MenuAction for Action {
     }
 }
 
+/// Wrap an application message for a task.
+fn app(message: Message) -> cosmic::Action<Message> {
+    cosmic::Action::App(message)
+}
+
 impl App {
-    fn update_config(&mut self) -> Task<Message> {
-        cosmic::app::command::set_theme(self.config.app_theme.theme())
+    fn update_theme(&mut self) -> Task<Message> {
+        cosmic::command::set_theme(self.config.app_theme.theme())
     }
 
-    fn settings(&self) -> Element<'_, Message> {
-        let app_theme_selected = match self.config.app_theme {
+    fn settings_view(&self) -> Element<'_, Message> {
+        let selected = match self.config.app_theme {
             AppTheme::Dark => 1,
             AppTheme::Light => 2,
             AppTheme::System => 0,
@@ -183,7 +199,7 @@ impl App {
                 .add(
                     widget::settings::item::builder(fl!("theme")).control(widget::dropdown(
                         &self.app_themes,
-                        Some(app_theme_selected),
+                        Some(selected),
                         Message::AppTheme,
                     )),
                 )
@@ -192,27 +208,409 @@ impl App {
         .into()
     }
 
-    fn create_nav_item(
-        &mut self,
-        repository: Repository,
-        icon: &'static str,
-    ) -> EntityMut<'_, SingleSelect> {
-        self.nav_model
-            .insert()
-            .icon(IconCache::get(icon, 18))
-            .text(repository.name.clone())
-            .data(repository.clone())
+    /// The profile the sidebar has selected.
+    fn selected(&self) -> Option<&str> {
+        match self.nav.active_data::<NavItem>() {
+            Some(NavItem::Profile(id)) => Some(id.as_str()),
+            _ => None,
+        }
     }
+
+    /// Rebuild the sidebar from the settings, keeping the selection when the
+    /// selected profile still exists.
+    fn rebuild_nav(&mut self, select: Option<&str>) {
+        let keep = select
+            .map(str::to_owned)
+            .or_else(|| self.selected().map(str::to_owned));
+        self.nav.clear();
+        let mut chosen = None;
+        for profile in &self.config.profiles {
+            let id = self
+                .nav
+                .insert()
+                .text(profile.name.clone())
+                .icon(widget::icon::from_name("drive-harddisk-symbolic"))
+                .data(NavItem::Profile(profile.id.clone()))
+                .id();
+            if keep.as_deref() == Some(profile.id.as_str()) || chosen.is_none() {
+                chosen = Some(id);
+            }
+        }
+        if !self.config.profiles.is_empty() {
+            self.nav
+                .insert()
+                .text(fl!("new-backup"))
+                .icon(widget::icon::from_name("list-add-symbolic"))
+                .data(NavItem::New)
+                .divider_above(true);
+        }
+        if let Some(id) = chosen {
+            self.nav.activate(id);
+        }
+    }
+
+    fn save_profiles(&mut self, profiles: Vec<Profile>) {
+        match &self.config_handler {
+            Some(handler) => {
+                if let Err(err) = self.config.set_profiles(handler, profiles) {
+                    error_log!(CONFIG, "failed to save profiles: {err}");
+                }
+            }
+            None => {
+                self.config.profiles = profiles;
+                error_log!(CONFIG, "failed to save profiles: no config handler");
+            }
+        }
+    }
+
+    /// Replace a profile by ID, or add it.
+    fn upsert_profile(&mut self, profile: Profile) {
+        let mut profiles = self.config.profiles.clone();
+        match profiles.iter_mut().find(|p| p.id == profile.id) {
+            Some(existing) => *existing = profile,
+            None => profiles.push(profile),
+        }
+        self.save_profiles(profiles);
+    }
+
+    fn remove_profile(&mut self, id: &str) -> Task<Message> {
+        let profiles = self
+            .config
+            .profiles
+            .iter()
+            .filter(|p| p.id != id)
+            .cloned()
+            .collect();
+        self.save_profiles(profiles);
+        self.pages.remove(id);
+        self.rebuild_nav(None);
+        let id = id.to_owned();
+        let forget = Task::perform(async move { crate::keyring::forget(&id).await }, |_| {
+            app(Message::Noop)
+        });
+        Task::batch([forget, self.activate_selected()])
+    }
+
+    /// Show the selected profile, looking for its password if needed.
+    fn activate_selected(&mut self) -> Task<Message> {
+        let Some(id) = self.selected().map(str::to_owned) else {
+            return Task::none();
+        };
+        let effects = self.pages.entry(id.clone()).or_default().activate();
+        self.run_profile_effects(&id, effects)
+    }
+
+    fn show_error(&mut self, context: &str, error: &EngineError) {
+        self.dialog = Some(Dialog::Error(errors::describe(context, error)));
+    }
+
+    fn start_wizard(&mut self, wizard: Wizard, effects: Vec<wizard::Effect>) -> Task<Message> {
+        self.wizard = Some(wizard);
+        self.run_wizard_effects(effects)
+    }
+
+    fn run_wizard_effects(&mut self, effects: Vec<wizard::Effect>) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for effect in effects {
+            tasks.push(match effect {
+                wizard::Effect::PickFolders { excludes } => {
+                    let title = if excludes {
+                        fl!("wizard-pick-excludes")
+                    } else {
+                        fl!("wizard-pick-sources")
+                    };
+                    Task::perform(tasks::pick_folders(title), move |paths| {
+                        app(Message::Wizard(if excludes {
+                            wizard::Message::ExcludesChosen(paths)
+                        } else {
+                            wizard::Message::SourcesChosen(paths)
+                        }))
+                    })
+                }
+                wizard::Effect::PickDestination => {
+                    Task::perform(tasks::pick_folder(fl!("select-repo-folder")), |path| {
+                        path.map_or(app(Message::Noop), |path| {
+                            app(Message::Wizard(wizard::Message::DestinationChosen(path)))
+                        })
+                    })
+                }
+                wizard::Effect::Estimate {
+                    generation,
+                    request,
+                    exclude_folders,
+                    cancel,
+                } => Task::run(
+                    tasks::estimate(request, exclude_folders, cancel),
+                    move |event| {
+                        app(Message::Wizard(wizard::Message::Estimate(
+                            generation, event,
+                        )))
+                    },
+                ),
+                wizard::Effect::Probe(path) => {
+                    let probed = path.clone();
+                    Task::perform(tasks::probe(path), move |result| {
+                        app(Message::Wizard(wizard::Message::Probed(
+                            probed.clone(),
+                            result,
+                        )))
+                    })
+                }
+                wizard::Effect::Finish(finish) => Task::perform(
+                    tasks::finish(finish.mode, finish.profile, finish.secret, finish.remember),
+                    |result| app(Message::WizardFinished(result)),
+                ),
+                wizard::Effect::Close => {
+                    self.wizard = None;
+                    Task::none()
+                }
+            });
+        }
+        Task::batch(tasks)
+    }
+
+    fn run_profile_effects(&mut self, id: &str, effects: Vec<profile::Effect>) -> Task<Message> {
+        let Some(profile) = self.config.profile(id).cloned() else {
+            return Task::none();
+        };
+        let mut tasks = Vec::new();
+        for effect in effects {
+            let id = id.to_owned();
+            let task = match effect {
+                profile::Effect::LoadKeyring => {
+                    let key = id.clone();
+                    Task::perform(
+                        async move { crate::keyring::load(&key).await },
+                        move |secret| {
+                            app(Message::Profile(
+                                id.clone(),
+                                profile::Message::KeyringLoaded(secret),
+                            ))
+                        },
+                    )
+                }
+                profile::Effect::Open { secret, remember } => {
+                    let used = secret.clone();
+                    Task::perform(
+                        tasks::open(profile.clone(), secret, remember),
+                        move |result| {
+                            app(Message::Profile(
+                                id.clone(),
+                                profile::Message::Opened(used.clone(), result),
+                            ))
+                        },
+                    )
+                }
+                profile::Effect::Fetch(secret) => {
+                    Task::perform(tasks::snapshots(profile.clone(), secret), move |result| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::SnapshotsLoaded(result),
+                        ))
+                    })
+                }
+                profile::Effect::BackUp(secret) => {
+                    let job = Job {
+                        repository: profile.location(),
+                        password: secret,
+                        request: Some(profile.backup_request()),
+                        snapshot: None,
+                        destination: None,
+                        ids: Vec::new(),
+                    };
+                    Task::run(child::run(Operation::Backup, job), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::Backup(event),
+                        ))
+                    })
+                }
+                profile::Effect::DeleteSnapshots(secret, ids) => {
+                    let job = Job {
+                        repository: profile.location(),
+                        password: secret,
+                        request: None,
+                        snapshot: None,
+                        destination: None,
+                        ids,
+                    };
+                    Task::run(child::run(Operation::DeleteSnapshots, job), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::SnapshotsDeleted(event),
+                        ))
+                    })
+                }
+                profile::Effect::ShowError(context, error) => {
+                    self.show_error(&context, &error);
+                    Task::none()
+                }
+                profile::Effect::RecordSuccess(time) => {
+                    let mut updated = profile.clone();
+                    updated.last_success = Some(time);
+                    self.upsert_profile(updated);
+                    Task::none()
+                }
+                profile::Effect::Edit => {
+                    let (wizard, effects) = Wizard::edit(&profile);
+                    self.start_wizard(wizard, effects)
+                }
+                profile::Effect::Remove => {
+                    self.dialog = Some(Dialog::Remove {
+                        id,
+                        name: profile.name.clone(),
+                    });
+                    Task::none()
+                }
+                profile::Effect::DeleteAll => {
+                    self.dialog = Some(Dialog::DeleteAll {
+                        id,
+                        name: profile.name.clone(),
+                        typed: String::new(),
+                        busy: false,
+                    });
+                    Task::none()
+                }
+            };
+            tasks.push(task);
+        }
+        Task::batch(tasks)
+    }
+
+    fn on_wizard_finished(
+        &mut self,
+        result: Result<tasks::Finished, EngineError>,
+    ) -> Task<Message> {
+        let outcome = result.as_ref().map(drop).map_err(Clone::clone);
+        let close = match self.wizard.as_mut() {
+            Some(wizard) => {
+                let effects = wizard.update(wizard::Message::Finished(outcome));
+                self.run_wizard_effects(effects)
+            }
+            None => Task::none(),
+        };
+        let finished = match result {
+            Ok(finished) => finished,
+            Err(err) => {
+                self.show_error(&fl!("create-repo-failed"), &err);
+                return close;
+            }
+        };
+
+        let mut profile = finished.profile;
+        if let Mode::Edit { .. } = finished.mode {
+            // Editing changes only what is backed up; the rest stays.
+            if let Some(existing) = self.config.profile(&profile.id) {
+                profile.last_success = existing.last_success;
+                profile.destination = existing.destination.clone();
+                profile.name = existing.name.clone();
+            }
+        }
+        let id = profile.id.clone();
+        self.upsert_profile(profile.clone());
+        self.rebuild_nav(Some(&id));
+
+        let mut effects = Vec::new();
+        if let Some(secret) = finished.secret {
+            let state = self.pages.entry(id.clone()).or_default();
+            state.update(
+                profile::Message::Opened(secret, Ok(finished.snapshots)),
+                &profile,
+            );
+            if finished.mode == Mode::Create {
+                effects = state.back_up(&profile);
+            }
+        }
+        Task::batch([close, self.run_profile_effects(&id, effects)])
+    }
+
+    fn on_dialog(&mut self, message: DialogMessage) -> Task<Message> {
+        match message {
+            DialogMessage::Close => {
+                self.dialog = None;
+                Task::none()
+            }
+            DialogMessage::Typed(text) => {
+                if let Some(Dialog::DeleteAll { typed, .. }) = &mut self.dialog {
+                    *typed = text;
+                }
+                Task::none()
+            }
+            DialogMessage::Confirm => {
+                let Some(dialog) = self.dialog.clone() else {
+                    return Task::none();
+                };
+                if !dialog.can_confirm() {
+                    return Task::none();
+                }
+                match dialog {
+                    Dialog::Error(_) => {
+                        self.dialog = None;
+                        Task::none()
+                    }
+                    Dialog::Remove { id, .. } => {
+                        self.dialog = None;
+                        debug_log!(CONFIG, "removing profile {id}; its data stays");
+                        self.remove_profile(&id)
+                    }
+                    Dialog::DeleteAll {
+                        id, name, typed, ..
+                    } => {
+                        let Some(profile) = self.config.profile(&id).cloned() else {
+                            return Task::none();
+                        };
+                        self.dialog = Some(Dialog::DeleteAll {
+                            id: id.clone(),
+                            name,
+                            typed,
+                            busy: true,
+                        });
+                        Task::perform(
+                            tasks::blocking(move || delete_repository(&profile)),
+                            move |result| {
+                                app(Message::Dialog(DialogMessage::Deleted(id.clone(), result)))
+                            },
+                        )
+                    }
+                }
+            }
+            DialogMessage::Deleted(id, result) => match result {
+                Ok(()) => {
+                    self.dialog = None;
+                    debug_log!(ENGINE, "deleted the repository of profile {id}");
+                    self.remove_profile(&id)
+                }
+                Err(err) => {
+                    self.show_error(&fl!("delete-repo-failed"), &err);
+                    Task::none()
+                }
+            },
+        }
+    }
+}
+
+/// Delete a profile's repository: under its lock, so nothing is writing to
+/// it, and only the entries the repository format owns.
+fn delete_repository(profile: &Profile) -> Result<(), EngineError> {
+    let location = profile.location();
+    let _lock = engine::lock::acquire(&location)?;
+    engine::location::delete_repository(location.path())?;
+    Ok(())
+}
+
+/// The user's home folder, the default thing to back up.
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
 }
 
 impl Application for App {
     type Executor = cosmic::executor::Default;
-
     type Flags = Flags;
-
     type Message = Message;
 
-    const APP_ID: &'static str = "io.github.stldave314.Stellarshot";
+    const APP_ID: &'static str = APP_ID;
 
     fn core(&self) -> &Core {
         &self.core
@@ -226,15 +624,17 @@ impl Application for App {
         vec![menu::menu_bar(&self.key_binds)]
     }
 
-    fn nav_model(&self) -> Option<&widget::nav_bar::Model> {
-        Some(&self.nav_model)
+    fn nav_model(&self) -> Option<&nav_bar::Model> {
+        // No sidebar until there is something to put in it: the empty state
+        // and the wizard fill the window instead.
+        (!self.config.profiles.is_empty() && self.wizard.is_none()).then_some(&self.nav)
     }
 
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
-        let nav_model = segmented_button::ModelBuilder::default().build();
+        let flags_start_wizard = flags.start_wizard;
         let about = About::default()
             .name(fl!("stellarshot"))
-            .icon(Self::APP_ID)
+            .icon(widget::icon::from_name(APP_ID))
             .version(env!("CARGO_PKG_VERSION"))
             .author(fl!("about-author"))
             .comments(fl!("about-credits"))
@@ -252,26 +652,35 @@ impl Application for App {
             ]);
         let mut app = App {
             core,
-            nav_model,
+            nav: nav_bar::Model::default(),
             about,
-            content: Content::new(),
             app_themes: vec![fl!("match-desktop"), fl!("dark"), fl!("light")],
             context_page: ContextPage::Settings,
             config_handler: flags.config_handler,
             config: flags.config,
-            dialog_pages: VecDeque::new(),
-            dialog_text_input: widget::Id::unique(),
-            password_label: fl!("password"),
+            dialog: None,
+            pages: HashMap::new(),
+            wizard: None,
             key_binds: key_binds(),
             modifiers: Modifiers::empty(),
+            now: format::now(),
         };
+        app.rebuild_nav(None);
 
-        let repositories = app.config.repositories.clone();
-        for repository in repositories {
-            app.create_nav_item(repository, "harddisk-symbolic");
-        }
-
-        (app, Task::none())
+        let title = fl!("stellarshot");
+        app.set_header_title(title.clone());
+        let title_task = match app.core.main_window_id() {
+            Some(id) => app.set_window_title(title, id),
+            None => Task::none(),
+        };
+        let activate = app.activate_selected();
+        let wizard = if flags_start_wizard {
+            app.update(Message::NewBackup)
+        } else {
+            Task::none()
+        };
+        debug_log!(UI, "started with {} profiles", app.config.profiles.len());
+        (app, Task::batch([title_task, activate, wizard]))
     }
 
     fn context_drawer(
@@ -280,18 +689,16 @@ impl Application for App {
         if !self.core.window.show_context {
             return None;
         }
-
         let title = self.context_page.title();
-
         Some(match self.context_page {
             ContextPage::About => cosmic::app::context_drawer::about(
                 &self.about,
-                Message::LaunchUrl,
+                |url| Message::LaunchUrl(url.to_owned()),
                 Message::CloseContextDrawer,
             )
             .title(title),
             ContextPage::Settings => cosmic::app::context_drawer::context_drawer(
-                self.settings(),
+                self.settings_view(),
                 Message::CloseContextDrawer,
             )
             .title(title),
@@ -299,137 +706,74 @@ impl Application for App {
     }
 
     fn dialog(&self) -> Option<Element<'_, Message>> {
-        let dialog_page = self.dialog_pages.front()?;
-
-        let spacing = cosmic::theme::active().cosmic().spacing;
-
-        let dialog = match dialog_page {
-            DialogPage::CreateRepository(directory, password) => widget::dialog()
-                .title(fl!("create-repo"))
-                .primary_action(
-                    widget::button::suggested(fl!("save"))
-                        .on_press_maybe(Some(Message::DialogComplete)),
-                )
-                .secondary_action(
-                    widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                )
-                .control(
-                    widget::column::with_children(vec![
-                        widget::text::body(fl!(
-                            "repo-location-value",
-                            path = directory.display().to_string()
-                        ))
-                        .into(),
-                        widget::text_input("", password)
-                            .password()
-                            .label(self.password_label.as_str())
-                            .id(self.dialog_text_input.clone())
-                            .on_input(move |password| {
-                                Message::DialogUpdate(DialogPage::CreateRepository(
-                                    directory.clone(),
-                                    password,
-                                ))
-                            })
-                            .on_submit(Message::DialogComplete)
-                            .into(),
-                    ])
-                    .spacing(spacing.space_xxs),
-                ),
-            DialogPage::CreateSnapshot(files) => widget::dialog()
-                .title(fl!("create-snapshot"))
-                .body(fl!("snapshot-description"))
-                .control(
-                    widget::column::with_children(
-                        files
-                            .iter()
-                            .map(|file| widget::text::body(file.display().to_string()).into())
-                            .collect(),
-                    )
-                    .spacing(spacing.space_xxs),
-                )
-                .primary_action(
-                    widget::button::suggested(fl!("create"))
-                        .on_press_maybe(Some(Message::DialogComplete)),
-                )
-                .secondary_action(
-                    widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                ),
-            DialogPage::Password(repository, password) => widget::dialog()
-                .title(fl!("password-for", name = repository.name.clone()))
-                .primary_action(
-                    widget::button::suggested(fl!("ok"))
-                        .on_press_maybe(Some(Message::DialogComplete)),
-                )
-                .secondary_action(
-                    widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                )
-                .control(
-                    widget::text_input("", password)
-                        .password()
-                        .label(self.password_label.as_str())
-                        .id(self.dialog_text_input.clone())
-                        .on_input(move |password| {
-                            Message::DialogUpdate(DialogPage::Password(
-                                repository.clone(),
-                                password,
-                            ))
-                        })
-                        .on_submit(Message::DialogComplete),
-                ),
-            DialogPage::DeleteRepository => widget::dialog()
-                .title(fl!("delete-repository"))
-                .body(fl!("delete-repository-description"))
-                .primary_action(
-                    widget::button::suggested(fl!("delete"))
-                        .on_press_maybe(Some(Message::DialogComplete)),
-                )
-                .secondary_action(
-                    widget::button::standard(fl!("cancel")).on_press(Message::DialogCancel),
-                ),
-            DialogPage::Error(message) => widget::dialog()
+        let dialog = self.dialog.as_ref()?;
+        let confirm = dialog
+            .can_confirm()
+            .then_some(Message::Dialog(DialogMessage::Confirm));
+        let cancel =
+            widget::button::standard(fl!("cancel")).on_press(Message::Dialog(DialogMessage::Close));
+        let built = match dialog {
+            Dialog::Error(message) => widget::dialog()
                 .title(fl!("error-title"))
                 .body(message.as_str())
                 .primary_action(
-                    widget::button::suggested(fl!("ok")).on_press(Message::DialogCancel),
+                    widget::button::suggested(fl!("ok"))
+                        .on_press(Message::Dialog(DialogMessage::Close)),
                 ),
+            Dialog::Remove { name, .. } => widget::dialog()
+                .title(fl!("remove-title", name = name.clone()))
+                .body(fl!("remove-body"))
+                .primary_action(widget::button::suggested(fl!("remove")).on_press_maybe(confirm))
+                .secondary_action(cancel),
+            Dialog::DeleteAll { name, typed, .. } => widget::dialog()
+                .title(fl!("delete-title", name = name.clone()))
+                .body(fl!("delete-body", name = name.clone()))
+                .control(
+                    widget::text_input(name.as_str(), typed.as_str())
+                        .on_input(|text| Message::Dialog(DialogMessage::Typed(text))),
+                )
+                .primary_action(widget::button::destructive(fl!("delete")).on_press_maybe(confirm))
+                .secondary_action(cancel),
         };
-
-        Some(dialog.into())
+        Some(built.into())
     }
 
-    fn on_nav_select(&mut self, entity: widget::nav_bar::Id) -> Task<Self::Message> {
-        let mut commands = vec![];
-        self.nav_model.activate(entity);
-
-        if let Some(repository) = self.nav_model.data::<Repository>(entity) {
-            debug_log!(UI, "selected repository {}", repository.path.display());
-            let name = repository.name.clone();
-            commands.push(self.update(Message::OpenPasswordDialog(repository.clone())));
-            let window_title = format!("{} - {}", name, fl!("stellarshot"));
-            if let Some(win_id) = self.core.main_window_id() {
-                commands.push(self.set_window_title(window_title, win_id));
-            }
+    fn on_nav_select(&mut self, id: nav_bar::Id) -> Task<Self::Message> {
+        if let Some(NavItem::New) = self.nav.data::<NavItem>(id) {
+            // "New backup" opens the wizard; the selection stays where it was.
+            return self.update(Message::NewBackup);
         }
-
-        Task::batch(commands)
+        self.nav.activate(id);
+        self.activate_selected()
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        widget::container(self.content.view().map(Message::Content))
-            .apply(widget::container)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Horizontal::Center)
-            .align_y(Vertical::Center)
-            .into()
+        if let Some(wizard) = &self.wizard {
+            return wizard.view().map(Message::Wizard);
+        }
+        if self.config.profiles.is_empty() {
+            return pages::empty::view();
+        }
+        let Some(id) = self.selected() else {
+            return widget::space::horizontal().width(Length::Fill).into();
+        };
+        match (self.config.profile(id), self.pages.get(id)) {
+            (Some(profile), Some(state)) => {
+                let id = id.to_owned();
+                state
+                    .view(profile, self.now)
+                    .map(move |message| Message::Profile(id.clone(), message))
+            }
+            _ => widget::space::horizontal().width(Length::Fill).into(),
+        }
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
         struct ConfigSubscription;
         struct ThemeSubscription;
 
-        let subscriptions = vec![
-            event::listen_with(|event, status, _win_id| match event {
+        Subscription::batch([
+            event::listen_with(|event, status, _window| match event {
                 Event::Keyboard(KeyEvent::KeyPressed { key, modifiers, .. }) => match status {
                     event::Status::Ignored => Some(Message::Key(modifiers, key)),
                     event::Status::Captured => None,
@@ -439,9 +783,9 @@ impl Application for App {
                 }
                 _ => None,
             }),
-            cosmic_config::config_subscription::<_, config::StellarshotConfig>(
+            cosmic_config::config_subscription::<_, StellarshotConfig>(
                 TypeId::of::<ConfigSubscription>(),
-                Self::APP_ID.into(),
+                APP_ID.into(),
                 CONFIG_VERSION,
             )
             .map(|update| {
@@ -460,96 +804,54 @@ impl Application for App {
                 cosmic_theme::THEME_MODE_ID.into(),
                 cosmic_theme::ThemeMode::version(),
             )
-            .map(|update| {
-                if !update.errors.is_empty() {
-                    debug_log!(
-                        CONFIG,
-                        "errors loading theme mode {:?}: {:?}",
-                        update.keys,
-                        update.errors
-                    );
-                }
-                Message::SystemThemeModeChange
-            }),
-        ];
-
-        Subscription::batch(subscriptions)
+            .map(|_| Message::SystemThemeModeChange),
+            cosmic::iced::time::every(CLOCK_TICK).map(|_| Message::Tick),
+        ])
     }
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
-        macro_rules! config_set {
-            ($name: ident, $value: expr) => {
-                match &self.config_handler {
-                    Some(config_handler) => {
-                        match paste::paste! { self.config.[<set_ $name>](config_handler, $value) } {
-                            Ok(_) => {}
-                            Err(err) => {
-                                error_log!(
-                                    CONFIG,
-                                    "failed to save config {:?}: {}",
-                                    stringify!($name),
-                                    err
-                                );
-                            }
-                        }
-                    }
-                    None => {
-                        self.config.$name = $value;
-                        error_log!(
-                            CONFIG,
-                            "failed to save config {:?}: no config handler",
-                            stringify!($name)
-                        );
-                    }
-                }
-            };
-        }
-
         match message {
-            Message::Content(message) => {
-                // Every task the content view asks for runs; returning from
-                // inside a loop used to drop all but the first.
-                let mut tasks = Vec::new();
-                for task in self.content.update(message) {
-                    match task {
-                        content::Task::FetchSnapshots(location, secret) => {
-                            tasks.push(Task::perform(
-                                blocking(move || engine::open(&location, &secret)?.snapshots()),
-                                |result| {
-                                    message::app(Message::Content(content::Message::SetSnapshots(
-                                        result,
-                                    )))
-                                },
-                            ));
-                        }
-                        content::Task::DeleteSnapshots(location, secret, ids) => {
-                            let job = Job {
-                                repository: location,
-                                password: secret,
-                                request: None,
-                                snapshot: None,
-                                destination: None,
-                                ids,
-                            };
-                            tasks.push(Task::run(
-                                child::run(Operation::DeleteSnapshots, job),
-                                |event| {
-                                    message::app(Message::Content(
-                                        content::Message::SnapshotsDeleted(event),
-                                    ))
-                                },
-                            ));
-                        }
-                        content::Task::ShowError(context, error) => {
-                            self.dialog_pages
-                                .push_back(DialogPage::Error(errors::describe(&context, &error)));
-                        }
-                    }
-                }
-                return Task::batch(tasks);
+            Message::Profile(id, message) => {
+                let Some(profile) = self.config.profile(&id).cloned() else {
+                    return Task::none();
+                };
+                let effects = self
+                    .pages
+                    .entry(id.clone())
+                    .or_default()
+                    .update(message, &profile);
+                return self.run_profile_effects(&id, effects);
             }
+            Message::Wizard(message) => {
+                let Some(wizard) = self.wizard.as_mut() else {
+                    return Task::none();
+                };
+                let effects = wizard.update(message);
+                return self.run_wizard_effects(effects);
+            }
+            Message::WizardFinished(result) => return self.on_wizard_finished(result),
+            Message::Dialog(message) => return self.on_dialog(message),
+            Message::NewBackup => {
+                if self.wizard.is_none() {
+                    let (wizard, effects) = Wizard::create(home_dir().as_deref());
+                    return self.start_wizard(wizard, effects);
+                }
+            }
+            Message::OpenExisting => {
+                if self.wizard.is_none() {
+                    return self.start_wizard(Wizard::open(), Vec::new());
+                }
+            }
+            Message::BackUpSelected => {
+                if let Some(id) = self.selected().map(str::to_owned)
+                    && let Some(profile) = self.config.profile(&id).cloned()
+                {
+                    let effects = self.pages.entry(id.clone()).or_default().back_up(&profile);
+                    return self.run_profile_effects(&id, effects);
+                }
+            }
+            Message::Tick => self.now = format::now(),
             Message::ToggleContextPage(context_page) => {
-                //TODO: ensure context menus are closed
                 if self.context_page == context_page {
                     self.core.window.show_context = !self.core.window.show_context;
                 } else {
@@ -557,289 +859,96 @@ impl Application for App {
                     self.core.window.show_context = true;
                 }
             }
-            Message::RequestFileForRepository => {
-                let title = fl!("select-repo-folder");
-                return Task::perform(
-                    async move {
-                        match ashpd::desktop::file_chooser::SelectedFiles::open_file()
-                            .title(title.as_str())
-                            .directory(true)
-                            .multiple(false)
-                            .send()
-                            .await
-                        {
-                            Ok(request) => portal::selected_paths(request.response()),
-                            Err(err) => Err(err.to_string()),
-                        }
-                    },
-                    |result| match result {
-                        Ok(paths) => match paths.into_iter().next() {
-                            Some(path) => message::app(Message::OpenCreateRepositoryDialog(path)),
-                            // Cancelled, or a non-local location was picked.
-                            None => cosmic::app::Message::None,
-                        },
-                        Err(err) => {
-                            debug_log!(UI, "file chooser for repository: {err}");
-                            cosmic::app::Message::None
-                        }
-                    },
-                );
-            }
-            Message::RequestFilesForSnapshot => {
-                let title = fl!("select-snapshot-files");
-                return Task::perform(
-                    async move {
-                        match ashpd::desktop::file_chooser::SelectedFiles::open_file()
-                            .title(title.as_str())
-                            .directory(false)
-                            .multiple(true)
-                            .send()
-                            .await
-                        {
-                            Ok(request) => portal::selected_paths(request.response()),
-                            Err(err) => Err(err.to_string()),
-                        }
-                    },
-                    |result| match result {
-                        Ok(paths) if !paths.is_empty() => {
-                            message::app(Message::OpenCreateSnapshotDialog(paths))
-                        }
-                        Ok(_) => cosmic::app::Message::None,
-                        Err(err) => {
-                            debug_log!(UI, "file chooser for snapshot: {err}");
-                            cosmic::app::Message::None
-                        }
-                    },
-                );
-            }
-            Message::ShowError(message) => {
-                self.dialog_pages.push_back(DialogPage::Error(message));
-            }
-            Message::OpenCreateRepositoryDialog(path) => {
-                self.dialog_pages
-                    .push_back(DialogPage::CreateRepository(path, String::new()));
-                return widget::text_input::focus(self.dialog_text_input.clone());
-            }
-            Message::OpenCreateSnapshotDialog(files) => {
-                self.dialog_pages
-                    .push_back(DialogPage::CreateSnapshot(files));
-            }
-            Message::OpenPasswordDialog(repository) => {
-                let Some(current_repository) = &self.content.repository else {
-                    self.dialog_pages
-                        .push_back(DialogPage::Password(repository, String::new()));
-                    return Task::none();
-                };
-                if &repository != current_repository {
-                    self.dialog_pages
-                        .push_back(DialogPage::Password(repository, String::new()));
-                }
-            }
-            Message::Repository(state) => match state {
-                RepositoryAction::Init(path, password) => {
-                    let name = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-                    let repository = Repository {
-                        name,
-                        path: path.clone(),
-                    };
-                    // The sidebar entry is only added once the repository
-                    // exists, so a refused or failed creation leaves nothing
-                    // behind.
-                    return Task::perform(
-                        blocking(move || create_or_open(path, password)),
-                        move |result| match result {
-                            Ok(()) => message::app(Message::Repository(RepositoryAction::Created(
-                                repository.clone(),
-                            ))),
-                            Err(err) => message::app(Message::ShowError(errors::describe(
-                                &fl!("create-repo-failed"),
-                                &err,
-                            ))),
-                        },
-                    );
-                }
-                RepositoryAction::Created(repository) => {
-                    debug_log!(CONFIG, "adding repository {}", repository.path.display());
-                    self.create_nav_item(repository.clone(), "harddisk-symbolic");
-                    let mut repositories = self.config.repositories.clone();
-                    if !repositories.iter().any(|r| r.path == repository.path) {
-                        repositories.push(repository);
-                    }
-                    config_set!(repositories, repositories);
-                }
-            },
-            Message::DeleteRepositoryDialog => {
-                // Delete acts on the repository selected in the sidebar, which
-                // need not have been unlocked with its password first.
-                if self.nav_model.active_data::<Repository>().is_some() {
-                    self.dialog_pages.push_back(DialogPage::DeleteRepository);
-                }
-            }
-            Message::CreateSnapshot(files) => {
-                let Some((location, secret)) = self.content.unlocked() else {
-                    return Task::none();
-                };
-                if self.content.is_backing_up() {
-                    return Task::none();
-                }
-                let job = Job {
-                    repository: location,
-                    password: secret,
-                    request: Some(engine::BackupRequest {
-                        sources: files,
-                        ..engine::BackupRequest::default()
-                    }),
-                    snapshot: None,
-                    destination: None,
-                    ids: Vec::new(),
-                };
-                let _ = self.content.update(content::Message::BackupStarted);
-                return Task::run(child::run(Operation::Backup, job), |event| {
-                    message::app(Message::Content(content::Message::Backup(event)))
-                });
-            }
-            Message::DialogCancel => {
-                self.dialog_pages.pop_front();
-            }
-            Message::DialogComplete => {
-                if let Some(dialog_page) = self.dialog_pages.pop_front() {
-                    match dialog_page {
-                        DialogPage::CreateRepository(path, password) => {
-                            return self.update(Message::Repository(RepositoryAction::Init(
-                                path,
-                                Secret::new(password),
-                            )));
-                        }
-                        DialogPage::CreateSnapshot(files) => {
-                            return self.update(Message::CreateSnapshot(files));
-                        }
-                        DialogPage::Password(repository, password) => {
-                            return self.update(Message::Content(content::Message::SetRepository(
-                                repository,
-                                Secret::new(password),
-                            )));
-                        }
-                        DialogPage::DeleteRepository => {
-                            let entity = self.nav_model.active();
-                            let Some(repository) =
-                                self.nav_model.data::<Repository>(entity).cloned()
-                            else {
-                                return Task::none();
-                            };
-                            // Nothing may be writing to it while it is removed:
-                            // not this window, not a scheduled run.
-                            let location = Location::local(&repository.path);
-                            let lock = match engine::lock::acquire(&location) {
-                                Ok(lock) => lock,
-                                Err(err) => {
-                                    return self.update(Message::ShowError(errors::describe(
-                                        &fl!("delete-repo-failed"),
-                                        &err,
-                                    )));
-                                }
-                            };
-                            // Only the repository's own entries are removed;
-                            // anything else in the folder is left alone.
-                            let deleted = engine::location::delete_repository(&repository.path);
-                            drop(lock);
-                            match deleted {
-                                Ok(remaining) => {
-                                    debug_log!(
-                                        ENGINE,
-                                        "deleted repository {}; left {} other entries",
-                                        repository.path.display(),
-                                        remaining.len()
-                                    );
-                                    let repositories = self
-                                        .config
-                                        .repositories
-                                        .iter()
-                                        .filter(|r| r.path != repository.path)
-                                        .cloned()
-                                        .collect();
-                                    config_set!(repositories, repositories);
-                                    self.nav_model.remove(entity);
-                                    if self.content.repository.as_ref() == Some(&repository) {
-                                        self.content.clear();
-                                    }
-                                }
-                                Err(err) => {
-                                    error_log!(ENGINE, "failed to delete repository: {err}");
-                                    return self.update(Message::ShowError(errors::describe(
-                                        &fl!("delete-repo-failed"),
-                                        &EngineError::from(err),
-                                    )));
-                                }
-                            }
-                        }
-                        DialogPage::Error(_) => {}
-                    }
-                }
-            }
-            Message::DialogUpdate(dialog_page) => {
-                if let Some(front) = self.dialog_pages.front_mut() {
-                    *front = dialog_page;
-                }
-            }
+            Message::CloseContextDrawer => self.core.window.show_context = false,
             Message::WindowClose => {
-                if let Some(win_id) = self.core.main_window_id() {
-                    return window::close(win_id);
+                if let Some(id) = self.core.main_window_id() {
+                    return window::close(id);
                 }
             }
             Message::WindowNew => match env::current_exe() {
-                Ok(exe) => match process::Command::new(&exe).spawn() {
-                    Ok(_child) => {}
-                    Err(err) => {
-                        error_log!(UI, "failed to execute {:?}: {}", exe, err);
+                Ok(exe) => {
+                    if let Err(err) = process::Command::new(&exe).spawn() {
+                        error_log!(UI, "failed to execute {exe:?}: {err}");
                     }
-                },
-                Err(err) => {
-                    error_log!(UI, "failed to get current executable path: {}", err);
                 }
+                Err(err) => error_log!(UI, "failed to get the current executable: {err}"),
             },
-            Message::LaunchUrl(url) => match open::that_detached(&url) {
-                Ok(()) => {}
-                Err(err) => {
-                    error_log!(UI, "failed to open {:?}: {}", url, err);
+            Message::LaunchUrl(url) => {
+                if let Err(err) = open::that_detached(&url) {
+                    error_log!(UI, "failed to open {url:?}: {err}");
                 }
-            },
+            }
             Message::Key(modifiers, key) => {
-                for (key_bind, action) in self.key_binds.iter() {
-                    if key_bind.matches(modifiers, &key) {
+                for (key_bind, action) in &self.key_binds {
+                    if key_bind.matches(modifiers, &key, None) {
                         return self.update(action.message());
                     }
                 }
             }
-            Message::Modifiers(modifiers) => {
-                self.modifiers = modifiers;
-            }
+            Message::Modifiers(modifiers) => self.modifiers = modifiers,
             Message::AppTheme(index) => {
-                let app_theme = match index {
+                let theme = match index {
                     1 => AppTheme::Dark,
                     2 => AppTheme::Light,
                     _ => AppTheme::System,
                 };
-                config_set!(app_theme, app_theme);
-                return self.update_config();
+                if let Some(handler) = &self.config_handler
+                    && let Err(err) = self.config.set_app_theme(handler, theme)
+                {
+                    error_log!(CONFIG, "failed to save the theme: {err}");
+                }
+                return self.update_theme();
             }
             Message::ConfigChanged(config) => {
                 if config != self.config {
                     self.config = config;
-                    return self.update_config();
+                    self.rebuild_nav(None);
+                    return self.update_theme();
                 }
             }
-            Message::SystemThemeModeChange => {
-                return self.update_config();
-            }
-            Message::CloseContextDrawer => {
-                self.core.window.show_context = !self.core.window.show_context
-            }
+            Message::SystemThemeModeChange => return self.update_theme(),
+            Message::Noop => {}
         }
-
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_requires_the_exact_name() {
+        let dialog = |typed: &str| Dialog::DeleteAll {
+            id: "x".into(),
+            name: "Home".into(),
+            typed: typed.into(),
+            busy: false,
+        };
+        assert!(!dialog("").can_confirm());
+        assert!(!dialog("home").can_confirm(), "case matters");
+        assert!(!dialog("Home ").can_confirm(), "no trailing space");
+        assert!(!dialog("Hom").can_confirm());
+        assert!(dialog("Home").can_confirm());
+
+        let busy = Dialog::DeleteAll {
+            id: "x".into(),
+            name: "Home".into(),
+            typed: "Home".into(),
+            busy: true,
+        };
+        assert!(!busy.can_confirm(), "not twice while the first delete runs");
+    }
+
+    #[test]
+    fn other_dialogs_confirm_freely() {
+        assert!(Dialog::Error("x".into()).can_confirm());
+        assert!(
+            Dialog::Remove {
+                id: "x".into(),
+                name: "Home".into()
+            }
+            .can_confirm()
+        );
     }
 }

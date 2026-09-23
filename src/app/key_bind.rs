@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use cosmic::iced::keyboard::Key;
-use cosmic::iced::keyboard::key::Named;
-use cosmic::widget::menu::key_bind::KeyBind;
+use cosmic::widget::menu::KeyBind;
 use cosmic::widget::menu::key_bind::Modifier;
 
 use crate::app::Action;
@@ -23,9 +22,8 @@ pub fn key_binds() -> HashMap<KeyBind, Action> {
             );
         }};
     }
-    bind!([Ctrl], Key::Character("r".into()), CreateRepository);
-    bind!([Ctrl, Shift], Key::Character("r".into()), CreateSnapshot);
-    bind!([], Key::Named(Named::Delete), DeleteRepository);
+    bind!([Ctrl], Key::Character("n".into()), NewBackup);
+    bind!([Ctrl], Key::Character("b".into()), BackUpNow);
     bind!([Ctrl], Key::Character("w".into()), WindowClose);
     bind!([Ctrl, Shift], Key::Character("n".into()), WindowNew);
     bind!([Ctrl], Key::Character(",".into()), Settings);

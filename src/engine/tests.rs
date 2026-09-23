@@ -364,3 +364,37 @@ fn backup_reports_progress_ending_at_the_total() {
     assert_eq!(last.done, file_bytes);
     assert!(last.total.is_some_and(|total| total >= last.done));
 }
+
+#[test]
+fn exclude_through_a_symlinked_path_still_applies() {
+    // Where /home is a symlink (e.g. to /var/home), the backup walks canonical
+    // paths; an exclude written through the symlink must still match.
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    fs::create_dir_all(fixture.source.join("cache")).unwrap();
+    fs::write(fixture.source.join("cache/big.tmp"), b"skip me").unwrap();
+    let linked = fixture.work.join("home-link");
+    symlink(&fixture.source, &linked).unwrap();
+
+    let request = BackupRequest {
+        sources: vec![linked.clone()],
+        excludes: vec![linked.join("cache")],
+        ..BackupRequest::default()
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fs::canonicalize(&fixture.source).unwrap());
+    assert!(
+        restored.join("plain.txt").exists(),
+        "the canonical source is backed up"
+    );
+    assert!(
+        !restored.join("cache").exists(),
+        "the exclude must follow the symlink"
+    );
+}

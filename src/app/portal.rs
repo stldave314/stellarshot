@@ -4,8 +4,7 @@
 
 use std::path::PathBuf;
 
-use ashpd::desktop::file_chooser::SelectedFiles;
-use ashpd::url::Url;
+use url::Url;
 
 /// Convert a `file://` URL from the file-chooser portal into a real path.
 ///
@@ -13,13 +12,6 @@ use ashpd::url::Url;
 /// back as `My%20Backups` — a different directory. `to_file_path` decodes it.
 pub fn url_to_path(url: &Url) -> Option<PathBuf> {
     url.to_file_path().ok()
-}
-
-/// The local paths a portal response refers to. Anything that is not a local
-/// file is dropped.
-pub fn selected_paths(result: ashpd::Result<SelectedFiles>) -> Result<Vec<PathBuf>, String> {
-    let files = result.map_err(|err| err.to_string())?;
-    Ok(files.uris().iter().filter_map(url_to_path).collect())
 }
 
 #[cfg(test)]

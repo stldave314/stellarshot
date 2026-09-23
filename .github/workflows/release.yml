@@ -31,7 +31,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            desktop-file-utils appstream
+            desktop-file-utils appstream dbus gnome-keyring
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -46,8 +46,15 @@ jobs:
       - name: Validate metadata
         run: ./scripts/validate-metadata.sh
 
+      # tests/keyring.rs needs a real Secret Service and fails without one,
+      # so the suite runs inside a private D-Bus session with an unlocked
+      # gnome-keyring rather than skipping it.
       - name: Test
-        run: cargo test --all-features
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            cargo test --all-features
+          '
 
       # A release must never ship with developer logging on, and that has to be
       # mechanical rather than remembered. install.sh passes the feature to

@@ -33,9 +33,15 @@ impl BackupRequest {
     /// The exclusions as rustic override globs. A leading `!` makes a glob an
     /// exclusion; a glob without one would instead restrict the backup to
     /// matching paths only.
+    ///
+    /// Excluded paths are canonicalised, because the backup canonicalises its
+    /// sources: where `/home` is a symlink to `/var/home`, the walk sees
+    /// `/var/home/dave/.cache`, and an exclude written as `/home/dave/.cache`
+    /// would silently never match.
     pub(crate) fn globs(&self) -> Vec<String> {
         self.excludes
             .iter()
+            .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
             .map(|path| format!("!{}", path.display()))
             .chain(
                 self.exclude_patterns
@@ -43,6 +49,17 @@ impl BackupRequest {
                     .map(|pattern| format!("!{pattern}")),
             )
             .collect()
+    }
+
+    /// The sources as the backup walks them: canonical, with nested paths
+    /// merged into the folder that contains them.
+    pub(crate) fn path_list(&self) -> Result<PathList, EngineError> {
+        self.sources
+            .iter()
+            .cloned()
+            .collect::<PathList>()
+            .sanitize()
+            .map_err(|err| EngineError::new(ErrorKind::Io, err.to_string()))
     }
 
     pub(crate) fn options(&self) -> BackupOptions {
@@ -70,13 +87,7 @@ impl Repo {
             return Err(EngineError::new(ErrorKind::Internal, "nothing to back up"));
         }
         let _reporting = self.report_to(progress);
-        let sources = request
-            .sources
-            .iter()
-            .cloned()
-            .collect::<PathList>()
-            .sanitize()
-            .map_err(|err| EngineError::new(ErrorKind::Io, err.to_string()))?;
+        let sources = request.path_list()?;
         debug_log!(ENGINE, "backup of {} sources", sources.len());
 
         let repo = self.inner.to_indexed_ids()?;

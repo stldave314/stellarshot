@@ -1,38 +1,112 @@
+# Application
 stellarshot = Sterneschuss
 
-# Content
-no-repository-selected = Kei Archiv usgwählt.
-no-repository-suggestion = Zum es Archiv mache, bruuch s Menü.
-no-snapshots = Kei Momentuufnahme gfunde.
-no-snapshots-suggestion = Zum e Momentuufnahm mache, bruuch s Menü.
-loading = Lade …
-loading-snapshots = Momentuufnahme wärded glade.
+# Empty state
+empty-title = Heb dini Dateie sicher uf
+empty-body = Sicher dini Ordner uf es anders Laufwerk oder in en andere Ordner. D Sicherige sind verschlüsslet, und nach de erschte wärded nur no Änderige gspeicheret.
+create-backup = Sicherig mache …
+open-existing = E vorhandeni Sicherig öffne
+
+# Profile page
+never-backed-up = No nie gsicheret
+backed-up-just-now = Grad vorhin gsicheret
+backed-up-minutes-ago = Letschti Sicherig vor { $count ->
+    [one] ere Minute
+   *[other] { $count } Minute
+}
+backed-up-hours-ago = Letschti Sicherig vor { $count ->
+    [one] ere Stund
+   *[other] { $count } Stunde
+}
+backed-up-days-ago = Letschti Sicherig vor { $count ->
+    [one] eme Tag
+   *[other] { $count } Täg
+}
+status-detail = { $destination } · { $count ->
+    [one] ei Momentuufnahm
+   *[other] { $count } Momentuufnahme
+}
+back-up-now = Jetzt sichere
+choose-what-title = Wähl, was gsicheret wird
+choose-what-body = Für die Sicherig sind no kei Ordner usgwählt.
+choose-what-button = Ordner wähle …
+unlock-title = Gib s Passwort vo dere Sicherig ii
+unlock = Entsperre
+remember-password = Passwort merke
+remember-password-description = Wird i dim Schlüsselbund gspeicheret. Planti Sicherige bruuched s.
+recent-snapshots = Letschti Momentuufnahme
+no-snapshots-yet = No kei Momentuufnahme. Druck „Jetzt sichere“ für di erscht.
+snapshot-row = { $id } · { $size } · { $added } neu
+show-all-snapshots = All { $count } Momentuufnahme zeige
+manage = Verwalte
+edit-backup = Was gsicheret wird
+edit-backup-description = Ii- und usgschlosseni Ordner ändere.
+remove-backup = Us Sterneschuss entferne
+remove-backup-description = Sterneschuss vergisst die Sicherig. D Sicherig sälber blibt, wo sie isch.
+delete-backup = Sicherig und alli Date lösche
+delete-backup-description = Löscht jedi Momentuufnahm vo dere Sicherig für immer.
 progress-starting = Fangt a …
 progress-preparing = Wird vorbereitet …
 progress-backing-up = Wird gsicheret …
 progress-restoring = Wird widerhergstellt …
 progress-checking = Wird prüeft …
 progress-amount = { $done } vo { $total }
-snapshot-row = { $id } · { $size } · { $added } neu
 
-# Dialogs
-save = Speichere
+# Wizard
+wizard-create-title = Neui Sicherig
+wizard-open-title = E vorhandeni Sicherig öffne
+wizard-edit-title = Was „{ $name }“ sicheret
+wizard-step = Schritt { $current } vo { $total }
+wizard-what-intro = Wähl d Ordner zum Sichere und was drin uusglah wärde söll.
+wizard-include = Iischlüüsse
+wizard-exclude = Usschlüüsse
+wizard-exclude-outside = Isch i keim iigschlossene Ordner und ändert drum nüt
+wizard-add-folders = Ordner hinzuefüege …
+wizard-pick-sources = Ordner zum Sichere wähle
+wizard-pick-excludes = Ordner zum Uuslah wähle
+wizard-advanced = Erwiiteret
+wizard-pattern-placeholder = Passendi Näme uuslah, z. B. *.tmp oder node_modules
+wizard-one-file-system = Uf em gliiche Laufwerk bliibe
+wizard-one-file-system-description = Keine andere Laufwerk oder Netzwerk-Ordner folge, wo i dene Ordner iighänkt sind.
+wizard-estimate-label = Gschätzti Grössi vo de Sicherig
+wizard-estimate = { $size } · { $files } Dateie
+wizard-estimate-counting = Wird zellt …
+wizard-estimate-note = Di erscht Sicherig isch nach Kompression und Deduplizierig meischtens chliiner. Spöteri Sicherige speichered nur Änderige.
+wizard-where-intro = Wähl, wo d Sicherig uufbewahrt wird: en läre Ordner, am beschte uf emne andere Laufwerk.
+wizard-where-title = Speicherort
+wizard-no-folder = Kei Ordner gwählt
+wizard-choose-folder = Ordner wähle …
+select-repo-folder = Wähl en Ordner für s Archiv
+wizard-where-new = Da wird e neui Sicherig gmacht.
+wizard-where-existing = De Ordner hät scho e Sicherig drin. Füeg sie statt dem über „E vorhandeni Sicherig öffne“ hinzue.
+wizard-where-found = Da isch e Sicherig gfunde worde.
+wizard-where-no-repository = I dem Ordner git’s kei Sicherig.
+wizard-where-not-empty = De Ordner hät scho anderi Dateie drin. Wähl en läre Ordner.
+wizard-name = Name
+wizard-name-placeholder = Zum Bispiil: Persönliche Ordner uf USB-Laufwerk
+wizard-secure-intro = Wähl es Passwort. Dini Sicherig wird demit verschlüsslet.
+wizard-open-intro = Gib s Passwort ii, mit dem die Sicherig gmacht worde isch.
+wizard-confirm = Passwort bstätige
+wizard-mismatch = D Passwörter stimmed nöd überii.
+wizard-password-warning = Wänn du das Passwort verliersch, chönd dini Sicherige nöd widerhergstellt wärde. Niemert cha’s für dich widerhole.
+wizard-finish-create = Mache und jetzt sichere
+wizard-finish-open = Öffne
+
+# Dialogs and buttons
 ok = OK
-create = Erstelle
+save = Speichere
+add = Hinzuefüege
+back = Zrugg
+next = Wiiter
+edit = Bearbeite
+remove = Entferne
 delete = Lösche
 cancel = Abbreche
-create-repo = Es neus Archiv mache
-delete-repo = Archiv lösche
-repo-location-value = Speicherort vom Archiv: { $path }
-snapshots = Momentuufnahme
-create-snapshot = E neui Momentuufnahm mache
-delete-repository = Archiv lösche
-delete-repository-description = Das entfernt s Archiv und all Momentuufnahme drin. Anderi Dateie im gliiche Ordner blibed unberüert.
-snapshot-description = E Momentuufnahm isch e kopie vo dim Archiv a emne bstimmte Ziitpunkt
 password = Passwort
-password-for = Passwort für { $name }
-select-repo-folder = Wähl en Ordner für s Archiv
-select-snapshot-files = Wähl d Dateie zum Sichere
+remove-title = „{ $name }“ entferne?
+remove-body = Sterneschuss vergisst die Sicherig und s gspeicherete Passwort. D Sicherig und iri Momentuufnahme wärded nöd glöscht und chönd spöter wider göffnet wärde.
+delete-title = „{ $name }“ und alli Date lösche?
+delete-body = Das löscht d Sicherig und jedi Momentuufnahm drin für immer. Anderi Dateie im gliiche Ordner blibed unberüert. Gib { $name } zum Bstätige ii.
 
 # Errors
 error-title = Öppis isch schiefgange
@@ -51,19 +125,15 @@ error-locked = Es anders Sichere bruucht das Archiv grad. Probier's nomal, wänn
 error-cancelled = De Vorgang isch abbroche worde. Es isch nüt veränderet worde.
 error-repository-damaged = D Prüefig vom Archiv hät Problem gfunde. Lösch kei anderi Kopie vo dine Date, bis das glöst isch.
 
-# Context Pages
-
-## About
+# About
 about = Über
 about-author = D Stellarshot-Mitwirkende
 about-credits = Basiert uf Stellarshot vom cosmic-utils-Projekt.
 repository = Quellcode
 support = Hilf
 
-## Settings
+# Settings
 settings = Iistellige
-
-### Appearance
 appearance = Ussehe
 theme = Färbig
 match-desktop = A de Desktop agliche
@@ -71,18 +141,11 @@ dark = Dunkel
 light = Hell
 
 # Menu
-
-## File
 file = Datei
-new-repo = Neus Archiv
-new-snap = Neui Momentuufnahm
+menu-new-backup = Neui Sicherig …
+new-backup = Neui Sicherig
 new-window = Neus Fenster
 quit = Verlah
-
-## Edit
-edit = Bearbeite
-
-## View
 view = Asicht
 menu-settings = Iinstellige
 menu-about = Informatione über Sterneschuss

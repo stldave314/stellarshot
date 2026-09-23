@@ -1,15 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::sync::Mutex;
-
-use super::config::{CONFIG_VERSION, StellarshotConfig};
-use super::icon_cache::{ICON_CACHE, IconCache};
-use super::migrate;
-use crate::app::{App, Flags};
+use super::config::StellarshotConfig;
+use super::{APP_ID, Flags, migrate};
 use crate::constants::{WINDOW_HEIGHT, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_WIDTH};
 use crate::debug::CONFIG;
 use crate::{debug_log, error_log};
-use cosmic::Application;
 use cosmic::app::Settings;
 use cosmic::iced::{Limits, Size};
 use tracing_subscriber::layer::SubscriberExt;
@@ -17,24 +12,40 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init() -> (Settings, Flags) {
     set_logger();
+    crate::core::localization::init();
     migrate_settings();
-    set_icon_cache();
     let settings = get_app_settings();
     let flags = get_flags();
     (settings, flags)
 }
 
-/// Carry settings over from the upstream application ID before anything reads
-/// them. A failure is reported but never fatal: the app still starts, just
-/// without the old repository list.
+/// Bring settings from older versions forward before anything reads them.
+/// Failures are reported but never fatal: the app still starts, just without
+/// the old entries.
 fn migrate_settings() {
     let Some(root) = migrate::config_root() else {
         return;
     };
-    match migrate::migrate_app_id(&root, App::APP_ID, CONFIG_VERSION) {
+    // 1. Settings saved under the upstream application ID.
+    match migrate::migrate_app_id(&root, APP_ID, 1) {
         Ok(true) => debug_log!(CONFIG, "migrated settings from {}", migrate::OLD_APP_ID),
         Ok(false) => {}
         Err(err) => error_log!(CONFIG, "could not migrate old settings: {err}"),
+    }
+    // 2. Version 1 repositories become version 2 backup profiles, once.
+    if let Some(profiles) = migrate::v1_profiles(&root, APP_ID) {
+        let Some(handler) = StellarshotConfig::config_handler() else {
+            return;
+        };
+        let mut config = StellarshotConfig::config();
+        let count = profiles.len();
+        match config.set_profiles(&handler, profiles) {
+            Ok(_) => debug_log!(
+                CONFIG,
+                "created {count} profiles from version 1 repositories"
+            ),
+            Err(err) => error_log!(CONFIG, "could not create profiles from old settings: {err}"),
+        }
     }
 }
 
@@ -57,19 +68,16 @@ pub fn get_app_settings() -> Settings {
 pub fn set_logger() {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("stellarshot=warn,rustic_core=warn"));
-    tracing_subscriber::registry()
+    let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(filter)
-        .init();
-}
-
-pub fn set_icon_cache() {
-    ICON_CACHE.get_or_init(|| Mutex::new(IconCache::new()));
+        .try_init();
 }
 
 pub fn get_flags() -> Flags {
     Flags {
         config_handler: StellarshotConfig::config_handler(),
         config: StellarshotConfig::config(),
+        start_wizard: false,
     }
 }

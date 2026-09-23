@@ -11,4 +11,6 @@ pub mod constants;
 pub mod core;
 pub mod debug;
 pub mod engine;
+pub mod keyring;
+pub mod profile;
 pub mod runner;

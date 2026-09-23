@@ -23,7 +23,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            build-essential pkg-config libxkbcommon-dev libwayland-dev
+            build-essential pkg-config libxkbcommon-dev libwayland-dev \
+            dbus gnome-keyring
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -41,8 +42,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features
 
+      # tests/keyring.rs needs a real Secret Service and fails without one,
+      # so the suite runs inside a private D-Bus session with an unlocked
+      # gnome-keyring rather than skipping it.
       - name: Test
-        run: cargo test --all-features
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            cargo test --all-features
+          '
 
       # Proves the release feature really removes developer logging, instead of
       # trusting that the constant does what it says.

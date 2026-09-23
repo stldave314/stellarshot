@@ -31,6 +31,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Backup profiles.** Each backup has its own name, folders to include and
+  exclude, glob patterns to leave out, destination and password, and they sit
+  side by side in the sidebar. Repositories from earlier versions become
+  profiles once, on first launch.
+- **A setup wizard**: what to back up, where to keep it, the password. It
+  starts from the home folder with `~/.cache`, the Trash and `~/Downloads` left
+  out, refuses a destination that holds other files, and points out one that
+  already holds a backup. The same wizard opens an existing backup (taking its
+  folders from the latest snapshot) and edits what a backup covers.
+- **A live size estimate that subtracts exclusions.** It walks the same
+  filtered file list the backup reads, so it equals what the backup
+  processes; a test holds it to the byte. Each included folder shows its size
+  and each exclusion what it removes.
+- **A status-first main screen**: last backup, destination, snapshot count,
+  **Back Up Now** (<kbd>Ctrl</kbd>+<kbd>B</kbd>), recent snapshots, and a
+  **Create a Backup…** button on the first screen.
+- **Passwords remembered in the keyring** (Secret Service), on by default,
+  with every keyring request bounded so a keyring that never answers cannot
+  hang the page.
+- **"Remove from Stellarshot" and "Delete backup and all data"** as separate
+  actions; the second needs the backup's name typed exactly.
+- A **New Backup** launcher action, also available as
+  `stellarshot --new-backup`.
+- `scripts/screenshots.sh`, which rebuilds every screenshot from the real app
+  with demo data.
 - **A new backup engine** on rustic 0.13 (from 0.2), in one module that is
   the only code touching rustic. Errors are typed (wrong password, not a
   repository, destination unreachable, busy, cancelled, damaged) and each has
@@ -69,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- libcosmic moves to 1.0. The old file-chooser crate, which drew a
+  future-incompatibility warning, is replaced by libcosmic's own portal
+  dialogs.
+- A backup whose folder sits inside one of its sources (`~` backed up to
+  `~/Backups/home`) now leaves that folder out automatically instead of
+  backing the repository up into itself.
+- Excluded paths are resolved through symlinks, so an exclusion still applies
+  where `/home` is a symlink (for example to `/var/home`).
+- Paths under the home folder are shown as `~/…`.
 - Opening a repository, listing snapshots and creating a repository run off
   the UI thread.
 - A wrong password now says so, and returns the view to "no repository
@@ -82,6 +116,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Translations were never used.** Upstream loaded only the English
+  fallback and never selected the desktop's language, so every translation
+  shipped and none appeared. The desktop's language is now selected at
+  startup, and a test proves a requested language is actually used.
 - Folders with spaces or other escaped characters in their names were stored
   percent-encoded (`My%20Backups`), which pointed at a different directory.
 - Reloading the snapshot list after deleting a snapshot used the literal

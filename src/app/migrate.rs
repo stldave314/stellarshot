@@ -9,6 +9,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::profile::{Profile, profiles_from_v1};
+
 /// The application ID this fork was created from.
 pub const OLD_APP_ID: &str = "com.github.cosmic-utils.Stellarshot";
 
@@ -48,6 +50,24 @@ pub fn migrate_app_id(config_root: &Path, new_app_id: &str, version: u64) -> io:
         }
     }
     Ok(true)
+}
+
+/// The profiles to create from version 1 `repositories`, once.
+///
+/// `None` when there is nothing to do: version 2 already has a `profiles`
+/// setting (even an empty one — the user may have removed them all), or
+/// there were no version 1 repositories.
+pub fn v1_profiles(config_root: &Path, app_id: &str) -> Option<Vec<Profile>> {
+    if version_dir(config_root, app_id, 2)
+        .join("profiles")
+        .exists()
+    {
+        return None;
+    }
+    let v1 =
+        std::fs::read_to_string(version_dir(config_root, app_id, 1).join("repositories")).ok()?;
+    let profiles = profiles_from_v1(&v1);
+    (!profiles.is_empty()).then_some(profiles)
 }
 
 #[cfg(test)]
@@ -93,6 +113,31 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(new.join("repositories")).unwrap(),
             "new"
+        );
+    }
+
+    #[test]
+    fn v1_repositories_become_profiles_once() {
+        let tmp = TempDir::new().unwrap();
+        let v1 = version_dir(tmp.path(), NEW, 1);
+        std::fs::create_dir_all(&v1).unwrap();
+        std::fs::write(
+            v1.join("repositories"),
+            "[(name: \"home\", path: \"/backups/home\")]",
+        )
+        .unwrap();
+
+        let profiles = v1_profiles(tmp.path(), NEW).expect("one profile to create");
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].name, "home");
+
+        // Once version 2 has its own list, version 1 is never read again.
+        let v2 = version_dir(tmp.path(), NEW, 2);
+        std::fs::create_dir_all(&v2).unwrap();
+        std::fs::write(v2.join("profiles"), "[]").unwrap();
+        assert!(
+            v1_profiles(tmp.path(), NEW).is_none(),
+            "profiles are not duplicated"
         );
     }
 

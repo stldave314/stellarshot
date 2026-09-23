@@ -22,3 +22,9 @@ pub const WINDOW_MIN_HEIGHT: f32 = 180.0;
 /// Shortest interval between two progress reports from one operation. rustic
 /// reports per blob; anything faster than this only costs redraws.
 pub const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Longest wait for the desktop keyring. Long enough to type a password into
+/// an unlock prompt; short enough that a keyring that never answers (no
+/// Secret Service, or one waiting on a prompt nobody can see) turns into
+/// "not remembered" instead of a request that never ends.
+pub const KEYRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);

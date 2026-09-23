@@ -32,16 +32,17 @@ note in the [README](README.md).
 - **No lock-in.** Every repository can be read with the `restic` or `rustic`
   command-line tools, so a bug in, or the end of, this app does not strand your
   backups.
-- **Passwords are never written to disk by Stellarshot.** The current version
-  asks for the password each time and keeps it in memory for that session.
-  Backups run in a separate process; the password is handed to it on its
-  standard input, never on its command line or in its environment, which
-  other programs running as you can read from `/proc`.
-  When keyring support arrives, passwords will go to the Secret Service keyring
-  (GNOME Keyring or KWallet) and nowhere else.
-- **Deletion only touches the repository.** Deleting a repository removes the
-  entries the repository format creates and nothing else, and does not follow
-  symlinks. Creating a repository in a folder that already holds other files is
+- **Passwords are never written to Stellarshot's own files.** A password is
+  either typed each session or, when you choose **Remember password**, kept in
+  the desktop keyring (the Secret Service: GNOME Keyring or KWallet), which
+  encrypts it with your login password. The keyring item is labelled with the
+  backup's name and removed when you remove the backup. Backups run in a
+  separate process; the password is handed to it on its standard input, never
+  on its command line or in its environment, which other programs running as
+  you can read from `/proc`.
+- **Deletion only touches the repository.** Deleting a backup's data needs its
+  name typed exactly, holds the repository's lock, removes the entries the
+  repository format creates and nothing else, and does not follow symlinks. Creating a repository in a folder that already holds other files is
   refused. Both rules exist because the upstream code could have deleted a home
   directory; see the [changelog](CHANGELOG.md).
 - **One writer per repository.** Every backup, restore, check and deletion
@@ -59,6 +60,9 @@ note in the [README](README.md).
   repository is unlocked, or delete your backups if they are on a disk you can
   write to. Keep at least one backup somewhere your everyday account cannot
   delete, such as a drive you unplug.
+- **Anyone who can unlock your keyring.** A remembered password is as safe as
+  your login keyring. If that matters for a particular backup, turn
+  **Remember password** off for it; you will be asked each session instead.
 - **A forgotten password.** There is no recovery. Nobody, including the
   maintainer, can decrypt a repository without its password.
 - **Metadata at the storage location.** Whoever holds the storage can see how

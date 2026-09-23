@@ -182,7 +182,7 @@ It's a full page in the content area with four steps: **what, where, when, secur
    - Include and exclude lists. "Add folders…" opens the XDG file-chooser portal with multi-select. Glob patterns are under Advanced.
    - Each include row shows its size. Each exclude row shows how much it removes from inside the includes.
    - An exclude outside every include is dimmed and labeled *"not inside an included folder"*.
-   - The **Estimated backup size** shows files and bytes, with the arithmetic underneath. It's computed by `engine::estimate`, which iterates `LocalSource::entries()`: the **same filtered stream the backup reads**. Hard links are counted once by inode, symlinks aren't followed, and `one_file_system` is respected.
+   - The **Estimated backup size** shows files and bytes, with the arithmetic underneath. It's computed by `engine::estimate`, which iterates `LocalSource::entries()`: the **same filtered stream the backup reads**. Files are counted exactly as the backup counts them (a hard-linked file once per name, overlapping sources once), symlinks aren't followed, and `one_file_system` is respected. *(Changed in M2 from "hard links once by inode": the estimate must equal the backup's own total, and rustic counts each name.)*
    - The estimate updates live, restarts after `SIZE_SCAN_DEBOUNCE` when the lists change, and never blocks Next. A note says the first backup is usually smaller after compression and deduplication.
 2. **Where.**
    - Options: removable drive (detected drives listed, with a **too-small warning** from the estimate), Google Drive (**Sign in with Google…**, then a folder field), SFTP, local folder, and "Other cloud (rclone remote)" behind an expander.

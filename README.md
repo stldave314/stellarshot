@@ -18,12 +18,12 @@ Every backup is a standard **restic repository**. If this app disappeared
 tomorrow, the `restic` and `rustic` command-line tools could still read every
 snapshot you ever made.
 
-![A repository and its snapshots](docs/screenshots/main-dark.png)
+![A backup and its snapshots, with Back Up Now](docs/screenshots/profile.png)
 
-> **Status: early, and not yet something to trust with your only copy.** The
-> version here creates repositories, backs files up in the background with
-> progress and Cancel, lists and deletes snapshots, and deletes repositories
-> safely. Restore, folders, schedules and cloud storage are still to come. Keep another backup, and follow the
+> **Status: early, and not yet something to trust with your only copy.** You
+> can set up backups of folders to another drive or folder, run them in the
+> background, and manage their snapshots. Restore, schedules and cloud storage
+> are still to come. Keep another backup, and follow the
 > [3-2-1 rule](https://www.backblaze.com/blog/the-3-2-1-backup-strategy/).
 
 **[Roadmap](ROADMAP.md)** · **[Changelog](CHANGELOG.md)** ·
@@ -34,50 +34,52 @@ snapshot you ever made.
 
 ## What it does today
 
-- **Creates encrypted repositories.** Pick an empty folder, choose a password,
-  and Stellarshot creates a restic-format repository there: AES-256
-  encryption, content-defined deduplication, compression.
-- **Refuses to create a repository on top of your files.** A folder that
-  already holds other files is rejected, with an explanation. Earlier versions
-  of Stellarshot would happily write a repository into your home directory.
-- **Recognises an existing repository.** Choosing a folder that already holds
-  one opens it with the password you give, and never initialises over it. A
-  wrong password is an error, not a reason to start again.
-- **Backs up files in the background.** Choose files and take a snapshot of
-  them. The backup runs in its own process: the window stays responsive,
-  shows how far it has got, and **Cancel** stops it. A cancelled or
-  interrupted backup never leaves a half-written snapshot, and the repository
-  stays sound (this is tested by killing a backup midway).
-- **Only one backup writes to a repository at a time.** A second attempt is
-  told the repository is busy instead of racing the first. If Stellarshot or
-  the computer stops mid-backup, the lock goes with it; there is never a
-  stale lock to clear.
-- **Incremental.** Unchanged files are not stored again, and identical data
-  is stored once however many files contain it.
-- **Lists and deletes snapshots** in the selected repository.
-- **Deletes a repository safely.** Only the entries the repository format
-  creates (`config`, `keys`, `data`, `index`, `snapshots`, `locks`) are
-  removed. Anything else in the same folder is left exactly where it was, and
-  the folder itself is only removed if nothing else is in it.
-- **Tells you when something fails.** Errors appear in a dialog, in your
-  language where the cause is known, rather than disappearing into a log.
-- **Carries your settings over** from the upstream Stellarshot, whose
-  settings were stored under a different application ID.
+- **Several backups, each with its own settings.** "Home to the USB drive" and
+  "Projects to the NAS folder" live side by side in the sidebar, each with its
+  own folders, exclusions, destination and password.
+- **A setup wizard.** Three steps: what to back up, where to keep it, and the
+  password. It starts from your home folder with the usual clutter
+  (`~/.cache`, the Trash, `~/Downloads`) already left out.
+- **A size estimate you can trust.** The wizard shows how much will be backed up
+  while you choose, with excluded folders **subtracted** from the folders they
+  sit in. It is worked out from the very same file list the backup reads, so
+  it matches what the backup processes, to the byte. Each included folder shows
+  its own size, and each exclusion shows how much it takes out.
+- **"Back Up Now" on the main screen**, with a progress card and **Cancel**.
+  Backups run in their own process: the window never freezes, a cancelled or
+  interrupted backup never leaves a half-written snapshot, and closing the
+  window lets a running backup finish.
+- **Passwords remembered in your keyring**, if you want (it is on by default).
+  They go to the desktop's Secret Service (GNOME Keyring, KWallet) and nowhere
+  else. Without it, the page asks once per session.
+- **Status at a glance.** "Last backup 2 hours ago", where the backup is, how
+  many snapshots it holds, and the most recent snapshots with their size and
+  how much new data each added.
+- **Two different ways to let go of a backup.** *Remove from Stellarshot*
+  forgets it and leaves the data alone. *Delete backup and all data* deletes
+  it, and only after you type the backup's name.
+- **Deleting never touches anything else.** Only the entries the repository
+  format creates are removed; other files in the same folder stay, symlinks are
+  not followed, and nothing is deleted while another backup is writing.
+- **Opens existing backups.** Point it at a repository made by an earlier
+  Stellarshot, by `restic` or by `rustic`, give the password, and it carries on
+  with the same folders the last snapshot covered.
+- **Incremental and deduplicated.** Unchanged files are not stored again, and
+  identical data is stored once however many files contain it.
+- **Your language.** English, Bulgarian, German, Swedish and Swiss German,
+  following the desktop's language.
 
 ## What is coming
 
 In the order it will land (the detail is in [ROADMAP.md](ROADMAP.md)):
 
-1. **Backup profiles and a new main screen**: "Back Up Now" on the front page,
-   a setup wizard with include and exclude folders, a live estimate of how
-   much will be backed up, and passwords remembered in your keyring.
-2. **Storage locations**: USB drives recognised wherever they are mounted,
-   SFTP servers, and Google Drive, OneDrive or any other rclone remote, with
-   sign-in handled inside the app. Import from Déjà Dup.
-3. **A complete restore**: browse snapshots, restore single files or folders,
+1. **Storage locations**: USB drives recognised wherever they are mounted, SFTP
+   servers, and Google Drive, OneDrive or any other rclone remote, with sign-in
+   handled inside the app. Import from Déjà Dup.
+2. **A complete restore**: browse snapshots, restore single files or folders,
    see every version of a file, find deleted files, compare two snapshots, and
    preview exactly what a restore will do.
-4. **Automation**: scheduled backups, retention policies, notifications and
+3. **Automation**: scheduled backups, retention policies, notifications and
    periodic integrity checks.
 
 ---
@@ -85,8 +87,10 @@ In the order it will land (the detail is in [ROADMAP.md](ROADMAP.md)):
 ## Requirements
 
 - COSMIC desktop (Pop!\_OS 24.04 or newer, or any COSMIC session)
-- The XDG desktop portal, which provides the file chooser (installed with
+- The XDG desktop portal, which provides the folder chooser (installed with
   COSMIC)
+- A Secret Service keyring (GNOME Keyring or KWallet) to remember passwords;
+  optional
 - A Rust toolchain (1.93 or newer) if building from source
 
 `rclone` is recommended by the packages. Nothing uses it yet; cloud storage
@@ -120,7 +124,7 @@ installs, packages and CI:
 | --- | --- |
 | `./install.sh` | Build and install system-wide |
 | `./install.sh build` | Build only |
-| `./install.sh uninstall` | Remove an installed copy (settings and repositories are kept) |
+| `./install.sh uninstall` | Remove an installed copy (settings and backups are kept) |
 | `./install.sh deb` / `rpm` / `tarball` | Build one package into `dist/` |
 | `./install.sh package` | Build all three |
 
@@ -132,60 +136,93 @@ limit parallel compile jobs on a small machine.
 
 ## Using it
 
-### Creating a repository
+### Setting up a backup
 
-**File → New repository** (<kbd>Ctrl</kbd>+<kbd>R</kbd>) opens the file
-chooser. Pick a folder for the repository, then set its password.
+On first launch, press **Create a Backup…** (or **File → New Backup…**,
+<kbd>Ctrl</kbd>+<kbd>N</kbd>, or **New Backup** from the launcher's
+right-click menu).
 
-The folder must be **empty**, not exist yet, or **already hold a repository**.
-A folder with anything else in it is refused. A repository is a set of files
-and folders at the top of its folder (`config`, `keys`, `data`, ...). Mixing
-those in with your own files is how a home directory ends up full of backup
-internals, and it makes deleting the repository dangerous.
+![Setting up a backup, with a live size estimate](docs/screenshots/wizard.png)
 
-> **Remember the password.** The repository is encrypted with it. If it is
-> lost, nobody can recover the backups, including you.
+1. **What.** Your home folder is included, with `~/.cache`, the Trash and
+   `~/Downloads` left out. **Add Folders…** under *Include* or *Exclude* adds
+   more (you can pick several at once). The estimate at the top updates as you
+   go. An exclusion that is not inside any included folder is marked as
+   changing nothing. Under **Advanced** you can leave out names that match a
+   pattern anywhere, such as `*.tmp` or `node_modules`, and choose whether to
+   stay on the same drive (on by default, so a network share mounted inside
+   your home folder is not swept up).
+2. **Where.** Choose an **empty** folder, ideally on another drive, and give the
+   backup a name. A folder that already holds other files is refused; one that
+   already holds a backup is pointed out, so you can open it instead.
+3. **Password.** Choose one and confirm it. **Remember password** keeps it in
+   your keyring.
 
-### Taking a snapshot
+**Create and Back Up Now** creates the backup and takes the first snapshot
+straight away.
 
-Select the repository in the sidebar and enter its password. Then **File →
-Create snapshot** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) opens the
-file chooser, and the chosen files are backed up as one snapshot.
+> **Remember the password.** The backup is encrypted with it. If it is lost,
+> nobody can recover the backups, including you.
 
-A progress card shows the current phase and how much has been stored. Press
-**Cancel** to stop; nothing half-finished is kept. Closing the window does
-*not* stop a backup that is already running: it finishes on its own.
+If the backup folder is inside one of the folders you back up — `~` backed up
+to `~/Backups/home` — Stellarshot leaves the backup folder out automatically,
+so a backup never copies itself.
 
-For now the chooser selects files, not folders; see
-[Known limitations](#known-limitations).
+### Opening an existing backup
 
-### Deleting
+**Open an existing backup** on the first screen asks for the folder and its
+password. The folders to back up are taken from the most recent snapshot, so
+the backup carries on as it was.
 
-- **A snapshot:** the bin icon on its row.
-- **A repository:** select it in the sidebar, then **Edit → Delete repository**
-  (<kbd>Delete</kbd>). This removes the repository and every snapshot in it,
-  and nothing else. Other files in the same folder are not touched.
+### Backing up
+
+Select the backup in the sidebar and press **Back Up Now**
+(<kbd>Ctrl</kbd>+<kbd>B</kbd>). A progress card shows the phase and how much
+has been stored; **Cancel** stops it, keeping nothing half-finished.
+
+If the password is not remembered, the page asks for it first. Enter it once
+and it is kept for the rest of the session (and in the keyring if you leave
+**Remember password** on).
+
+### Changing a backup
+
+The **Manage** section at the bottom of each backup's page:
+
+| Action | What happens |
+| --- | --- |
+| **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
+| **Remove from Stellarshot** | Forgets the backup and its remembered password. The data stays where it is and can be opened again later |
+| **Delete backup and all data** | Permanently deletes every snapshot. You type the backup's name to confirm. Only the repository's own files are removed |
+
+Individual snapshots are deleted with the bin icon on their row.
 
 ### Keyboard shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| <kbd>Ctrl</kbd>+<kbd>R</kbd> | New repository |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | Create snapshot |
-| <kbd>Delete</kbd> | Delete the selected repository |
+| <kbd>Ctrl</kbd>+<kbd>N</kbd> | New backup |
+| <kbd>Ctrl</kbd>+<kbd>B</kbd> | Back up the selected backup now |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Ctrl</kbd>+<kbd>I</kbd> | About |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | New window |
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window |
 
+### Command line
+
+| Command | Effect |
+| --- | --- |
+| `stellarshot` | Open the window |
+| `stellarshot --new-backup` | Open the window straight into the setup wizard (the launcher's **New Backup** action) |
+| `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
+
 ### Reading your backups without Stellarshot
 
-Every repository is a standard restic repository:
+Every backup is a standard restic repository:
 
 ```sh
-rustic -r /path/to/repository snapshots
-restic -r /path/to/repository snapshots
-restic -r /path/to/repository restore latest --target ~/restored
+rustic -r /path/to/backup snapshots
+restic -r /path/to/backup snapshots
+restic -r /path/to/backup restore latest --target ~/restored
 ```
 
 ---
@@ -196,54 +233,58 @@ restic -r /path/to/repository restore latest --target ~/restored
 | --- | --- | --- |
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 
-Settings are stored through `cosmic-config` in
-`~/.config/cosmic/io.github.stldave314.Stellarshot/`. Repository passwords are
-never stored anywhere.
+Each backup's own settings (folders, exclusions, destination) are edited on its
+page. Everything is stored through `cosmic-config` in
+`~/.config/cosmic/io.github.stldave314.Stellarshot/`. Passwords are never
+stored there, only in the keyring when you ask.
 
 ---
 
 ## Troubleshooting
 
-**"… already contains other files" when creating a repository.**
-Working as intended. Choose an empty folder, create a new one in the file
-chooser, or choose a folder that already holds a repository.
+**"… already contains other files" when choosing where to keep a backup.**
+Working as intended. Choose an empty folder, create a new one in the folder
+chooser, or use **Open an existing backup** for a folder that already holds
+one.
 
-**I used an earlier Stellarshot and it created a repository in my home folder.**
+**My backups from an earlier Stellarshot show "Choose what to back up".**
+Earlier versions kept a list of repositories with no idea what was in them.
+Each one is now a backup with no folders chosen yet. Press **Choose
+Folders…** to pick them; the repository and its snapshots are unchanged.
+
+**An earlier Stellarshot created a backup in my home folder.**
 Earlier versions accepted any folder. If you picked your home folder, it
 contains `config`, `keys`, `data`, `index` and `snapshots` entries that belong
-to the repository. Check that they are the repository's before removing
-anything: `config` is a small binary file, `data` holds 256 two-letter
-folders, and `snapshots` lists one file per snapshot. Then either select
-that repository in Stellarshot and use **Delete repository**, which removes
-only those entries, or remove them yourself:
+to the repository. It shows up in the sidebar; select it and use **Delete
+backup and all data**, which removes only those entries and nothing else in
+your home folder.
 
-```sh
-rm -r ~/config ~/keys ~/data ~/index ~/snapshots
-```
-
-**My repositories disappeared after updating.**
+**My backups disappeared after updating.**
 Settings are copied once from the upstream application ID
 (`com.github.cosmic-utils.Stellarshot`) on first launch, and never over newer
 settings. If you had already started this version before the copy could run,
-copy them by hand:
+copy them by hand and restart Stellarshot:
 
 ```sh
 cp -r ~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1 \
       ~/.config/cosmic/io.github.stldave314.Stellarshot/
 ```
 
+**The password is asked for every time.**
+**Remember password** was off, or the keyring could not be reached. Check that
+a Secret Service is running (`busctl --user list | grep org.freedesktop.secrets`)
+and that your login keyring is unlocked. Stellarshot waits up to a minute for
+the keyring, for example while you answer an unlock prompt, and then carries on
+without it.
+
 **"Another backup is already using this repository."**
-Only one process may write to a repository at a time. Wait for the other
-backup to finish. If none is running, nothing is holding the lock either: it
-is released automatically when a process ends, even when it crashes.
+Only one process may write to a backup at a time. Wait for the other one to
+finish. If none is running, nothing is holding the lock either: it is released
+automatically when a process ends, even when it crashes.
 
 **"The password is incorrect."**
-The password is the one set when the repository was created. There is no
-way to recover or reset it.
-
-**"The repository could not be created" with a rustic error underneath.**
-The details line is the engine's own message. The most common causes are a
-folder you do not have write access to, or a network mount that disappeared.
+The password is the one set when the backup was created. There is no way to
+recover or reset it.
 
 **Something else is wrong.**
 Turn on developer logging: set `DEVELOPER_LOGGING` to `true` in
@@ -256,17 +297,17 @@ written to stderr too.
 
 ## Known limitations
 
-- **The password is asked for every time** you select a repository. Keyring
-  storage arrives with backup profiles.
-- **The snapshot chooser picks files, not folders.** Folder selection, include
-  and exclude lists arrive with backup profiles.
-- **There is no restore in the app yet.** Use `restic restore` or
-  `rustic restore` (see
+- **Local folders only.** A USB drive works if it is mounted at the same place
+  each time; drives recognised by their ID, SFTP and cloud storage come next.
+- **No schedule yet.** Backups run when you press **Back Up Now**.
+- **No restore in the app yet.** Use `restic restore` or `rustic restore` (see
   [Reading your backups](#reading-your-backups-without-stellarshot)).
-- **Local folders only.** USB drives by UUID, SFTP and cloud storage come later.
-- **Some translations are machine-assisted.** Strings added in this version
-  were translated without review by native speakers. `tests/i18n.rs` proves
-  every locale has the same keys and placeholders as English, but not that the
+- **Old snapshots are kept until you delete them.** Retention policies come
+  with scheduling. Deleting a snapshot does not free its space until the
+  repository is pruned, which also comes with scheduling.
+- **Some translations are machine-assisted.** Strings added recently were
+  translated without review by native speakers. `tests/i18n.rs` proves every
+  locale has the same keys and placeholders as English, but not that the
   wording is right. Corrections are welcome.
 
 ---
@@ -276,21 +317,23 @@ written to stderr too.
 ```
   ┌────────────────────────────────────┐        job on stdin (JSON,
   │  window  (libcosmic)               │        including the password)
-  │  sidebar, snapshot list, dialogs,  │ ───────────────────────────┐
-  │  progress card                     │                            │
+  │  sidebar of backups, profile page, │ ───────────────────────────┐
+  │  setup wizard, dialogs             │                            │
   └──────┬─────────────────────────────┘                            ▼
          │ reads on blocking threads          ┌──────────────────────────────┐
-         │ (list snapshots, open, create)     │  stellarshot --run backup    │
+         │ (open, list, estimate, probe)      │  stellarshot --run backup    │
          │                                    │  one write, in its own       │
          │ ◀──── progress and outcome ─────── │  process; holds the lock     │
          │       as JSON lines on stdout      └──────────────┬───────────────┘
          ▼                                                   ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
   │  engine: the only code that talks to rustic                              │
-  │  open · init · probe · snapshots · backup · restore · check · lock       │
+  │  open · init · probe · estimate · snapshots · backup · restore · check   │
   └──────────────────────────────────┬───────────────────────────────────────┘
                                      ▼
                     rustic_core → restic-format repository
+
+  keyring ── Secret Service (GNOME Keyring, KWallet), one item per backup
 ```
 
 Writes (backup, restore, check, deleting snapshots) run in a child process,
@@ -301,18 +344,20 @@ running as you can read.
 
 | Module | Responsibility |
 | --- | --- |
-| `engine` | Everything that touches rustic: opening and creating repositories, backup, restore, integrity checks, snapshot listing and deletion. Synchronous, plain types, typed errors |
+| `profile` | A backup profile: folders, exclusions, destination; turning it into what the engine needs |
+| `engine` | Everything that touches rustic: repositories, backup, restore, checks, snapshots, the size estimate. Synchronous, plain types, typed errors |
 | `engine::location` | Whether a folder may hold a repository; deleting only a repository's own entries |
 | `engine::lock` | One writer per repository, shared by every process; released by the kernel if the holder dies |
-| `engine::progress` | Turns rustic's per-blob progress calls into a few reports a second |
+| `engine::estimate` | The size of a backup before it runs, from the same file list the backup reads |
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
-| `app` | The window: sidebar, dialogs, menus, settings |
+| `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
+| `app` | The window: sidebar, menus, dialogs, settings |
+| `app::pages` | The first-launch screen and each backup's page |
+| `app::wizard` | The setup wizard's steps and validation |
+| `app::tasks` | Engine calls off the UI thread, the folder chooser, the estimate as a stream |
 | `app::child` | Spawns `--run`, streams its events into the UI, cancels it |
-| `app::views::content` | The snapshot list and the progress card |
 | `app::errors` | A localized explanation for every kind of engine error |
-| `app::migrate` | One-time copy of settings from the upstream application ID |
-| `constants` | Implementation tuning values |
-| `debug` | Developer logging to a file, compiled out of release builds |
+| `app::migrate` | One-time moves of settings from older versions |
 
 ---
 
@@ -325,8 +370,14 @@ cargo clippy --all-targets --all-features
 ```
 
 Both `cargo check` and `cargo clippy` are warning-free, and CI enforces it with
-`RUSTFLAGS=-D warnings`. What each check proves, and how each one is kept from
-passing when it has nothing to check, is in [VALIDATION.md](VALIDATION.md).
+`RUSTFLAGS=-D warnings`. `tests/keyring.rs` needs a running Secret Service and
+fails without one; CI provides it with an unlocked gnome-keyring. What each
+check proves, and how each one is kept from passing when it has nothing to
+check, is in [VALIDATION.md](VALIDATION.md).
+
+The screenshots are made from the real application by
+`scripts/screenshots.sh`, with a demo home folder and demo backup so no
+personal data appears in them.
 
 ## Translations
 

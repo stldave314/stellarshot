@@ -10,7 +10,10 @@ fn main() -> ExitCode {
         return stellarshot::runner::main(&args[1..]);
     }
 
-    let (settings, flags) = settings::init();
+    let (settings, mut flags) = settings::init();
+    // `--new-backup` opens the setup wizard straight away: the desktop
+    // entry's "New Backup" action.
+    flags.start_wizard = args.iter().any(|arg| arg == "--new-backup");
     match cosmic::app::run::<App>(settings, flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

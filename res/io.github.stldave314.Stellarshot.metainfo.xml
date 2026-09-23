@@ -16,6 +16,13 @@
       command-line tools even without this app.
     </p>
     <p>
+      Set up several independent backups, each with its own folders and
+      destination. A setup wizard shows exactly how much will be backed up,
+      with excluded folders subtracted. Backups run in the background with
+      progress and Cancel, and passwords can be remembered in the desktop
+      keyring.
+    </p>
+    <p>
       Stellarshot is a fork of the cosmic-utils Stellarshot project and is under
       active development.
     </p>
@@ -31,12 +38,20 @@
   </branding>
   <screenshots>
     <screenshot type="default">
-      <caption>A repository and its snapshots, dark theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/main-dark.png</image>
+      <caption>A backup and its snapshots, with Back Up Now</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/profile.png</image>
     </screenshot>
     <screenshot>
-      <caption>A repository and its snapshots, light theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/main-light.png</image>
+      <caption>Setting up a backup, with a live size estimate</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/wizard.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The first screen, before anything is backed up</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/empty.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>A backup in the light theme</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/profile-light.png</image>
     </screenshot>
   </screenshots>
   <releases>

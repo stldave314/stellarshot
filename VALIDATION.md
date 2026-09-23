@@ -74,18 +74,65 @@ These run the real `stellarshot` binary, the way the window does.
 | `cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Cancelled`, with no snapshot left behind |
 | `a_missing_executable_is_reported_not_hung` | If the child cannot start, the stream ends with an error instead of waiting forever |
 
-### The window's state (`src/app/views/content.rs`)
+### Backup profiles (`src/profile.rs`)
 
-`update()` is tested without rendering: a finished backup reloads the list; a
-failed, locked or cancelled backup is reported and the progress card cleared;
-a wrong password returns to "nothing selected" and forgets the password;
-deleting needs an unlocked repository.
+| Test | What it proves |
+| --- | --- |
+| `repository_inside_a_source_is_excluded` | Backing up `~` to `~/Backups/home` leaves the repository folder out, so a backup never copies itself |
+| `a_similar_prefix_is_not_inside` | `/home/dave2` is not treated as inside `/home/dave`: paths are compared by component, not by string |
+| `v1_repositories_become_profiles` | Each version 1 repository becomes a profile with its path and name and a distinct ID |
+| `old_profiles_without_new_fields_still_load` | A profile saved before a field existed still loads, with the documented default |
+
+### The size estimate (`src/engine/estimate.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `estimate_matches_the_backup` | With an exclusion nested inside an include, an overlapping include, a pattern and a hard link, the estimate **equals** the byte total the backup then reports; per-folder totals are exact too. This is the regression Déjà Dup has |
+| `exclude_through_a_symlinked_path_still_applies` (`src/engine/tests.rs`) | An exclusion written through a symlinked path (`/home` → `/var/home`) still leaves the folder out |
+| `estimate_respects_cancel` | A cancelled estimate stops and reports nothing, so a stale total never replaces a newer one |
+
+### The keyring (`tests/keyring.rs`)
+
+`keyring_round_trip` stores, reads, replaces and forgets a password in a real
+Secret Service, under a random profile ID so it can never touch a real saved
+password. **Cannot pass vacuously:** without a Secret Service it fails (after
+the keyring timeout) with "a Secret Service must be running and unlocked for
+this test"; this was run and observed. CI runs it against an unlocked
+gnome-keyring in a private D-Bus session.
+
+### The window (`src/app/wizard.rs`, `src/app/pages/profile.rs`, `src/app.rs`, `src/app/tasks.rs`)
+
+State and effects are tested without rendering:
+
+- **Wizard:** a backup cannot leave "what" without a folder; a destination
+  holding other files blocks "next"; "open" needs an existing repository; an
+  unreachable destination blocks "next"; passwords must match; editing keeps
+  the profile ID and needs no password; stale probe and estimate results are
+  ignored.
+- **Profile page:** the keyring is consulted once; a remembered password opens
+  without storing it again; a typed password is cleared from the field once
+  used; a wrong password stays locked and is reported; Back Up Now needs a
+  password and folders, and runs one backup at a time; a finished backup
+  records its time and reloads; deleting a snapshot waits for a running backup.
+- **Dialogs:** `delete_requires_the_exact_name` refuses an empty, differently
+  cased, trailing-space or partial name, and refuses a second confirmation
+  while the first delete runs.
+- **Finishing the wizard, against real repositories:** create makes the
+  repository; open takes its folders from the latest snapshot; open with the
+  wrong password fails as `WrongPassword`.
+
+### Language selection (`src/core/localization.rs`)
+
+`a_requested_language_is_actually_used` selects German and reads back
+"Löschen", then English and reads "Delete". Upstream never selected a language
+at all, so this would have failed there.
 
 ### Settings migration (`src/app/migrate.rs`)
 
 | Test | What it proves |
 | --- | --- |
 | `migrates_old_config_once` | Old settings are copied, and a second launch does not copy them again over a later change |
+| `v1_repositories_become_profiles_once` | Version 1 repositories become profiles, and once version 2 has a profile list (even an empty one) they are never imported again |
 | `does_not_overwrite_existing_new_config` | Settings that already exist under the new ID always win |
 | `no_old_config_is_a_no_op` | Nothing is created when there is nothing to migrate |
 
@@ -147,6 +194,9 @@ Things a test cannot reach yet, and how they were confirmed.
 | The shipped binary has no debug log path | `dpkg-deb -x`, then `strings usr/bin/stellarshot` | M0 |
 | The window starts in a COSMIC Wayland session and exits cleanly | Launched for six seconds; no output on stderr, no process left behind | M1 |
 | Settings migrate on a real account | First launch copied `~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1/repositories` to the new ID | M1 |
+| The main screen, wizard and profile page render, the estimate fills in, and a remembered password unlocks the page | `scripts/screenshots.sh`, then every image inspected | M2 |
+| The keyring test fails, rather than hangs or skips, with no Secret Service | Run in an isolated `dbus-run-session` with a throwaway home: failed after 120 s with the expected message | M2 |
+| The CI keyring recipe works | The CI command run locally in an isolated session with a throwaway home: passed, the real keyrings untouched | M2 |
 
 ## Adding a check
 

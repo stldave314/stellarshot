@@ -46,18 +46,18 @@ A new backup engine behind one module, on the current rustic release.
       permissions, and compare it byte for byte; kill a backup midway and prove
       the repository is still sound
 
-## M2 — Backup profiles and the main screen
+## M2 — Backup profiles and the main screen (done)
 
-- [ ] Backup profiles: name, destination, folders to include and exclude,
-      schedule, retention
-- [ ] Status-first main screen: last backup, next backup, **Back Up Now**,
-      **Restore…**
-- [ ] A **Create a Backup…** button on the empty main screen
-- [ ] Setup wizard: what, where, when, password
-- [ ] Live estimate of the backup size that subtracts excluded folders inside
+- [x] Backup profiles: name, destination, folders to include and exclude
+      (schedule and retention settings arrive with M5)
+- [x] Status-first main screen: last backup, **Back Up Now** (next backup
+      arrives with M5, **Restore…** with M4)
+- [x] A **Create a Backup…** button on the empty main screen
+- [x] Setup wizard: what, where, password ("when" arrives with M5)
+- [x] Live estimate of the backup size that subtracts excluded folders inside
       included ones, computed from the same file list the backup will read
-- [ ] Passwords in the Secret Service keyring, "Remember" on by default
-- [ ] "Remove from Stellarshot" and "Delete repository and all data" as separate
+- [x] Passwords in the Secret Service keyring, "Remember" on by default
+- [x] "Remove from Stellarshot" and "Delete repository and all data" as separate
       actions
 
 ## M3 — Storage locations and import

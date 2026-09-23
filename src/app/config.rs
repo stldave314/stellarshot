@@ -1,45 +1,48 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use std::path::PathBuf;
+//! Stellarshot's settings, stored through `cosmic-config`.
 
-use crate::app::App;
 use cosmic::{
-    Application,
     cosmic_config::{self, Config, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry},
     theme,
 };
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_VERSION: u64 = 1;
+use super::APP_ID;
+use crate::debug::CONFIG;
+use crate::debug_log;
+use crate::profile::Profile;
+
+/// Version 2 replaced the `repositories` list with backup profiles.
+pub const CONFIG_VERSION: u64 = 2;
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Deserialize, Serialize, CosmicConfigEntry)]
+#[version = 2]
 pub struct StellarshotConfig {
     pub app_theme: AppTheme,
-    pub repositories: Vec<Repository>,
+    pub profiles: Vec<Profile>,
 }
 
 impl StellarshotConfig {
     pub fn config_handler() -> Option<Config> {
-        Config::new(App::APP_ID, CONFIG_VERSION).ok()
+        Config::new(APP_ID, CONFIG_VERSION).ok()
     }
 
     pub fn config() -> StellarshotConfig {
         match Self::config_handler() {
             Some(config_handler) => {
                 StellarshotConfig::get_entry(&config_handler).unwrap_or_else(|(errs, config)| {
-                    crate::debug_log!(crate::debug::CONFIG, "errors loading config: {:?}", errs);
+                    debug_log!(CONFIG, "errors loading config: {errs:?}");
                     config
                 })
             }
             None => StellarshotConfig::default(),
         }
     }
-}
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Repository {
-    pub name: String,
-    pub path: PathBuf,
+    pub fn profile(&self, id: &str) -> Option<&Profile> {
+        self.profiles.iter().find(|profile| profile.id == id)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

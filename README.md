@@ -99,8 +99,11 @@ snapshot you ever made.
 
 ## What is coming
 
-Next is 1.0: reviewed translations, an accessibility pass, and end-to-end
-restore tests in CI. The detail is in [ROADMAP.md](ROADMAP.md).
+First, fixes from testing (a Cancel button that does not stop a backup,
+slow and silent Google Drive steps, progress that seems to stall). Then a
+clearer picture of every backup, finer control over what is backed up, more
+storage options and alerts beyond the desktop, on the way to 1.0. The detail
+is in [ROADMAP.md](ROADMAP.md).
 
 ---
 

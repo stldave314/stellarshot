@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-24
+
+The first release: several independent backups, local, removable, SSH and
+cloud destinations, a complete restore, and scheduled backups with retention,
+checks and notifications.
+
 ### Security
 
 - **Cloud tokens are never written into a readable file.** Stellarshot's

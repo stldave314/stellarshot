@@ -66,9 +66,16 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="0.1.0" date="2026-09-23">
+    <release version="0.1.0" date="2026-09-24">
       <description>
-        <p>First release of the fork: new application ID, safe repository deletion, and packaged builds.</p>
+        <p>The first release.</p>
+        <ul>
+          <li>Several independent backups, each with its own folders, exclusions, destination and password</li>
+          <li>Folders, removable drives, SSH servers, Google Drive and other rclone remotes</li>
+          <li>A complete restore: browse, search, versions, deleted files, compare, and a dry run first</li>
+          <li>Scheduled backups with retention, integrity checks and failure notifications</li>
+          <li>Import from Déjà Dup</li>
+        </ul>
       </description>
     </release>
   </releases>

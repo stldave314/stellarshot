@@ -66,6 +66,18 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.1.1" date="2026-09-24">
+      <description>
+        <p>Fixes from testing the first release.</p>
+        <ul>
+          <li>Cancel stops a backup to an SSH server or cloud storage</li>
+          <li>Faster Google Drive backups: four uploads at once, and clean-ups that free space straight away</li>
+          <li>A backup in progress shows how long it has run and what it is waiting for</li>
+          <li>One press of Next checks a destination and moves on; a check that gets no answer stops after a minute</li>
+          <li>The size estimate written out as a sum, and the “Smart” setting explained exactly</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-09-24">
       <description>
         <p>The first release.</p>

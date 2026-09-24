@@ -24,7 +24,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            dbus gnome-keyring
+            dbus gnome-keyring rclone
 
       - uses: dtolnay/rust-toolchain@stable
         with:

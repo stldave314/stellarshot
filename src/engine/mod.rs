@@ -14,6 +14,7 @@ pub mod location;
 pub mod lock;
 mod maintenance;
 pub mod progress;
+pub mod rclone;
 mod repo;
 mod restore;
 mod snapshots;
@@ -22,7 +23,7 @@ pub use backup::{BackupReport, BackupRequest};
 pub use error::{EngineError, ErrorKind};
 pub use estimate::{SizeEstimate, estimate, folder_size};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
-pub use repo::{Location, Probe, Repo, Secret, init, open, probe};
+pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, open, probe};
 pub use snapshots::SnapshotSummary;
 
 #[cfg(test)]

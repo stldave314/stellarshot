@@ -16,7 +16,7 @@ fn app_icon() -> widget::icon::Handle {
     ))
 }
 
-pub fn view<'a>() -> Element<'a, Message> {
+pub fn view<'a>(dejadup: bool) -> Element<'a, Message> {
     let spacing = theme::active().cosmic().spacing;
     widget::container(
         widget::column::with_capacity(5)
@@ -27,7 +27,10 @@ pub fn view<'a>() -> Element<'a, Message> {
             .push(widget::text::title2(fl!("empty-title")))
             .push(widget::text::body(fl!("empty-body")).align_x(Alignment::Center))
             .push(widget::button::suggested(fl!("create-backup")).on_press(Message::NewBackup))
-            .push(widget::button::link(fl!("open-existing")).on_press(Message::OpenExisting)),
+            .push(widget::button::link(fl!("open-existing")).on_press(Message::OpenExisting))
+            .push_maybe(dejadup.then(|| {
+                widget::button::link(fl!("dejadup-import")).on_press(Message::ImportDejaDup)
+            })),
     )
     .center(Length::Fill)
     .into()

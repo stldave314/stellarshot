@@ -20,7 +20,7 @@ use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme};
 use crate::app::config::{AppTheme, CONFIG_VERSION, StellarshotConfig};
 use crate::app::key_bind::key_binds;
 use crate::app::pages::profile::{self, ProfileState};
-use crate::app::wizard::{Mode, Wizard};
+use crate::app::wizard::{Mode, Wizard, place};
 use crate::debug::{CONFIG, ENGINE, UI};
 use crate::engine::{self, EngineError};
 use crate::profile::Profile;
@@ -60,6 +60,8 @@ pub struct App {
     key_binds: HashMap<KeyBind, Action>,
     modifiers: Modifiers,
     now: i64,
+    /// Déjà Dup settings were found, so the first screen offers an import.
+    dejadup: bool,
 }
 
 /// What a sidebar entry leads to.
@@ -85,6 +87,8 @@ pub enum Message {
     Tick,
     NewBackup,
     OpenExisting,
+    ImportDejaDup,
+    DejaDupFound(Option<crate::dejadup::Import>),
     BackUpSelected,
     Profile(String, profile::Message),
     Wizard(wizard::Message),
@@ -158,6 +162,7 @@ pub enum Action {
     About,
     NewBackup,
     BackUpNow,
+    ImportDejaDup,
     Settings,
     WindowClose,
     WindowNew,
@@ -170,6 +175,7 @@ impl MenuAction for Action {
             Action::About => Message::ToggleContextPage(ContextPage::About),
             Action::NewBackup => Message::NewBackup,
             Action::BackUpNow => Message::BackUpSelected,
+            Action::ImportDejaDup => Message::ImportDejaDup,
             Action::Settings => Message::ToggleContextPage(ContextPage::Settings),
             Action::WindowClose => Message::WindowClose,
             Action::WindowNew => Message::WindowNew,
@@ -327,13 +333,7 @@ impl App {
                         }))
                     })
                 }
-                wizard::Effect::PickDestination => {
-                    Task::perform(tasks::pick_folder(fl!("select-repo-folder")), |path| {
-                        path.map_or(app(Message::Noop), |path| {
-                            app(Message::Wizard(wizard::Message::DestinationChosen(path)))
-                        })
-                    })
-                }
+                wizard::Effect::Place(effect) => self.run_place_effect(effect),
                 wizard::Effect::Estimate {
                     generation,
                     request,
@@ -347,15 +347,6 @@ impl App {
                         )))
                     },
                 ),
-                wizard::Effect::Probe(path) => {
-                    let probed = path.clone();
-                    Task::perform(tasks::probe(path), move |result| {
-                        app(Message::Wizard(wizard::Message::Probed(
-                            probed.clone(),
-                            result,
-                        )))
-                    })
-                }
                 wizard::Effect::Finish(finish) => Task::perform(
                     tasks::finish(finish.mode, finish.profile, finish.secret, finish.remember),
                     |result| app(Message::WizardFinished(result)),
@@ -367,6 +358,55 @@ impl App {
             });
         }
         Task::batch(tasks)
+    }
+
+    fn run_place_effect(&mut self, effect: place::Effect) -> Task<Message> {
+        let to_wizard =
+            |message: place::Message| app(Message::Wizard(wizard::Message::Place(message)));
+        match effect {
+            place::Effect::PickFolder => {
+                Task::perform(tasks::pick_folder(fl!("select-repo-folder")), move |path| {
+                    path.map_or(app(Message::Noop), |path| {
+                        to_wizard(place::Message::FolderChosen(path))
+                    })
+                })
+            }
+            place::Effect::ListDrives => Task::perform(
+                tasks::blocking(|| Ok(crate::drives::mounted_drives())),
+                move |drives| to_wizard(place::Message::DrivesListed(drives.unwrap_or_default())),
+            ),
+            place::Effect::CheckRclone => Task::perform(
+                tasks::blocking(|| Ok(engine::rclone::available())),
+                move |available| {
+                    to_wizard(place::Message::RcloneChecked(available.unwrap_or(false)))
+                },
+            ),
+            place::Effect::ListRemotes => Task::perform(
+                tasks::blocking(engine::rclone::user_remotes),
+                move |remotes| to_wizard(place::Message::RemotesListed(remotes)),
+            ),
+            place::Effect::SignIn { name } => Task::perform(
+                tasks::blocking(move || {
+                    let config = engine::rclone::config_path();
+                    engine::rclone::sign_in(&config, &name, "drive", &["scope=drive"])
+                        .map(|()| name)
+                }),
+                move |result| to_wizard(place::Message::SignedIn(result)),
+            ),
+            place::Effect::CopyRemote { index, from, to } => Task::perform(
+                tasks::blocking(move || {
+                    let config = engine::rclone::config_path();
+                    engine::rclone::copy_user_remote(&config, &from, &to).map(|()| to)
+                }),
+                move |result| to_wizard(place::Message::RemoteCopied(index, result)),
+            ),
+            place::Effect::Probe(destination) => {
+                let probed = destination.clone();
+                Task::perform(tasks::probe(destination), move |result| {
+                    to_wizard(place::Message::Probed(probed.clone(), result))
+                })
+            }
+        }
     }
 
     fn run_profile_effects(&mut self, id: &str, effects: Vec<profile::Effect>) -> Task<Message> {
@@ -410,8 +450,23 @@ impl App {
                     })
                 }
                 profile::Effect::BackUp(secret) => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        // An unplugged drive: end the backup before it starts,
+                        // through the same path a failed backup takes.
+                        Err(err) => {
+                            let ended = profile::Message::Backup(child::ChildEvent::Ended(err));
+                            let effects = self
+                                .pages
+                                .entry(id.clone())
+                                .or_default()
+                                .update(ended, &profile);
+                            tasks.push(self.run_profile_effects(&id, effects));
+                            continue;
+                        }
+                    };
                     let job = Job {
-                        repository: profile.location(),
+                        repository,
                         password: secret,
                         request: Some(profile.backup_request()),
                         snapshot: None,
@@ -426,8 +481,15 @@ impl App {
                     })
                 }
                 profile::Effect::DeleteSnapshots(secret, ids) => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        Err(err) => {
+                            self.show_error(&fl!("delete-snapshot-failed"), &err);
+                            continue;
+                        }
+                    };
                     let job = Job {
-                        repository: profile.location(),
+                        repository,
                         password: secret,
                         request: None,
                         snapshot: None,
@@ -592,10 +654,9 @@ impl App {
 /// Delete a profile's repository: under its lock, so nothing is writing to
 /// it, and only the entries the repository format owns.
 fn delete_repository(profile: &Profile) -> Result<(), EngineError> {
-    let location = profile.location();
+    let location = profile.location()?;
     let _lock = engine::lock::acquire(&location)?;
-    engine::location::delete_repository(location.path())?;
-    Ok(())
+    engine::delete_repository(&location)
 }
 
 /// The user's home folder, the default thing to back up.
@@ -664,6 +725,7 @@ impl Application for App {
             key_binds: key_binds(),
             modifiers: Modifiers::empty(),
             now: format::now(),
+            dejadup: crate::dejadup::find().is_some(),
         };
         app.rebuild_nav(None);
 
@@ -752,7 +814,7 @@ impl Application for App {
             return wizard.view().map(Message::Wizard);
         }
         if self.config.profiles.is_empty() {
-            return pages::empty::view();
+            return pages::empty::view(self.dejadup);
         }
         let Some(id) = self.selected() else {
             return widget::space::horizontal().width(Length::Fill).into();
@@ -837,9 +899,38 @@ impl Application for App {
                     return self.start_wizard(wizard, effects);
                 }
             }
+            Message::ImportDejaDup => {
+                if self.wizard.is_none() {
+                    return Task::perform(
+                        tasks::blocking(|| Ok(crate::dejadup::find())),
+                        |found| app(Message::DejaDupFound(found.ok().flatten())),
+                    );
+                }
+            }
+            Message::DejaDupFound(found) => {
+                use crate::dejadup::Place;
+                match found {
+                    None => self.dialog = Some(Dialog::Error(fl!("dejadup-none"))),
+                    Some(import) if import.other_format => {
+                        self.dialog = Some(Dialog::Error(fl!("dejadup-other-format")));
+                    }
+                    Some(crate::dejadup::Import {
+                        place: Place::Unsupported(backend),
+                        ..
+                    }) => {
+                        self.dialog =
+                            Some(Dialog::Error(fl!("dejadup-unsupported", backend = backend)));
+                    }
+                    Some(import) => {
+                        let (wizard, effects) = Wizard::import(&import);
+                        return self.start_wizard(wizard, effects);
+                    }
+                }
+            }
             Message::OpenExisting => {
                 if self.wizard.is_none() {
-                    return self.start_wizard(Wizard::open(), Vec::new());
+                    let (wizard, effects) = Wizard::open();
+                    return self.start_wizard(wizard, effects);
                 }
             }
             Message::BackUpSelected => {

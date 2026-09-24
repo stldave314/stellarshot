@@ -149,3 +149,44 @@ quit = Quit
 view = View
 menu-settings = Settings...
 menu-about = About Stellarshot...
+
+# Storage locations
+google-drive = Google Drive
+place-folder = Folder
+place-folder-description = A folder on this computer or a mounted drive
+place-drive = Removable drive
+place-drive-description = A USB drive, found wherever it is mounted
+place-server = Network server (SFTP)
+place-server-description = A folder on a computer you can reach with SSH
+place-google-description = Your Google account, signed in from Stellarshot
+place-remote = One of your rclone remotes
+place-remote-description = OneDrive, Dropbox, S3 and anything else rclone can reach
+place-rclone-missing = Backing up here needs rclone. Install it (for example, sudo apt install rclone) and try again.
+place-checking = Checking…
+place-check-failed = Could not check this location.
+place-check = Check
+place-no-drives = No removable drives are plugged in. Plug one in, then go back and forward to look again.
+place-folder-on-drive = Folder on the drive
+place-host = Server
+place-user = User name
+place-user-placeholder = Your user name on this computer
+place-port = Port
+place-server-path = Folder on the server
+place-server-note = Authentication uses your SSH agent or keys, and the server must already be in ~/.ssh/known_hosts: connect to it once with ssh first.
+place-signing-in = Finish signing in in your browser. Stellarshot is waiting…
+place-google-intro = Stellarshot will open your browser so you can sign in to Google. Only Stellarshot's own settings will hold the sign-in.
+place-sign-in = Sign In with Google…
+place-signed-in = Signed in.
+place-cloud-folder = Folder
+place-no-remotes = You have no rclone remotes. Set one up with rclone config, then come back.
+error-rclone-missing = rclone is not installed. Install it (for example, sudo apt install rclone) to use this location.
+error-auth-failed = Signing in did not complete: { $details }
+
+# Déjà Dup import
+dejadup-import = Import from Déjà Dup
+dejadup-title = Import a Déjà Dup backup
+dejadup-name = Déjà Dup backup
+dejadup-none = No Déjà Dup backup settings were found.
+dejadup-other-format = This Déjà Dup backup uses the older duplicity format, which Stellarshot cannot read. Create a new backup instead; the old one stays readable in Déjà Dup.
+dejadup-unsupported = Déjà Dup keeps this backup in a place Stellarshot cannot use ({ $backend }). Create a new backup instead.
+menu-import-dejadup = Import from Déjà Dup…

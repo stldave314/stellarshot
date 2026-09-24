@@ -10,6 +10,8 @@ pub mod app;
 pub mod constants;
 pub mod core;
 pub mod debug;
+pub mod dejadup;
+pub mod drives;
 pub mod engine;
 pub mod keyring;
 pub mod profile;

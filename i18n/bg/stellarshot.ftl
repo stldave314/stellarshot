@@ -149,3 +149,44 @@ quit = Спиране на програмата
 view = Изглед
 menu-settings = Настройки...
 menu-about = Относно „Stellarshot“...
+
+# Storage locations
+google-drive = Google Drive
+place-folder = Папка
+place-folder-description = Папка на този компютър или на монтирано устройство
+place-drive = Преносимо устройство
+place-drive-description = USB устройство, където и да е монтирано
+place-server = Мрежов сървър (SFTP)
+place-server-description = Папка на компютър, достъпен през SSH
+place-google-description = Вашият профил в Google, вписан от Stellarshot
+place-remote = Един от вашите rclone ресурси
+place-remote-description = OneDrive, Dropbox, S3 и всичко друго, до което rclone достига
+place-rclone-missing = За копиране тук е нужен rclone. Инсталирайте го (например със sudo apt install rclone) и опитайте отново.
+place-checking = Проверка…
+place-check-failed = Мястото не можа да бъде проверено.
+place-check = Проверка
+place-no-drives = Няма свързани преносими устройства. Свържете едно, после се върнете назад и напред.
+place-folder-on-drive = Папка на устройството
+place-host = Сървър
+place-user = Потребителско име
+place-user-placeholder = Вашето потребителско име на този компютър
+place-port = Порт
+place-server-path = Папка на сървъра
+place-server-note = Удостоверяването използва вашия SSH агент или ключове, а сървърът трябва вече да е в ~/.ssh/known_hosts: свържете се веднъж със ssh.
+place-signing-in = Завършете вписването в браузъра. Stellarshot чака…
+place-google-intro = Stellarshot ще отвори браузъра, за да се впишете в Google. Вписването се пази само в собствените настройки на Stellarshot.
+place-sign-in = Вписване с Google…
+place-signed-in = Вписано.
+place-cloud-folder = Папка
+place-no-remotes = Нямате rclone ресурси. Създайте такъв с rclone config и се върнете.
+error-rclone-missing = rclone не е инсталиран. Инсталирайте го (например със sudo apt install rclone), за да използвате това място.
+error-auth-failed = Вписването не завърши: { $details }
+
+# Déjà Dup import
+dejadup-import = Внасяне от Déjà Dup
+dejadup-title = Внасяне на резервно копие от Déjà Dup
+dejadup-name = Резервно копие от Déjà Dup
+dejadup-none = Не са намерени настройки на Déjà Dup.
+dejadup-other-format = Това копие от Déjà Dup използва по-стария формат duplicity, който Stellarshot не може да чете. Създайте ново копие; старото остава четимо в Déjà Dup.
+dejadup-unsupported = Déjà Dup пази това копие на място, което Stellarshot не може да използва ({ $backend }). Създайте ново копие.
+menu-import-dejadup = Внасяне от Déjà Dup…

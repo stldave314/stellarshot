@@ -45,6 +45,17 @@ note in the [README](README.md).
   repository format creates and nothing else, and does not follow symlinks. Creating a repository in a folder that already holds other files is
   refused. Both rules exist because the upstream code could have deleted a home
   directory; see the [changelog](CHANGELOG.md).
+- **Cloud sign-ins stay in Stellarshot's own file.** Signing in to Google Drive
+  stores rclone's access token in `~/.config/stellarshot/rclone.conf`, readable
+  only by you. Your own `~/.config/rclone/rclone.conf` is never written; a
+  remote you pick from it is copied, so removing a Stellarshot backup cannot
+  break a remote you use for something else.
+- **SSH servers must be known.** SFTP backups check the server's host key
+  against your `~/.ssh/known_hosts`, so an unknown server or a changed key is
+  refused rather than trusted. Stellarshot never stores an SSH password; it
+  uses your SSH agent or keys.
+- **Déjà Dup's password is never read.** Importing reads Déjà Dup's settings
+  only; the module that does it has no keyring code at all.
 - **One writer per repository.** Every backup, restore, check and deletion
   holds an exclusive lock on the repository, so two of them can never write
   to it at once. The lock lives in your private runtime directory and is
@@ -75,5 +86,6 @@ note in the [README](README.md).
 
 ## Handling of your data
 
-Stellarshot has no telemetry, makes no network connections of its own, and
-sends nothing anywhere except to the storage location you choose.
+Stellarshot has no telemetry and sends nothing anywhere except to the storage
+location you choose. Network connections are made by rclone, to the server or
+cloud service you configured, and by your browser during a sign-in.

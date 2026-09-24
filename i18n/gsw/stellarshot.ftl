@@ -149,3 +149,44 @@ quit = Verlah
 view = Asicht
 menu-settings = Iinstellige
 menu-about = Informatione über Sterneschuss
+
+# Storage locations
+google-drive = Google Drive
+place-folder = Ordner
+place-folder-description = En Ordner uf dem Computer oder emne iighänkte Laufwerk
+place-drive = Wächseldatenträger
+place-drive-description = Es USB-Laufwerk, egal wo’s iighänkt isch
+place-server = Netzwerkserver (SFTP)
+place-server-description = En Ordner uf emne Computer, wo du per SSH erreichsch
+place-google-description = Dis Google-Konto, aagmäldet i Sterneschuss
+place-remote = Eis vo dine rclone-Remotes
+place-remote-description = OneDrive, Dropbox, S3 und alles anderi, wo rclone erreicht
+place-rclone-missing = Zum da sichere bruucht’s rclone. Installier’s (zum Bispiil mit sudo apt install rclone) und probier’s nomal.
+place-checking = Wird prüeft …
+place-check-failed = De Speicherort hät nöd chöne prüeft wärde.
+place-check = Prüefe
+place-no-drives = Es sind kei Wächseldatenträger aagschlosse. Schlüss eine aa und gang dänn zrugg und wider wiiter.
+place-folder-on-drive = Ordner uf em Laufwerk
+place-host = Server
+place-user = Benutzername
+place-user-placeholder = Din Benutzername uf dem Computer
+place-port = Port
+place-server-path = Ordner uf em Server
+place-server-note = D Aamäldig lauft über din SSH-Agent oder dini Schlüssel, und de Server muess scho i ~/.ssh/known_hosts staa: Verbind dich zerscht eimal per ssh.
+place-signing-in = Schlüss d Aamäldig im Browser ab. Sterneschuss wartet …
+place-google-intro = Sterneschuss macht din Browser uf, damit du dich bi Google aamälde chasch. D Aamäldig wird nur i de eigete Iistellige vo Sterneschuss gspeicheret.
+place-sign-in = Mit Google aamälde …
+place-signed-in = Aagmäldet.
+place-cloud-folder = Ordner
+place-no-remotes = Du häsch kei rclone-Remotes. Richt eis mit rclone config ii und chumm dänn zrugg.
+error-rclone-missing = rclone isch nöd installiert. Installier’s (zum Bispiil mit sudo apt install rclone), zum de Speicherort bruuche.
+error-auth-failed = D Aamäldig isch nöd abgschlosse worde: { $details }
+
+# Déjà Dup import
+dejadup-import = Us Déjà Dup importiere
+dejadup-title = E Déjà-Dup-Sicherig importiere
+dejadup-name = Déjà-Dup-Sicherig
+dejadup-none = Es sind kei Déjà-Dup-Iistellige gfunde worde.
+dejadup-other-format = Die Déjà-Dup-Sicherig bruucht s älteri duplicity-Format, wo Sterneschuss nöd läse cha. Mach statt dem e neui Sicherig; di alt blibt i Déjà Dup lesbar.
+dejadup-unsupported = Déjà Dup bhaltet die Sicherig amene Ort, wo Sterneschuss nöd bruuche cha ({ $backend }). Mach statt dem e neui Sicherig.
+menu-import-dejadup = Us Déjà Dup importiere …

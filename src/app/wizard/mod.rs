@@ -20,6 +20,8 @@ use crate::engine::{BackupRequest, EngineError, Probe, Secret, SizeEstimate};
 use crate::fl;
 use crate::profile::{Destination, Profile, default_excludes};
 
+pub mod place;
+
 /// What the wizard is for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
@@ -78,8 +80,9 @@ pub struct Wizard {
     pub patterns: Vec<String>,
     pub pattern_input: String,
     pub one_file_system: bool,
-    pub destination: Option<PathBuf>,
-    pub probe: Option<Result<Probe, EngineError>>,
+    pub place: place::Place,
+    /// The unchanged destination of the profile being edited.
+    edit_destination: Option<Destination>,
     pub password: String,
     pub confirm: String,
     pub password_hidden: bool,
@@ -88,6 +91,8 @@ pub struct Wizard {
     cancel: Arc<AtomicBool>,
     /// Finishing: the repository is being created or opened.
     pub busy: bool,
+    /// Opening a backup Déjà Dup made.
+    pub importing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -104,9 +109,7 @@ pub enum Message {
     OneFileSystem(bool),
     Estimate(u64, EstimateEvent),
     Name(String),
-    ChooseDestination,
-    DestinationChosen(PathBuf),
-    Probed(PathBuf, Result<Probe, EngineError>),
+    Place(place::Message),
     Password(String),
     Confirm(String),
     TogglePasswordVisible,
@@ -123,7 +126,7 @@ pub enum Effect {
     PickFolders {
         excludes: bool,
     },
-    PickDestination,
+    Place(place::Effect),
     /// Walk what `request` covers, and size `exclude_folders`, reporting under
     /// `generation`.
     Estimate {
@@ -132,7 +135,6 @@ pub enum Effect {
         exclude_folders: Vec<PathBuf>,
         cancel: Arc<AtomicBool>,
     },
-    Probe(PathBuf),
     Finish(Finish),
     Close,
 }
@@ -158,8 +160,8 @@ impl Wizard {
             patterns: Vec::new(),
             pattern_input: String::new(),
             one_file_system: true,
-            destination: None,
-            probe: None,
+            place: place::Place::default(),
+            edit_destination: None,
             password: String::new(),
             confirm: String::new(),
             password_hidden: true,
@@ -167,6 +169,7 @@ impl Wizard {
             estimate: EstimateView::default(),
             cancel: Arc::new(AtomicBool::new(false)),
             busy: false,
+            importing: false,
         }
     }
 
@@ -181,8 +184,66 @@ impl Wizard {
         (wizard, effects)
     }
 
-    pub fn open() -> Self {
-        Self::new(Mode::Open)
+    pub fn open() -> (Self, Vec<Effect>) {
+        let wizard = Self::new(Mode::Open);
+        let effects = wizard.place_effects(wizard.place.enter());
+        (wizard, effects)
+    }
+
+    /// Open a Déjà Dup backup: its folders, exclusions and destination come
+    /// from Déjà Dup's settings; the password does not.
+    pub fn import(import: &crate::dejadup::Import) -> (Self, Vec<Effect>) {
+        use crate::dejadup::Place as From;
+        let mut wizard = Self::new(Mode::Open);
+        wizard.importing = true;
+        wizard.name = fl!("dejadup-name");
+        wizard.sources = import.sources.clone();
+        wizard.excludes = import.excludes.clone();
+        let mut effects = wizard.place.enter();
+        match &import.place {
+            From::Folder(path) => {
+                wizard.place.kind = place::Kind::Folder;
+                effects.extend(
+                    wizard
+                        .place
+                        .update(place::Message::FolderChosen(path.clone())),
+                );
+            }
+            From::Drive { uuid, folder, .. } => {
+                wizard.place.kind = place::Kind::Drive;
+                wizard.place.preferred_drive = Some(uuid.clone());
+                wizard.place.drive_folder = folder.display().to_string();
+            }
+            From::Sftp {
+                host,
+                user,
+                port,
+                path,
+            } => {
+                wizard.place.kind = place::Kind::Server;
+                wizard.place.host = host.clone();
+                wizard.place.user = user.clone();
+                wizard.place.port = port.to_string();
+                wizard.place.server_path = path.clone();
+            }
+            From::Google { folder } => {
+                wizard.place.kind = place::Kind::Google;
+                wizard.place.cloud_path = folder.clone();
+            }
+            From::Rclone { remote, folder } => {
+                wizard.place.kind = place::Kind::Remote;
+                wizard.place.preferred_remote = Some(remote.clone());
+                wizard.place.remote_path = folder.clone();
+                effects.push(place::Effect::ListRemotes);
+            }
+            From::Unsupported(_) => {}
+        }
+        let effects = wizard.place_effects(effects);
+        (wizard, effects)
+    }
+
+    fn place_effects(&self, effects: Vec<place::Effect>) -> Vec<Effect> {
+        effects.into_iter().map(Effect::Place).collect()
     }
 
     pub fn edit(profile: &Profile) -> (Self, Vec<Effect>) {
@@ -194,8 +255,7 @@ impl Wizard {
         wizard.excludes = profile.excludes.clone();
         wizard.patterns = profile.exclude_patterns.clone();
         wizard.one_file_system = profile.one_file_system;
-        let Destination::Local { path } = &profile.destination;
-        wizard.destination = Some(path.clone());
+        wizard.edit_destination = Some(profile.destination.clone());
         let effects = wizard.restart_estimate();
         (wizard, effects)
     }
@@ -262,7 +322,7 @@ impl Wizard {
                     _ => Probe::Empty,
                 };
                 !self.name.trim().is_empty()
-                    && matches!(&self.probe, Some(Ok(probe)) if *probe == wanted)
+                    && matches!(self.place.probe(), Some(Ok(probe)) if *probe == wanted)
             }
             Step::Secure => match self.mode {
                 Mode::Create => !self.password.is_empty() && self.password == self.confirm,
@@ -272,12 +332,16 @@ impl Wizard {
     }
 
     fn finish(&mut self) -> Vec<Effect> {
-        let Some(destination) = self.destination.clone() else {
+        let Some(destination) = self
+            .place
+            .destination()
+            .or_else(|| self.edit_destination.clone())
+        else {
             return Vec::new();
         };
         let mut profile = Profile::new(
             self.name.trim().to_owned(),
-            Destination::Local { path: destination },
+            destination,
             self.sources.clone(),
         );
         profile.excludes = self.excludes.clone();
@@ -374,23 +438,14 @@ impl Wizard {
                 self.name = name;
                 Vec::new()
             }
-            Message::ChooseDestination => vec![Effect::PickDestination],
-            Message::DestinationChosen(path) => {
-                if self.name.trim().is_empty() {
-                    self.name = path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+            Message::Place(message) => {
+                let effects = self.place.update(message);
+                if self.name.trim().is_empty()
+                    && let Some(name) = self.place.suggested_name()
+                {
+                    self.name = name;
                 }
-                self.destination = Some(path.clone());
-                self.probe = None;
-                vec![Effect::Probe(path)]
-            }
-            Message::Probed(path, result) => {
-                if self.destination.as_ref() == Some(&path) {
-                    self.probe = Some(result);
-                }
-                Vec::new()
+                self.place_effects(effects)
             }
             Message::Password(password) => {
                 self.password = password;
@@ -423,6 +478,9 @@ impl Wizard {
                     return self.finish();
                 }
                 self.step = self.mode.steps()[self.position() + 1];
+                if self.step == Step::Where {
+                    return self.place_effects(self.place.enter());
+                }
                 Vec::new()
             }
             Message::Cancel => {
@@ -449,6 +507,7 @@ impl Wizard {
         let steps = self.mode.steps();
         let title = match self.mode {
             Mode::Create => fl!("wizard-create-title"),
+            Mode::Open if self.importing => fl!("dejadup-title"),
             Mode::Open => fl!("wizard-open-title"),
             Mode::Edit { .. } => fl!("wizard-edit-title", name = self.name.clone()),
         };
@@ -598,37 +657,14 @@ impl Wizard {
 
     fn where_view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
-        let folder = self
-            .destination
-            .as_ref()
-            .map(|path| format::path(path))
-            .unwrap_or_else(|| fl!("wizard-no-folder"));
-        let verdict: Option<String> = match (&self.probe, &self.mode) {
-            (None, _) => None,
-            (Some(Ok(Probe::Empty)), Mode::Open) => Some(fl!("wizard-where-no-repository")),
-            (Some(Ok(Probe::Empty)), _) => Some(fl!("wizard-where-new")),
-            (Some(Ok(Probe::Repository)), Mode::Open) => Some(fl!("wizard-where-found")),
-            (Some(Ok(Probe::Repository)), _) => Some(fl!("wizard-where-existing")),
-            (Some(Ok(Probe::NotEmpty)), _) => Some(fl!("wizard-where-not-empty")),
-            (Some(Err(err)), _) => Some(err.detail.clone()),
-        };
-
-        let mut location = widget::settings::section()
-            .title(fl!("wizard-where-title"))
-            .add(
-                widget::settings::item::builder(folder).control(
-                    widget::button::standard(fl!("wizard-choose-folder"))
-                        .on_press(Message::ChooseDestination),
-                ),
-            );
-        if let Some(verdict) = verdict {
-            location = location.add(widget::text::body(verdict));
-        }
-
         widget::column::with_capacity(3)
             .spacing(spacing.space_m)
             .push(widget::text::body(fl!("wizard-where-intro")))
-            .push(location)
+            .push(
+                self.place
+                    .view(self.mode == Mode::Open, self.importing)
+                    .map(Message::Place),
+            )
             .push(
                 widget::settings::section().title(fl!("wizard-name")).add(
                     widget::text_input(fl!("wizard-name-placeholder"), &self.name)
@@ -738,45 +774,52 @@ mod tests {
         assert!(wizard.can_advance());
     }
 
+    /// Choose a folder in the "where" step and deliver its probe result.
+    fn place_folder(wizard: &mut Wizard, path: &str, probe: Result<Probe, EngineError>) {
+        wizard.update(Message::Place(place::Message::FolderChosen(path.into())));
+        let destination = wizard.place.destination().expect("a folder was chosen");
+        wizard.update(Message::Place(place::Message::Probed(destination, probe)));
+    }
+
     #[test]
     fn not_empty_location_blocks_next() {
         let (mut wizard, _) = Wizard::create(Some(Path::new("/home/dave")));
-        wizard.update(Message::Next);
+        let effects = wizard.update(Message::Next);
         assert_eq!(wizard.step, Step::Where);
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::Place(place::Effect::ListDrives))),
+            "entering the step looks for drives"
+        );
 
-        wizard.update(Message::DestinationChosen("/home/dave".into()));
-        wizard.update(Message::Probed("/home/dave".into(), Ok(Probe::NotEmpty)));
+        place_folder(&mut wizard, "/home/dave", Ok(Probe::NotEmpty));
         assert!(!wizard.can_advance(), "a folder of other files is refused");
 
-        wizard.update(Message::DestinationChosen("/media/usb/backup".into()));
-        wizard.update(Message::Probed(
-            "/media/usb/backup".into(),
-            Ok(Probe::Empty),
-        ));
+        place_folder(&mut wizard, "/srv/backups/laptop", Ok(Probe::Empty));
         assert!(wizard.can_advance());
         assert_eq!(
             wizard.name, "dave",
-            "the name defaults to the first folder chosen"
+            "the name defaults to the first place chosen"
         );
     }
 
     #[test]
     fn a_stale_probe_result_is_ignored() {
         let (mut wizard, _) = Wizard::create(Some(Path::new("/home/dave")));
-        wizard.update(Message::DestinationChosen("/b".into()));
-        wizard.update(Message::Probed("/a".into(), Ok(Probe::Empty)));
-        assert!(wizard.probe.is_none());
+        wizard.update(Message::Place(place::Message::FolderChosen("/b".into())));
+        wizard.update(Message::Place(place::Message::Probed(
+            Destination::Local { path: "/a".into() },
+            Ok(Probe::Empty),
+        )));
+        assert!(wizard.place.probe().is_none());
     }
 
     #[test]
     fn create_needs_matching_passwords() {
         let (mut wizard, _) = Wizard::create(Some(Path::new("/home/dave")));
         wizard.update(Message::Next);
-        wizard.update(Message::DestinationChosen("/media/usb/backup".into()));
-        wizard.update(Message::Probed(
-            "/media/usb/backup".into(),
-            Ok(Probe::Empty),
-        ));
+        place_folder(&mut wizard, "/srv/backups/laptop", Ok(Probe::Empty));
         wizard.update(Message::Next);
         assert_eq!(wizard.step, Step::Secure);
 
@@ -790,38 +833,38 @@ mod tests {
         assert_eq!(finish.mode, Mode::Create);
         assert_eq!(finish.secret.as_ref().map(Secret::expose), Some("secret"));
         assert!(finish.remember, "remembering is on by default");
+        assert_eq!(
+            finish.profile.destination,
+            Destination::Local {
+                path: "/srv/backups/laptop".into()
+            }
+        );
         assert!(wizard.busy);
     }
 
     #[test]
     fn open_needs_an_existing_repository() {
-        let mut wizard = Wizard::open();
+        let (mut wizard, effects) = Wizard::open();
         assert_eq!(wizard.step, Step::Where);
-        wizard.update(Message::DestinationChosen("/media/usb/backup".into()));
-        wizard.update(Message::Probed(
-            "/media/usb/backup".into(),
-            Ok(Probe::Empty),
-        ));
+        assert!(!effects.is_empty(), "opening looks for drives and rclone");
+        place_folder(&mut wizard, "/srv/backups/laptop", Ok(Probe::Empty));
         assert!(
             !wizard.can_advance(),
             "an empty folder holds nothing to open"
         );
 
-        wizard.update(Message::Probed(
-            "/media/usb/backup".into(),
-            Ok(Probe::Repository),
-        ));
+        place_folder(&mut wizard, "/srv/backups/laptop", Ok(Probe::Repository));
         assert!(wizard.can_advance());
     }
 
     #[test]
     fn an_unreachable_destination_blocks_next() {
-        let mut wizard = Wizard::open();
-        wizard.update(Message::DestinationChosen("/gone".into()));
-        wizard.update(Message::Probed(
-            "/gone".into(),
+        let (mut wizard, _) = Wizard::open();
+        place_folder(
+            &mut wizard,
+            "/gone",
             Err(EngineError::new(ErrorKind::DestinationUnavailable, "/gone")),
-        ));
+        );
         assert!(!wizard.can_advance());
     }
 
@@ -842,6 +885,66 @@ mod tests {
         let finish = finish_effect(&effects).expect("saving");
         assert_eq!(finish.profile.id, "keep-me");
         assert!(finish.secret.is_none());
+        assert_eq!(
+            finish.profile.destination, profile.destination,
+            "the destination is kept"
+        );
+    }
+
+    #[test]
+    fn a_dejadup_import_keeps_its_folders_but_asks_for_the_password() {
+        let import = crate::dejadup::Import {
+            sources: vec!["/home/alex".into()],
+            excludes: vec!["/home/alex/.cache".into()],
+            place: crate::dejadup::Place::Drive {
+                uuid: "1111-AAAA".into(),
+                folder: "laptop".into(),
+                label: "Backup".into(),
+            },
+            other_format: false,
+        };
+        let (mut wizard, _) = Wizard::import(&import);
+        assert_eq!(wizard.mode, Mode::Open);
+        assert!(wizard.password.is_empty(), "the password is never imported");
+
+        // The drive with the recorded UUID is selected once drives are known.
+        wizard.update(Message::Place(place::Message::DrivesListed(vec![
+            crate::drives::Drive {
+                uuid: "other".into(),
+                label: "Other".into(),
+                mount_point: "/media/alex/Other".into(),
+            },
+            crate::drives::Drive {
+                uuid: "1111-AAAA".into(),
+                label: "Backup".into(),
+                mount_point: "/media/alex/Backup".into(),
+            },
+        ])));
+        match wizard.place.destination().unwrap() {
+            Destination::Removable {
+                uuid,
+                relative_path,
+                ..
+            } => {
+                assert_eq!(uuid, "1111-AAAA");
+                assert_eq!(relative_path, PathBuf::from("laptop"));
+            }
+            other => panic!("expected the drive, got {other:?}"),
+        }
+
+        let destination = wizard.place.destination().unwrap();
+        wizard.update(Message::Place(place::Message::Probed(
+            destination,
+            Ok(Probe::Repository),
+        )));
+        wizard.update(Message::Next);
+        wizard.update(Message::Password("typed by the user".into()));
+        let effects = wizard.update(Message::Next);
+        let finish = finish_effect(&effects).expect("finishing");
+        assert_eq!(
+            finish.profile.excludes,
+            vec![PathBuf::from("/home/alex/.cache")]
+        );
     }
 
     #[test]

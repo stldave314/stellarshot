@@ -18,6 +18,7 @@ pub fn menu_bar<'a>(key_binds: &HashMap<KeyBind, Action>) -> Element<'a, Message
                 vec![
                     menu::Item::Button(fl!("menu-new-backup"), None, Action::NewBackup),
                     menu::Item::Button(fl!("back-up-now"), None, Action::BackUpNow),
+                    menu::Item::Button(fl!("menu-import-dejadup"), None, Action::ImportDejaDup),
                     menu::Item::Divider,
                     menu::Item::Button(fl!("new-window"), None, Action::WindowNew),
                     menu::Item::Button(fl!("quit"), None, Action::WindowClose),

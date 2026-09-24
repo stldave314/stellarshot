@@ -53,10 +53,9 @@ pub fn acquire_in(dir: &Path, location: &Location) -> Result<WriteLock, EngineEr
         .open(&path)?;
     match file.try_lock() {
         Ok(()) => Ok(WriteLock { _file: file }),
-        Err(TryLockError::WouldBlock) => Err(EngineError::new(
-            ErrorKind::Locked,
-            location.path().display().to_string(),
-        )),
+        Err(TryLockError::WouldBlock) => {
+            Err(EngineError::new(ErrorKind::Locked, location.describe()))
+        }
         Err(TryLockError::Error(err)) => Err(err.into()),
     }
 }

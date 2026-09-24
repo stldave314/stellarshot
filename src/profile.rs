@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{BackupRequest, Location};
+use crate::engine::{BackupRequest, EngineError, ErrorKind, Location, rclone};
 
 /// Folders under the home directory that are rarely worth backing up and are
 /// excluded from a new profile by default, as Déjà Dup does.
@@ -22,6 +22,29 @@ pub const DEFAULT_HOME_EXCLUDES: &[&str] = &[".cache", ".local/share/Trash", "Do
 pub enum Destination {
     /// A folder on this computer.
     Local { path: PathBuf },
+    /// A folder on a removable drive, found by the drive's filesystem UUID
+    /// wherever it is mounted.
+    Removable {
+        uuid: String,
+        relative_path: PathBuf,
+        label: String,
+    },
+    /// A folder on an SSH server, reached through rclone's SFTP backend.
+    Sftp {
+        host: String,
+        user: String,
+        port: u16,
+        path: String,
+    },
+    /// A folder on a remote in Stellarshot's own rclone configuration: a
+    /// cloud account signed in from Stellarshot, or a copy of one of the
+    /// user's remotes.
+    Rclone {
+        remote: String,
+        path: String,
+        /// What to call it: "Google Drive", or the user's remote name.
+        provider: String,
+    },
 }
 
 impl Destination {
@@ -29,6 +52,63 @@ impl Destination {
     pub fn describe(&self) -> String {
         match self {
             Self::Local { path } => crate::app::format::path(path),
+            Self::Removable {
+                label,
+                relative_path,
+                ..
+            } => format!("{label}: /{}", relative_path.display()),
+            Self::Sftp {
+                host, user, path, ..
+            } if user.is_empty() => format!("{host}:{path}"),
+            Self::Sftp {
+                host, user, path, ..
+            } => format!("{user}@{host}:{path}"),
+            Self::Rclone { path, provider, .. } => format!("{provider}: {path}"),
+        }
+    }
+
+    /// Where the engine finds the repository right now. A removable drive
+    /// that is not plugged in is `DestinationUnavailable`, naming the drive.
+    pub fn location(&self) -> Result<Location, EngineError> {
+        match self {
+            Self::Local { path } => Ok(Location::local(path)),
+            Self::Removable {
+                uuid,
+                relative_path,
+                label,
+            } => crate::drives::mount_point(uuid)
+                .map(|mount| Location::local(mount.join(relative_path)))
+                .ok_or_else(|| EngineError::new(ErrorKind::DestinationUnavailable, label.clone())),
+            Self::Sftp {
+                host,
+                user,
+                port,
+                path,
+            } => {
+                let known_hosts = std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+                    .join(".ssh/known_hosts");
+                Ok(Location::rclone(
+                    rclone::sftp_remote(host, user, *port, &known_hosts),
+                    path.clone(),
+                ))
+            }
+            Self::Rclone { remote, path, .. } => Ok(Location::rclone(remote.clone(), path.clone())),
+        }
+    }
+
+    /// A local destination as the matching kind: a folder on a removable
+    /// drive becomes `Removable`, so the backup still finds it when the
+    /// drive is mounted somewhere else.
+    pub fn for_folder(path: PathBuf) -> Self {
+        match crate::drives::drive_for(&path) {
+            Some((drive, relative_path)) => Self::Removable {
+                uuid: drive.uuid,
+                relative_path,
+                label: drive.label,
+            },
+            None => Self::Local { path },
         }
     }
 }
@@ -104,11 +184,9 @@ impl Profile {
         }
     }
 
-    /// Where the engine finds this profile's repository.
-    pub fn location(&self) -> Location {
-        match &self.destination {
-            Destination::Local { path } => Location::local(path),
-        }
+    /// Where the engine finds this profile's repository right now.
+    pub fn location(&self) -> Result<Location, EngineError> {
+        self.destination.location()
     }
 
     /// What the engine should back up.
@@ -118,10 +196,15 @@ impl Profile {
     /// repository into itself and grow without bound.
     pub fn backup_request(&self) -> BackupRequest {
         let mut excludes = self.excludes.clone();
-        let Destination::Local { path } = &self.destination;
-        let inside_a_source = self.sources.iter().any(|source| path.starts_with(source));
-        if inside_a_source && !excludes.contains(path) {
-            excludes.push(path.clone());
+        if let Some(path) = self
+            .location()
+            .ok()
+            .and_then(|location| location.local_path().map(Path::to_path_buf))
+        {
+            let inside_a_source = self.sources.iter().any(|source| path.starts_with(source));
+            if inside_a_source && !excludes.contains(&path) {
+                excludes.push(path);
+            }
         }
         BackupRequest {
             sources: self.sources.clone(),
@@ -214,6 +297,53 @@ mod tests {
         );
 
         assert!(profile.backup_request().excludes.is_empty());
+    }
+
+    #[test]
+    fn remote_destinations_describe_themselves() {
+        let sftp = Destination::Sftp {
+            host: "nas.local".into(),
+            user: "alex".into(),
+            port: 22,
+            path: "backups/laptop".into(),
+        };
+        assert_eq!(sftp.describe(), "alex@nas.local:backups/laptop");
+        let drive = Destination::Rclone {
+            remote: "stellarshot-1".into(),
+            path: "Stellarshot/laptop".into(),
+            provider: "Google Drive".into(),
+        };
+        assert_eq!(drive.describe(), "Google Drive: Stellarshot/laptop");
+    }
+
+    #[test]
+    fn an_unplugged_drive_is_unavailable_by_name() {
+        let drive = Destination::Removable {
+            uuid: "no-such-uuid-0000".into(),
+            relative_path: "Stellarshot".into(),
+            label: "Backup SSD".into(),
+        };
+        let err = drive.location().unwrap_err();
+        assert_eq!(err.kind, ErrorKind::DestinationUnavailable);
+        assert_eq!(err.detail, "Backup SSD");
+    }
+
+    #[test]
+    fn sftp_goes_through_rclone_with_host_key_checking() {
+        let destination = Destination::Sftp {
+            host: "nas.local".into(),
+            user: "alex".into(),
+            port: 2222,
+            path: "backups".into(),
+        };
+        match destination.location().unwrap() {
+            Location::Rclone { remote, path, .. } => {
+                assert!(remote.starts_with(":sftp,host=nas.local,port=2222,user=alex"));
+                assert!(remote.contains("known_hosts_file="));
+                assert_eq!(path, "backups");
+            }
+            other => panic!("expected an rclone location, got {other:?}"),
+        }
     }
 
     #[test]

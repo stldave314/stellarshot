@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **More places to keep a backup:** removable drives recognised by their
+  filesystem ID wherever they are mounted, SSH servers (through rclone, with
+  host keys checked against `~/.ssh/known_hosts`), Google Drive with sign-in
+  from Stellarshot, and any of the user's own rclone remotes. Stellarshot keeps
+  its own rclone configuration and passes it explicitly, so the user's
+  `rclone.conf` is never read or changed except to copy a remote the user
+  picked.
+- **Import from Déjà Dup.** Déjà Dup's settings are read from the Flatpak
+  keyfile or dconf, missing keys take Déjà Dup's schema defaults, and folder
+  tokens such as `$DOWNLOAD` follow the user's own folder names. Only
+  restic-format backups are imported; passwords never are.
 - **Backup profiles.** Each backup has its own name, folders to include and
   exclude, glob patterns to leave out, destination and password, and they sit
   side by side in the sidebar. Repositories from earlier versions become

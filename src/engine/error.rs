@@ -34,6 +34,10 @@ pub enum ErrorKind {
     RepositoryDamaged,
     /// Reading or writing local files failed.
     Io,
+    /// rclone is needed for this location and is not installed.
+    RcloneMissing,
+    /// Signing in to a cloud account did not complete.
+    AuthFailed,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }

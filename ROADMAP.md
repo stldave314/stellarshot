@@ -60,15 +60,17 @@ A new backup engine behind one module, on the current rustic release.
 - [x] "Remove from Stellarshot" and "Delete repository and all data" as separate
       actions
 
-## M3 — Storage locations and import
+## M3 — Storage locations and import (done)
 
-- [ ] USB drives identified by volume UUID, so a drive mounted somewhere new
+- [x] USB drives identified by volume UUID, so a drive mounted somewhere new
       still works
-- [ ] SFTP
-- [ ] Google Drive, OneDrive and any rclone remote, with sign-in inside the app
-      and Stellarshot's own rclone configuration
-- [ ] Existing repositories detected when a destination is chosen
-- [ ] Import from Déjà Dup (restic-format backups only; passwords are never
+- [x] SFTP (through rclone, with host-key checking)
+- [x] Google Drive with sign-in inside the app, and any of your own rclone
+      remotes, through Stellarshot's own rclone configuration
+- [ ] A OneDrive sign-in button of its own (OneDrive works today as one of
+      your rclone remotes)
+- [x] Existing repositories detected when a destination is chosen
+- [x] Import from Déjà Dup (restic-format backups only; passwords are never
       imported)
 
 ## M4 — Restore

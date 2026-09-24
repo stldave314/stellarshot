@@ -31,7 +31,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            desktop-file-utils appstream dbus gnome-keyring
+            desktop-file-utils appstream dbus gnome-keyring rclone
 
       - uses: dtolnay/rust-toolchain@stable
 

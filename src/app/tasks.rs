@@ -14,9 +14,9 @@ use crate::app::portal::url_to_path;
 use crate::app::wizard::{EstimateEvent, Mode};
 use crate::debug::UI;
 use crate::debug_log;
-use crate::engine::{self, BackupRequest, EngineError, ErrorKind, Location, Probe, Secret};
+use crate::engine::{self, BackupRequest, EngineError, ErrorKind, Probe, Secret};
 use crate::keyring;
-use crate::profile::Profile;
+use crate::profile::{Destination, Profile};
 
 /// Run blocking engine work off the UI thread.
 pub async fn blocking<T: Send + 'static>(
@@ -57,8 +57,8 @@ pub async fn pick_folder(title: String) -> Option<PathBuf> {
     }
 }
 
-pub async fn probe(path: PathBuf) -> Result<Probe, EngineError> {
-    blocking(move || engine::probe(&Location::local(path))).await
+pub async fn probe(destination: Destination) -> Result<Probe, EngineError> {
+    blocking(move || engine::probe(&destination.location()?)).await
 }
 
 /// Open a profile's repository and list its snapshots, remembering the
@@ -68,7 +68,7 @@ pub async fn open(
     secret: Secret,
     remember: bool,
 ) -> Result<Vec<engine::SnapshotSummary>, EngineError> {
-    let location = profile.location();
+    let location = profile.location()?;
     let key = secret.clone();
     let snapshots = blocking(move || engine::open(&location, &key)?.snapshots()).await?;
     if remember {
@@ -83,7 +83,7 @@ pub async fn snapshots(
     profile: Profile,
     secret: Secret,
 ) -> Result<Vec<engine::SnapshotSummary>, EngineError> {
-    let location = profile.location();
+    let location = profile.location()?;
     blocking(move || engine::open(&location, &secret)?.snapshots()).await
 }
 
@@ -107,13 +107,13 @@ pub async fn finish(
 ) -> Result<Finished, EngineError> {
     let snapshots = match (&mode, &secret) {
         (Mode::Create, Some(secret)) => {
-            let location = profile.location();
+            let location = profile.location()?;
             let key = secret.clone();
             blocking(move || engine::init(&location, &key).map(drop)).await?;
             Vec::new()
         }
         (Mode::Open, Some(secret)) => {
-            let location = profile.location();
+            let location = profile.location()?;
             let key = secret.clone();
             let snapshots = blocking(move || engine::open(&location, &key)?.snapshots()).await?;
             if let Some(latest) = snapshots.first() {
@@ -179,7 +179,7 @@ pub fn estimate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::NoProgress;
+    use crate::engine::{Location, NoProgress};
     use crate::profile::Destination;
     use tempfile::TempDir;
 

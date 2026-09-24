@@ -149,3 +149,44 @@ quit = Avsluta
 view = Visa
 menu-settings = Inställningar...
 menu-about = Om Stellarshot...
+
+# Storage locations
+google-drive = Google Drive
+place-folder = Mapp
+place-folder-description = En mapp på den här datorn eller en monterad enhet
+place-drive = Flyttbar enhet
+place-drive-description = En USB-enhet, var den än monteras
+place-server = Nätverksserver (SFTP)
+place-server-description = En mapp på en dator du når med SSH
+place-google-description = Ditt Google-konto, inloggat från Stellarshot
+place-remote = En av dina rclone-fjärrplatser
+place-remote-description = OneDrive, Dropbox, S3 och allt annat rclone kan nå
+place-rclone-missing = För att säkerhetskopiera hit behövs rclone. Installera det (till exempel med sudo apt install rclone) och försök igen.
+place-checking = Kontrollerar…
+place-check-failed = Platsen kunde inte kontrolleras.
+place-check = Kontrollera
+place-no-drives = Inga flyttbara enheter är anslutna. Anslut en och gå sedan tillbaka och framåt igen.
+place-folder-on-drive = Mapp på enheten
+place-host = Server
+place-user = Användarnamn
+place-user-placeholder = Ditt användarnamn på den datorn
+place-port = Port
+place-server-path = Mapp på servern
+place-server-note = Inloggningen använder din SSH-agent eller dina nycklar, och servern måste redan finnas i ~/.ssh/known_hosts: anslut till den med ssh en gång först.
+place-signing-in = Slutför inloggningen i webbläsaren. Stellarshot väntar…
+place-google-intro = Stellarshot öppnar din webbläsare så att du kan logga in hos Google. Bara Stellarshots egna inställningar sparar inloggningen.
+place-sign-in = Logga in med Google…
+place-signed-in = Inloggad.
+place-cloud-folder = Mapp
+place-no-remotes = Du har inga rclone-fjärrplatser. Skapa en med rclone config och kom sedan tillbaka.
+error-rclone-missing = rclone är inte installerat. Installera det (till exempel med sudo apt install rclone) för att använda den här platsen.
+error-auth-failed = Inloggningen slutfördes inte: { $details }
+
+# Déjà Dup import
+dejadup-import = Importera från Déjà Dup
+dejadup-title = Importera en Déjà Dup-säkerhetskopia
+dejadup-name = Déjà Dup-säkerhetskopia
+dejadup-none = Inga inställningar för Déjà Dup hittades.
+dejadup-other-format = Den här Déjà Dup-säkerhetskopian använder det äldre duplicity-formatet, som Stellarshot inte kan läsa. Skapa en ny säkerhetskopia i stället; den gamla går fortfarande att läsa i Déjà Dup.
+dejadup-unsupported = Déjà Dup förvarar den här säkerhetskopian på en plats som Stellarshot inte kan använda ({ $backend }). Skapa en ny säkerhetskopia i stället.
+menu-import-dejadup = Importera från Déjà Dup…

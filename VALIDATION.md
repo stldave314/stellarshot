@@ -91,6 +91,55 @@ These run the real `stellarshot` binary, the way the window does.
 | `exclude_through_a_symlinked_path_still_applies` (`src/engine/tests.rs`) | An exclusion written through a symlinked path (`/home` → `/var/home`) still leaves the folder out |
 | `estimate_respects_cancel` | A cancelled estimate stops and reports nothing, so a stale total never replaces a newer one |
 
+### Storage through rclone (`tests/rclone.rs`, `src/engine/rclone.rs`)
+
+These run the real rclone transport with rclone's own `:local:` backend: the
+same path SSH servers and cloud storage take (rustic starting `rclone serve
+restic`, the probe, the delete) without needing a server or an account. They
+use a private, empty rclone configuration, so the user's own is never read.
+**Cannot pass vacuously:** each asserts rclone is installed first and fails
+if it is not; CI installs it.
+
+| Test | What it proves |
+| --- | --- |
+| `backup_through_rclone_round_trips` | Create, back up and restore through rclone; the restored file matches |
+| `rclone_probe_classifies_like_a_folder` | A missing folder, a folder of other files and a repository are told apart exactly as for a local folder |
+| `rclone_delete_leaves_foreign_files` | Deleting through rclone removes the repository's entries and leaves a neighbouring `report.odt` byte-for-byte intact |
+| `rclone_delete_refuses_a_folder_that_is_not_a_repository` | Nothing is deleted from a folder that is not a repository |
+| `an_unreachable_remote_is_unavailable` | An undefined remote is `DestinationUnavailable`, not a crash or "not a repository" |
+| `sftp_remotes_check_host_keys` | Every SFTP remote carries `known_hosts_file`, so host keys are always checked |
+
+### Removable drives (`src/drives.rs`)
+
+Pure parsing, tested with `/proc/self/mountinfo` and `/dev/disk/by-*` fixtures:
+only removable mounts with a UUID count as drives (not the root filesystem or a
+network share); a drive mounted at a new place is found there
+(`uuid_resolves_to_its_current_mount_point`); an unplugged drive is simply
+absent (`missing_drive_is_unavailable`), and a profile pointing at it reports
+`DestinationUnavailable` with the drive's name
+(`an_unplugged_drive_is_unavailable_by_name`); escaped names such as
+`Photo\040Disk` are decoded.
+
+### Déjà Dup import (`src/dejadup.rs`)
+
+Fixtures modelled on a real Déjà Dup 50 Flatpak keyfile and on `dconf dump`
+output. They prove that missing keys take Déjà Dup's schema defaults
+(`$HOME` included, Trash and Downloads excluded); that `$DOWNLOAD` and the
+other tokens follow `user-dirs.dirs` rather than English folder names; that a
+relative local folder is under the home folder; that `sftp://` URIs become
+servers; and that duplicity, borg and unsupported backends are refused. In the
+wizard, `a_dejadup_import_keeps_its_folders_but_asks_for_the_password` proves
+the recorded drive is selected by UUID, the exclusions carry over, and the
+password field starts empty.
+
+### The "where" step (`src/app/wizard/place.rs`)
+
+A drive is remembered by UUID; a check only counts for the destination it
+checked, so editing a field after a check needs a new one; a server needs a
+host, a folder and a valid port; Google needs a sign-in first and only one
+sign-in runs at a time; one of the user's remotes is only ever used through
+Stellarshot's own copy of it.
+
 ### The keyring (`tests/keyring.rs`)
 
 `keyring_round_trip` stores, reads, replaces and forgets a password in a real
@@ -197,6 +246,19 @@ Things a test cannot reach yet, and how they were confirmed.
 | The main screen, wizard and profile page render, the estimate fills in, and a remembered password unlocks the page | `scripts/screenshots.sh`, then every image inspected | M2 |
 | The keyring test fails, rather than hangs or skips, with no Secret Service | Run in an isolated `dbus-run-session` with a throwaway home: failed after 120 s with the expected message | M2 |
 | The CI keyring recipe works | The CI command run locally in an isolated session with a throwaway home: passed, the real keyrings untouched | M2 |
+| Déjà Dup settings are detected on a real install | Stellarshot started with empty settings and the real home folder (Déjà Dup 50.2, Flatpak): the first screen offered "Import from Déjà Dup" | M3 |
+| Déjà Dup's backups are restic | Its cache and log show `--repo=rclone::drive:<folder>`: the repository is directly in the Drive folder Déjà Dup's settings name | M3 |
+
+### Not yet verified end to end
+
+- **Google sign-in and a backup to a real Google Drive.** Signing in needs a
+  person at a browser with a Google account. The rclone transport it uses is
+  covered by `tests/rclone.rs`; the sign-in step itself (`rclone config
+  create … drive`) has not been run to completion by the tests.
+- **A backup to a real SSH server.** Covered only through the same rclone
+  transport and the remote-string tests.
+- **Importing a real Déjà Dup Google Drive backup**, which needs the sign-in
+  above.
 
 ## Adding a check
 

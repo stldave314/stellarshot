@@ -27,6 +27,8 @@ pub fn describe(context: &str, error: &EngineError) -> String {
         ErrorKind::Locked => fl!("error-locked"),
         ErrorKind::Cancelled => return fl!("error-cancelled"),
         ErrorKind::RepositoryDamaged => fl!("error-repository-damaged"),
+        ErrorKind::RcloneMissing => fl!("error-rclone-missing"),
+        ErrorKind::AuthFailed => fl!("error-auth-failed", details = error.detail.clone()),
         ErrorKind::Io | ErrorKind::Internal => {
             fl!("error-details", details = error.detail.clone())
         }

@@ -315,7 +315,7 @@ fn check_reports_a_damaged_repository() {
     back_up(&fixture, &sources(&fixture.source));
     // Remove every index file: snapshots now refer to data the repository can
     // no longer find.
-    for entry in fs::read_dir(fixture.repo.path().join("index")).unwrap() {
+    for entry in fs::read_dir(fixture.repo.local_path().unwrap().join("index")).unwrap() {
         fs::remove_file(entry.unwrap().path()).unwrap();
     }
 

@@ -149,3 +149,44 @@ quit = Verlassen
 view = Ansicht
 menu-settings = Einstellungen
 menu-about = Informationen über Stellarshot
+
+# Storage locations
+google-drive = Google Drive
+place-folder = Ordner
+place-folder-description = Ein Ordner auf diesem Rechner oder einem eingehängten Laufwerk
+place-drive = Wechseldatenträger
+place-drive-description = Ein USB-Laufwerk, egal wo es eingehängt ist
+place-server = Netzwerkserver (SFTP)
+place-server-description = Ein Ordner auf einem Rechner, den du per SSH erreichst
+place-google-description = Dein Google-Konto, angemeldet in Stellarshot
+place-remote = Eines deiner rclone-Remotes
+place-remote-description = OneDrive, Dropbox, S3 und alles andere, was rclone erreicht
+place-rclone-missing = Um hier zu sichern, wird rclone benötigt. Installiere es (zum Beispiel mit sudo apt install rclone) und versuche es erneut.
+place-checking = Wird geprüft …
+place-check-failed = Dieser Speicherort konnte nicht geprüft werden.
+place-check = Prüfen
+place-no-drives = Es sind keine Wechseldatenträger angeschlossen. Schließe einen an und gehe dann zurück und wieder weiter.
+place-folder-on-drive = Ordner auf dem Laufwerk
+place-host = Server
+place-user = Benutzername
+place-user-placeholder = Dein Benutzername auf diesem Rechner
+place-port = Port
+place-server-path = Ordner auf dem Server
+place-server-note = Die Anmeldung erfolgt über deinen SSH-Agenten oder deine Schlüssel, und der Server muss bereits in ~/.ssh/known_hosts stehen: Verbinde dich zuerst einmal per ssh.
+place-signing-in = Schließe die Anmeldung im Browser ab. Stellarshot wartet …
+place-google-intro = Stellarshot öffnet deinen Browser, damit du dich bei Google anmelden kannst. Die Anmeldung wird nur in Stellarshots eigenen Einstellungen gespeichert.
+place-sign-in = Mit Google anmelden …
+place-signed-in = Angemeldet.
+place-cloud-folder = Ordner
+place-no-remotes = Du hast keine rclone-Remotes. Richte eines mit rclone config ein und komm dann zurück.
+error-rclone-missing = rclone ist nicht installiert. Installiere es (zum Beispiel mit sudo apt install rclone), um diesen Speicherort zu nutzen.
+error-auth-failed = Die Anmeldung wurde nicht abgeschlossen: { $details }
+
+# Déjà Dup import
+dejadup-import = Aus Déjà Dup importieren
+dejadup-title = Eine Déjà-Dup-Sicherung importieren
+dejadup-name = Déjà-Dup-Sicherung
+dejadup-none = Es wurden keine Déjà-Dup-Einstellungen gefunden.
+dejadup-other-format = Diese Déjà-Dup-Sicherung verwendet das ältere duplicity-Format, das Stellarshot nicht lesen kann. Erstelle stattdessen eine neue Sicherung; die alte bleibt in Déjà Dup lesbar.
+dejadup-unsupported = Déjà Dup bewahrt diese Sicherung an einem Ort auf, den Stellarshot nicht nutzen kann ({ $backend }). Erstelle stattdessen eine neue Sicherung.
+menu-import-dejadup = Aus Déjà Dup importieren …

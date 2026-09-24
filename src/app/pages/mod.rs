@@ -4,3 +4,4 @@
 
 pub mod empty;
 pub mod profile;
+pub mod restore;

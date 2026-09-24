@@ -190,3 +190,91 @@ dejadup-none = Es wurden keine Déjà-Dup-Einstellungen gefunden.
 dejadup-other-format = Diese Déjà-Dup-Sicherung verwendet das ältere duplicity-Format, das Stellarshot nicht lesen kann. Erstelle stattdessen eine neue Sicherung; die alte bleibt in Déjà Dup lesbar.
 dejadup-unsupported = Déjà Dup bewahrt diese Sicherung an einem Ort auf, den Stellarshot nicht nutzen kann ({ $backend }). Erstelle stattdessen eine neue Sicherung.
 menu-import-dejadup = Aus Déjà Dup importieren …
+
+# Restore
+restore-open = Wiederherstellen …
+restore-title = Wiederherstellen aus { $name }
+restore-loading = Sicherung wird geöffnet …
+tab-browse = Durchsuchen
+tab-deleted = Gelöschte Dateien
+tab-compare = Vergleichen
+selected-count = { $count ->
+    [one] 1 Element ausgewählt
+   *[other] { $count } Elemente ausgewählt
+}
+restore-button = Wiederherstellen …
+search-placeholder = Diese Momentaufnahme durchsuchen
+search-results = { $count ->
+    [one] 1 Treffer
+   *[other] { $count } Treffer
+}
+folder-empty = Dieser Ordner ist leer.
+versions-title = Versionen
+versions-same = { $count ->
+    [one] ↳ in 1 älteren Momentaufnahme gleich
+   *[other] ↳ in { $count } älteren Momentaufnahmen gleich
+}
+open-copy = Kopie öffnen
+restore-this-version = Diese Version wiederherstellen …
+deleted-scope = Dateien in { $folder }, die in Sicherungen der letzten { $days } Tage enthalten, aber nicht mehr vorhanden sind.
+deleted-change-folder = Ordner ändern …
+deleted-find = Gelöschte Dateien suchen
+restore-searching = Wird gesucht …
+deleted-intro = Suche nach gelöschten Dateien, die eine Sicherung noch enthält.
+deleted-none = Nichts fehlt: Jede Datei aus diesen Sicherungen ist noch vorhanden.
+deleted-last-seen = zuletzt gesichert { $when }
+compare-button = Vergleichen
+compare-intro = Wähle zwei Momentaufnahmen, um zu sehen, was sich geändert hat.
+compare-none = Zwischen diesen Momentaufnahmen hat sich nichts geändert.
+compare-summary = { $added } hinzugefügt · { $removed } entfernt · { $changed } geändert
+restore-sheet-title = { $count ->
+    [one] 1 Element wiederherstellen
+   *[other] { $count } Elemente wiederherstellen
+}
+restore-to = Wiederherstellen nach
+restore-to-original = An den ursprünglichen Ort
+restore-to-folder = In einen anderen Ordner …
+restore-to-folder-chosen = In { $folder }
+restore-existing = Wenn eine Datei bereits existiert
+policy-keep-both = Beide behalten
+policy-keep-both-description = Die wiederhergestellte Kopie erhält einen neuen Namen; deine Datei bleibt unberührt.
+policy-overwrite = Überschreiben
+policy-overwrite-description = Durch die gesicherte Kopie ersetzen.
+policy-skip = Überspringen
+policy-skip-description = Behalten und diese Datei nicht wiederherstellen.
+restore-previewing = Es wird ermittelt, was passieren wird …
+restore-choose-folder = Wähle den Ordner, in den wiederhergestellt werden soll.
+restore-preview-failed = Es konnte nicht ermittelt werden, was die Wiederherstellung tun würde.
+preview-restore = { $count ->
+    [one] 1 Datei wird wiederhergestellt ({ $size })
+   *[other] { $count } Dateien werden wiederhergestellt ({ $size })
+}
+preview-kept = { $count ->
+    [one] 1 vorhandene Datei weicht ab und wird daneben behalten
+   *[other] { $count } vorhandene Dateien weichen ab und werden daneben behalten
+}
+preview-replaced = { $count ->
+    [one] 1 vorhandene Datei weicht ab und wird ersetzt
+   *[other] { $count } vorhandene Dateien weichen ab und werden ersetzt
+}
+preview-skipped = { $count ->
+    [one] 1 vorhandene Datei weicht ab und wird übersprungen
+   *[other] { $count } vorhandene Dateien weichen ab und werden übersprungen
+}
+preview-unchanged = { $count ->
+    [one] 1 Datei ist bereits identisch und bleibt unberührt
+   *[other] { $count } Dateien sind bereits identisch und bleiben unberührt
+}
+restore-done-title = Wiederherstellung abgeschlossen
+restore-done-body = { $count ->
+    [one] 1 Datei wiederhergestellt ({ $size }).
+   *[other] { $count } Dateien wiederhergestellt ({ $size }).
+} { $conflicts ->
+    [0] {""}
+   *[other] Bereits vorhandene Dateien wurden wie gewählt behandelt.
+}
+restore-failed = Die Wiederherstellung wurde nicht abgeschlossen.
+browse-failed = Diese Sicherung konnte nicht gelesen werden.
+open-copy-failed = Es konnte keine Kopie dieser Datei geöffnet werden.
+select-scope-folder = Wähle einen Ordner zum Durchsuchen
+select-restore-folder = Wähle, wohin wiederhergestellt werden soll

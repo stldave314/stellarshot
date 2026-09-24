@@ -8,6 +8,7 @@
 //! blocking thread, writes in a `--run` child process.
 
 mod backup;
+pub mod browse;
 mod error;
 mod estimate;
 pub mod location;
@@ -20,10 +21,12 @@ mod restore;
 mod snapshots;
 
 pub use backup::{BackupReport, BackupRequest};
+pub use browse::{Browser, Change, DiffEntry, EntryKind, FileVersion, MissingEntry, TreeEntry};
 pub use error::{EngineError, ErrorKind};
 pub use estimate::{SizeEstimate, estimate, folder_size};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
 pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, open, probe};
+pub use restore::{ConflictPolicy, RestorePreview, RestoreRequest, Target};
 pub use snapshots::SnapshotSummary;
 
 #[cfg(test)]

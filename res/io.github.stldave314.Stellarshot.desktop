@@ -8,8 +8,12 @@ StartupNotify=true
 Icon=io.github.stldave314.Stellarshot
 Categories=Utility;Archiving;
 Keywords=Backup;Backups;Snapshot;Restore;restic;rustic;
-Actions=new-backup;
+Actions=new-backup;restore;
 
 [Desktop Action new-backup]
 Name=New Backup
 Exec=stellarshot --new-backup
+
+[Desktop Action restore]
+Name=Restore Files
+Exec=stellarshot --restore

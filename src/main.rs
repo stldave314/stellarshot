@@ -14,6 +14,9 @@ fn main() -> ExitCode {
     // `--new-backup` opens the setup wizard straight away: the desktop
     // entry's "New Backup" action.
     flags.start_wizard = args.iter().any(|arg| arg == "--new-backup");
+    // `--restore` opens the restore page for the selected backup once it is
+    // unlocked: the "Restore Files" action.
+    flags.start_restore = args.iter().any(|arg| arg == "--restore");
     match cosmic::app::run::<App>(settings, flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

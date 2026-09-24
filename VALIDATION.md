@@ -58,6 +58,34 @@ and a mode-0600 file.
 | `backup_reports_progress_ending_at_the_total` | Progress reports every byte of every regular file |
 | `throttle_sends_first_and_final` (`progress.rs`) | 1,000 rapid increments produce few reports, and the last one is exact |
 
+### Browsing and restoring (`src/engine/tests.rs`)
+
+Real snapshots of the same fixture tree, restored into real folders.
+
+| Test | What it proves |
+| --- | --- |
+| `lists_a_folder_in_a_snapshot` | A folder's entries, folders first, with their kinds and sizes |
+| `search_finds_names_anywhere` | A name is found at any depth, ignoring case |
+| `versions_collapse_identical_content` | A file changed once across three snapshots: the version identical to the newer one is marked, the two different ones are not |
+| `diff_reports_added_removed_modified` | Each kind of change is reported for the right path |
+| `a_snapshot_compared_with_itself_has_no_changes` | No differences are reported |
+| `missing_finds_deleted_files_with_their_last_snapshot` | A file deleted from disk is listed with the newest snapshot that still has it |
+| `restore_to_a_folder_keeps_names` | Each selected item lands in the chosen folder under its own name |
+| `keep_both_never_touches_the_existing_file` / `keep_both_for_a_single_file` | The existing file keeps its content; the restored copy is next to it under a dated name. **Cannot pass vacuously:** the existing file is first changed so the two differ |
+| `overwrite_replaces_changed_files` | Overwrite puts the backed-up content back over an edited file |
+| `skip_restores_only_what_is_missing` | In a folder where some files exist and some do not, only the missing ones are written |
+| `preview_counts_match_the_restore` | The dry run's counts equal what the restore then does, and the dry run leaves the missing file missing and the edited file edited |
+| `preview_creates_nothing` | A dry run into a folder that does not exist yet does not create it |
+| `restores_into_a_deleted_folder` | Restoring to the original place recreates missing parent folders |
+
+The restore page's rules are tested without a window (`src/app/pages/restore.rs`):
+Keep both and the original place are the defaults; **Restore** does nothing
+until a successful dry run exists for exactly the current choices (a late
+answer for earlier choices is ignored); a selection spanning several
+snapshots becomes one restore per snapshot, run in turn; Cancel drops the rest;
+a folder missing from another snapshot falls back to the starting folder, then
+the top, then reports an error instead of looping.
+
 ### The `--run` child process (`tests/runner.rs`, `tests/child.rs`)
 
 These run the real `stellarshot` binary, the way the window does.
@@ -70,6 +98,7 @@ These run the real `stellarshot` binary, the way the window does.
 | `second_writer_reports_locked` | With the lock held, a backup reports `Locked` and **writes nothing** |
 | `killed_backup_leaves_a_sound_repository` | 48 MiB of incompressible data; the child is killed with SIGKILL as soon as data is being stored. Afterwards there is no snapshot, `check` passes, and the next backup succeeds. **Cannot pass vacuously:** it fails if the backup finishes before it can be killed |
 | `backup_finishes_after_the_window_goes_away` | Closing the reading end of the pipe mid-backup does not stop it; the snapshot is recorded |
+| `runner_restores_a_selection_keeping_both` | A selective restore through the child process, as the Restore button runs it: `done` carries the counts, the existing file is untouched, and exactly one dated copy appears |
 | `a_backup_streams_started_progress_and_done` | The window's stream yields `Started`, progress, then `Done` |
 | `cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Cancelled`, with no snapshot left behind |
 | `a_missing_executable_is_reported_not_hung` | If the child cannot start, the stream ends with an error instead of waiting forever |
@@ -248,6 +277,7 @@ Things a test cannot reach yet, and how they were confirmed.
 | The CI keyring recipe works | The CI command run locally in an isolated session with a throwaway home: passed, the real keyrings untouched | M2 |
 | Déjà Dup settings are detected on a real install | Stellarshot started with empty settings and the real home folder (Déjà Dup 50.2, Flatpak): the first screen offered "Import from Déjà Dup" | M3 |
 | Déjà Dup's backups are restic | Its cache and log show `--repo=rclone::drive:<folder>`: the repository is directly in the Drive folder Déjà Dup's settings name | M3 |
+| The restore page opens from `--restore` and lists the demo snapshot's folders | `scripts/screenshots.sh restore`, then the image inspected | M4 |
 
 ### Not yet verified end to end
 

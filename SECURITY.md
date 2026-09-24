@@ -56,6 +56,14 @@ note in the [README](README.md).
   uses your SSH agent or keys.
 - **Déjà Dup's password is never read.** Importing reads Déjà Dup's settings
   only; the module that does it has no keyring code at all.
+- **A restore does not overwrite or delete by default.** Keep both is the
+  default when a file already exists: your file is left as it is and the
+  restored copy gets a new name. Overwrite happens only when you choose it,
+  after a dry run has counted what it will replace. Files that are not in the
+  snapshot are never deleted. **Open Copy** restores a single file into a
+  folder only you can open (mode 0700) in your session's runtime directory
+  (`$XDG_RUNTIME_DIR`, which a desktop login keeps in memory and clears at
+  logout), and makes the copy read-only.
 - **One writer per repository.** Every backup, restore, check and deletion
   holds an exclusive lock on the repository, so two of them can never write
   to it at once. The lock lives in your private runtime directory and is

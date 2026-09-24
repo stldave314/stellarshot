@@ -49,6 +49,7 @@ fn setup(files: usize) -> (TempDir, Job) {
             sources: vec![source],
             ..BackupRequest::default()
         }),
+        restore: None,
         snapshot: None,
         destination: None,
         ids: Vec::new(),
@@ -71,7 +72,10 @@ fn a_backup_streams_started_progress_and_done() {
     assert!(
         matches!(
             events.last(),
-            Some(ChildEvent::Event(Event::Done { report: Some(_) }))
+            Some(ChildEvent::Event(Event::Done {
+                report: Some(_),
+                ..
+            }))
         ),
         "last event: {:?}",
         events.last()

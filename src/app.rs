@@ -20,9 +20,10 @@ use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme};
 use crate::app::config::{AppTheme, CONFIG_VERSION, StellarshotConfig};
 use crate::app::key_bind::key_binds;
 use crate::app::pages::profile::{self, ProfileState};
+use crate::app::pages::restore::{self, RestorePage};
 use crate::app::wizard::{Mode, Wizard, place};
 use crate::debug::{CONFIG, ENGINE, UI};
-use crate::engine::{self, EngineError};
+use crate::engine::{self, EngineError, Secret};
 use crate::profile::Profile;
 use crate::runner::{Job, Operation};
 use crate::{debug_log, error_log, fl};
@@ -57,6 +58,8 @@ pub struct App {
     dialog: Option<Dialog>,
     pages: HashMap<String, ProfileState>,
     wizard: Option<Wizard>,
+    /// The restore page, and the password of the backup it is for.
+    restore: Option<(RestorePage, Secret)>,
     key_binds: HashMap<KeyBind, Action>,
     modifiers: Modifiers,
     now: i64,
@@ -92,6 +95,7 @@ pub enum Message {
     BackUpSelected,
     Profile(String, profile::Message),
     Wizard(wizard::Message),
+    RestorePage(restore::Message),
     WizardFinished(Result<tasks::Finished, EngineError>),
     Dialog(DialogMessage),
     Noop,
@@ -117,6 +121,8 @@ impl ContextPage {
 pub enum Dialog {
     /// A localized explanation of something that failed.
     Error(String),
+    /// Something finished, and here is what happened.
+    Info(String, String),
     /// Forget a profile; its data stays.
     Remove { id: String, name: String },
     /// Delete a profile's repository and everything in it.
@@ -147,6 +153,8 @@ pub enum DialogMessage {
     Confirm,
     Typed(String),
     Deleted(String, Result<(), EngineError>),
+    /// Show an error from a background task.
+    Failed(String, EngineError),
 }
 
 #[derive(Clone, Debug)]
@@ -155,6 +163,8 @@ pub struct Flags {
     pub config: StellarshotConfig,
     /// Open the setup wizard as soon as the window appears.
     pub start_wizard: bool,
+    /// Open the restore page for the selected backup once it is unlocked.
+    pub start_restore: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -409,6 +419,160 @@ impl App {
         }
     }
 
+    fn run_restore_effects(&mut self, effects: Vec<restore::Effect>) -> Task<Message> {
+        let Some((page, secret)) = &self.restore else {
+            return Task::none();
+        };
+        let Some(profile) = self.config.profile(&page.profile_id).cloned() else {
+            return Task::none();
+        };
+        let secret = secret.clone();
+        let browser = page.browser();
+        let to_page = |message: restore::Message| app(Message::RestorePage(message));
+        let mut tasks = Vec::new();
+        for effect in effects {
+            let browser = browser.clone();
+            let task = match effect {
+                restore::Effect::Load => {
+                    let (profile, secret) = (profile.clone(), secret.clone());
+                    Task::perform(
+                        tasks::blocking(move || {
+                            let location = profile.location()?;
+                            Ok(std::sync::Arc::new(
+                                engine::open(&location, &secret)?.browse()?,
+                            ))
+                        }),
+                        move |result| to_page(restore::Message::Loaded(result)),
+                    )
+                }
+                restore::Effect::List { snapshot, dir } => {
+                    let listed = dir.clone();
+                    Task::perform(
+                        tasks::blocking(move || browsing(browser)?.list(&snapshot, &dir)),
+                        move |result| to_page(restore::Message::Listed(listed.clone(), result)),
+                    )
+                }
+                restore::Effect::Search { snapshot, query } => Task::perform(
+                    tasks::blocking(move || {
+                        browsing(browser)?.search(&snapshot, &query, restore::RESULT_LIMIT)
+                    }),
+                    move |result| to_page(restore::Message::Found(result)),
+                ),
+                restore::Effect::Versions(path) => {
+                    let asked = path.clone();
+                    Task::perform(
+                        tasks::blocking(move || browsing(browser)?.versions(&path)),
+                        move |result| {
+                            to_page(restore::Message::VersionsLoaded(asked.clone(), result))
+                        },
+                    )
+                }
+                restore::Effect::Missing { scope, since } => Task::perform(
+                    tasks::blocking(move || {
+                        browsing(browser)?.missing(&scope, since, restore::RESULT_LIMIT)
+                    }),
+                    move |result| to_page(restore::Message::MissingFound(result)),
+                ),
+                restore::Effect::Diff { from, to } => Task::perform(
+                    tasks::blocking(move || browsing(browser)?.diff(&from, &to)),
+                    move |result| to_page(restore::Message::Compared(result)),
+                ),
+                restore::Effect::Preview(requests) => {
+                    let (profile, secret) = (profile.clone(), secret.clone());
+                    let asked = requests.clone();
+                    Task::perform(
+                        tasks::blocking(move || {
+                            let location = profile.location()?;
+                            let mut total = engine::RestorePreview::default();
+                            for request in &requests {
+                                let part =
+                                    engine::open(&location, &secret)?.preview_restore(request)?;
+                                total.files += part.files;
+                                total.bytes += part.bytes;
+                                total.unchanged += part.unchanged;
+                                total.conflicts += part.conflicts;
+                            }
+                            Ok(total)
+                        }),
+                        move |result| to_page(restore::Message::Previewed(asked.clone(), result)),
+                    )
+                }
+                restore::Effect::Restore(request) => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        Err(err) => {
+                            self.show_error(&fl!("restore-failed"), &err);
+                            continue;
+                        }
+                    };
+                    let job = Job {
+                        repository,
+                        password: secret.clone(),
+                        request: None,
+                        restore: Some(request),
+                        snapshot: None,
+                        destination: None,
+                        ids: Vec::new(),
+                    };
+                    Task::run(child::run(Operation::Restore, job), move |event| {
+                        to_page(restore::Message::Restore(event))
+                    })
+                }
+                restore::Effect::OpenCopy { snapshot, path } => {
+                    let (profile, secret) = (profile.clone(), secret.clone());
+                    Task::perform(
+                        tasks::blocking(move || open_copy(&profile, &secret, &snapshot, &path)),
+                        |result| match result {
+                            Ok(()) => app(Message::Noop),
+                            Err(err) => app(Message::Dialog(DialogMessage::Failed(
+                                fl!("open-copy-failed"),
+                                err,
+                            ))),
+                        },
+                    )
+                }
+                restore::Effect::PickScope => Task::perform(
+                    tasks::pick_folder(fl!("select-scope-folder")),
+                    move |path| {
+                        path.map_or(app(Message::Noop), |path| {
+                            to_page(restore::Message::ScopeChosen(path))
+                        })
+                    },
+                ),
+                restore::Effect::PickTarget => Task::perform(
+                    tasks::pick_folder(fl!("select-restore-folder")),
+                    move |path| {
+                        path.map_or(to_page(restore::Message::TargetOriginal), |path| {
+                            to_page(restore::Message::TargetChosen(path))
+                        })
+                    },
+                ),
+                restore::Effect::ShowError(context, error) => {
+                    self.show_error(&context, &error);
+                    Task::none()
+                }
+                restore::Effect::Restored(done) => {
+                    self.dialog = Some(Dialog::Info(
+                        fl!("restore-done-title"),
+                        fl!(
+                            "restore-done-body",
+                            count = (done.files as i64),
+                            size = format::bytes(done.bytes),
+                            conflicts = (done.conflicts as i64)
+                        ),
+                    ));
+                    Task::none()
+                }
+                restore::Effect::Close => {
+                    self.restore = None;
+                    Task::none()
+                }
+            };
+            tasks.push(task);
+        }
+        Task::batch(tasks)
+    }
+
     fn run_profile_effects(&mut self, id: &str, effects: Vec<profile::Effect>) -> Task<Message> {
         let Some(profile) = self.config.profile(id).cloned() else {
             return Task::none();
@@ -469,6 +633,7 @@ impl App {
                         repository,
                         password: secret,
                         request: Some(profile.backup_request()),
+                        restore: None,
                         snapshot: None,
                         destination: None,
                         ids: Vec::new(),
@@ -492,6 +657,7 @@ impl App {
                         repository,
                         password: secret,
                         request: None,
+                        restore: None,
                         snapshot: None,
                         destination: None,
                         ids,
@@ -512,6 +678,16 @@ impl App {
                     updated.last_success = Some(time);
                     self.upsert_profile(updated);
                     Task::none()
+                }
+                profile::Effect::OpenRestore(secret) => {
+                    let root = profile
+                        .sources
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| PathBuf::from("/"));
+                    let (page, effects) = RestorePage::new(profile.id.clone(), root);
+                    self.restore = Some((page, secret));
+                    self.run_restore_effects(effects)
                 }
                 profile::Effect::Edit => {
                     let (wizard, effects) = Wizard::edit(&profile);
@@ -606,7 +782,7 @@ impl App {
                     return Task::none();
                 }
                 match dialog {
-                    Dialog::Error(_) => {
+                    Dialog::Error(_) | Dialog::Info(..) => {
                         self.dialog = None;
                         Task::none()
                     }
@@ -636,6 +812,10 @@ impl App {
                     }
                 }
             }
+            DialogMessage::Failed(context, error) => {
+                self.show_error(&context, &error);
+                Task::none()
+            }
             DialogMessage::Deleted(id, result) => match result {
                 Ok(()) => {
                     self.dialog = None;
@@ -657,6 +837,43 @@ fn delete_repository(profile: &Profile) -> Result<(), EngineError> {
     let location = profile.location()?;
     let _lock = engine::lock::acquire(&location)?;
     engine::delete_repository(&location)
+}
+
+/// The browser the restore page opened, or an error if it has not finished
+/// opening.
+fn browsing(
+    browser: Option<std::sync::Arc<engine::Browser>>,
+) -> Result<std::sync::Arc<engine::Browser>, EngineError> {
+    browser
+        .ok_or_else(|| EngineError::new(engine::ErrorKind::Internal, "the backup is still opening"))
+}
+
+/// Restore one file from `snapshot` into a private temporary folder, make it
+/// read-only, and open it with the default application: a way to look at an
+/// old version without touching the current one.
+fn open_copy(
+    profile: &Profile,
+    secret: &engine::Secret,
+    snapshot: &str,
+    path: &std::path::Path,
+) -> Result<(), EngineError> {
+    use std::os::unix::fs::PermissionsExt;
+    let folder =
+        engine::lock::runtime_dir().join(format!("open-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&folder)?;
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
+    let request = engine::RestoreRequest {
+        snapshot: snapshot.to_owned(),
+        paths: vec![path.to_path_buf()],
+        target: engine::Target::Folder(folder.clone()),
+        policy: engine::ConflictPolicy::Overwrite,
+    };
+    engine::open(&profile.location()?, secret)?
+        .restore(&request, std::sync::Arc::new(engine::NoProgress))?;
+    let copy = folder.join(path.file_name().unwrap_or_default());
+    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o400))?;
+    open::that_detached(&copy)?;
+    Ok(())
 }
 
 /// The user's home folder, the default thing to back up.
@@ -688,11 +905,13 @@ impl Application for App {
     fn nav_model(&self) -> Option<&nav_bar::Model> {
         // No sidebar until there is something to put in it: the empty state
         // and the wizard fill the window instead.
-        (!self.config.profiles.is_empty() && self.wizard.is_none()).then_some(&self.nav)
+        (!self.config.profiles.is_empty() && self.wizard.is_none() && self.restore.is_none())
+            .then_some(&self.nav)
     }
 
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         let flags_start_wizard = flags.start_wizard;
+        let flags_start_restore = flags.start_restore;
         let about = About::default()
             .name(fl!("stellarshot"))
             .icon(widget::icon::from_name(APP_ID))
@@ -722,6 +941,7 @@ impl Application for App {
             dialog: None,
             pages: HashMap::new(),
             wizard: None,
+            restore: None,
             key_binds: key_binds(),
             modifiers: Modifiers::empty(),
             now: format::now(),
@@ -735,6 +955,9 @@ impl Application for App {
             Some(id) => app.set_window_title(title, id),
             None => Task::none(),
         };
+        if flags_start_restore && let Some(id) = app.selected().map(str::to_owned) {
+            app.pages.entry(id).or_default().restore_when_unlocked = true;
+        }
         let activate = app.activate_selected();
         let wizard = if flags_start_wizard {
             app.update(Message::NewBackup)
@@ -782,6 +1005,13 @@ impl Application for App {
                     widget::button::suggested(fl!("ok"))
                         .on_press(Message::Dialog(DialogMessage::Close)),
                 ),
+            Dialog::Info(title, message) => widget::dialog()
+                .title(title.as_str())
+                .body(message.as_str())
+                .primary_action(
+                    widget::button::suggested(fl!("ok"))
+                        .on_press(Message::Dialog(DialogMessage::Close)),
+                ),
             Dialog::Remove { name, .. } => widget::dialog()
                 .title(fl!("remove-title", name = name.clone()))
                 .body(fl!("remove-body"))
@@ -812,6 +1042,14 @@ impl Application for App {
     fn view(&self) -> Element<'_, Self::Message> {
         if let Some(wizard) = &self.wizard {
             return wizard.view().map(Message::Wizard);
+        }
+        if let Some((page, _)) = &self.restore {
+            let name = self
+                .config
+                .profile(&page.profile_id)
+                .map(|profile| profile.name.as_str())
+                .unwrap_or_default();
+            return page.view(name).map(Message::RestorePage);
         }
         if self.config.profiles.is_empty() {
             return pages::empty::view(self.dejadup);
@@ -892,6 +1130,13 @@ impl Application for App {
                 return self.run_wizard_effects(effects);
             }
             Message::WizardFinished(result) => return self.on_wizard_finished(result),
+            Message::RestorePage(message) => {
+                let Some((page, _)) = self.restore.as_mut() else {
+                    return Task::none();
+                };
+                let effects = page.update(message);
+                return self.run_restore_effects(effects);
+            }
             Message::Dialog(message) => return self.on_dialog(message),
             Message::NewBackup => {
                 if self.wizard.is_none() {

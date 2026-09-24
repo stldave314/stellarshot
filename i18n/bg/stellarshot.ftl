@@ -190,3 +190,91 @@ dejadup-none = Не са намерени настройки на Déjà Dup.
 dejadup-other-format = Това копие от Déjà Dup използва по-стария формат duplicity, който Stellarshot не може да чете. Създайте ново копие; старото остава четимо в Déjà Dup.
 dejadup-unsupported = Déjà Dup пази това копие на място, което Stellarshot не може да използва ({ $backend }). Създайте ново копие.
 menu-import-dejadup = Внасяне от Déjà Dup…
+
+# Restore
+restore-open = Възстановяване…
+restore-title = Възстановяване от { $name }
+restore-loading = Отваряне на копието…
+tab-browse = Преглед
+tab-deleted = Изтрити файлове
+tab-compare = Сравняване
+selected-count = { $count ->
+    [one] 1 избран елемент
+   *[other] { $count } избрани елемента
+}
+restore-button = Възстановяване…
+search-placeholder = Търсене в това моментно състояние
+search-results = { $count ->
+    [one] 1 съвпадение
+   *[other] { $count } съвпадения
+}
+folder-empty = Тази папка е празна.
+versions-title = Версии
+versions-same = { $count ->
+    [one] ↳ същото в 1 по-старо състояние
+   *[other] ↳ същото в { $count } по-стари състояния
+}
+open-copy = Отваряне на копие
+restore-this-version = Възстановяване на тази версия…
+deleted-scope = Файлове в { $folder }, които са в копия от последните { $days } дни, но вече ги няма на диска.
+deleted-change-folder = Смяна на папката…
+deleted-find = Търсене на изтрити файлове
+restore-searching = Търсене…
+deleted-intro = Потърсете изтрити файлове, които копие все още пази.
+deleted-none = Нищо не липсва: всеки файл от тези копия още е на диска.
+deleted-last-seen = последно копиран { $when }
+compare-button = Сравняване
+compare-intro = Изберете две моментни състояния, за да видите промените.
+compare-none = Нищо не се е променило между тези състояния.
+compare-summary = { $added } добавени · { $removed } премахнати · { $changed } променени
+restore-sheet-title = { $count ->
+    [one] Възстановяване на 1 елемент
+   *[other] Възстановяване на { $count } елемента
+}
+restore-to = Възстановяване в
+restore-to-original = Където са били
+restore-to-folder = Друга папка…
+restore-to-folder-chosen = В { $folder }
+restore-existing = Ако файлът вече съществува
+policy-keep-both = Запазване на двата
+policy-keep-both-description = Възстановеното копие получава ново име; вашият файл не се пипа.
+policy-overwrite = Презаписване
+policy-overwrite-description = Замяна с копието от архива.
+policy-skip = Пропускане
+policy-skip-description = Оставяне и без възстановяване на този файл.
+restore-previewing = Изчисляване какво ще стане…
+restore-choose-folder = Изберете папка за възстановяване.
+restore-preview-failed = Не можа да се изчисли какво би направило възстановяването.
+preview-restore = { $count ->
+    [one] 1 файл ще бъде възстановен ({ $size })
+   *[other] { $count } файла ще бъдат възстановени ({ $size })
+}
+preview-kept = { $count ->
+    [one] 1 съществуващ файл се различава и ще бъде запазен до копието
+   *[other] { $count } съществуващи файла се различават и ще бъдат запазени до копията
+}
+preview-replaced = { $count ->
+    [one] 1 съществуващ файл се различава и ще бъде заменен
+   *[other] { $count } съществуващи файла се различават и ще бъдат заменени
+}
+preview-skipped = { $count ->
+    [one] 1 съществуващ файл се различава и ще бъде пропуснат
+   *[other] { $count } съществуващи файла се различават и ще бъдат пропуснати
+}
+preview-unchanged = { $count ->
+    [one] 1 файл вече е идентичен и няма да бъде пипан
+   *[other] { $count } файла вече са идентични и няма да бъдат пипани
+}
+restore-done-title = Възстановяването приключи
+restore-done-body = { $count ->
+    [one] Възстановен е 1 файл ({ $size }).
+   *[other] Възстановени са { $count } файла ({ $size }).
+} { $conflicts ->
+    [0] {""}
+   *[other] Съществуващите файлове са обработени според избора ви.
+}
+restore-failed = Възстановяването не завърши.
+browse-failed = Това копие не можа да бъде прочетено.
+open-copy-failed = Не можа да се отвори копие на този файл.
+select-scope-folder = Изберете папка за търсене
+select-restore-folder = Изберете къде да се възстанови

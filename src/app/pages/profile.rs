@@ -31,6 +31,9 @@ pub struct ProfileState {
     snapshots: Option<Vec<SnapshotSummary>>,
     backup: Option<Running>,
     show_all: bool,
+    /// Open the restore page as soon as the backup is unlocked: the
+    /// desktop entry's "Restore Files" action.
+    pub restore_when_unlocked: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +51,7 @@ pub enum Message {
     DeleteSnapshot(String),
     SnapshotsDeleted(ChildEvent),
     ShowAll,
+    Restore,
     Edit,
     Remove,
     DeleteAll,
@@ -67,6 +71,7 @@ pub enum Effect {
     ShowError(String, EngineError),
     /// A backup finished at this Unix time.
     RecordSuccess(i64),
+    OpenRestore(Secret),
     Edit,
     Remove,
     DeleteAll,
@@ -85,6 +90,7 @@ impl Default for ProfileState {
             snapshots: None,
             backup: None,
             show_all: false,
+            restore_when_unlocked: false,
         }
     }
 }
@@ -100,6 +106,10 @@ impl ProfileState {
 
     pub fn is_unlocked(&self) -> bool {
         self.secret.is_some()
+    }
+
+    fn has_snapshots(&self) -> bool {
+        self.snapshots.as_ref().is_some_and(|s| !s.is_empty())
     }
 
     /// Called when the page is shown: look for a remembered password once.
@@ -159,6 +169,9 @@ impl ProfileState {
                     Ok(snapshots) => {
                         self.secret = Some(secret);
                         self.snapshots = Some(snapshots);
+                        if std::mem::take(&mut self.restore_when_unlocked) {
+                            return self.update(Message::Restore, profile);
+                        }
                         Vec::new()
                     }
                     Err(err) => {
@@ -204,6 +217,12 @@ impl ProfileState {
                 self.show_all = true;
                 Vec::new()
             }
+            Message::Restore => match &self.secret {
+                Some(secret) if self.has_snapshots() && self.backup.is_none() => {
+                    vec![Effect::OpenRestore(secret.clone())]
+                }
+                _ => Vec::new(),
+            },
             Message::Edit => vec![Effect::Edit],
             Message::Remove => vec![Effect::Remove],
             Message::DeleteAll => vec![Effect::DeleteAll],
@@ -228,7 +247,7 @@ impl ProfileState {
                 }
                 Vec::new()
             }
-            ChildEvent::Event(Event::Done { report }) => {
+            ChildEvent::Event(Event::Done { report, .. }) => {
                 self.backup = None;
                 let mut effects = self.fetch();
                 if let Some(report) = report {
@@ -340,10 +359,18 @@ impl ProfileState {
                 .push(widget::text::title4(headline))
                 .push(widget::text::caption(detail))
                 .push(
-                    widget::row::with_capacity(1).push(
-                        widget::button::suggested(fl!("back-up-now"))
-                            .on_press_maybe(can_back_up.then_some(Message::BackUpNow)),
-                    ),
+                    widget::row::with_capacity(2)
+                        .spacing(spacing.space_xs)
+                        .push(
+                            widget::button::suggested(fl!("back-up-now"))
+                                .on_press_maybe(can_back_up.then_some(Message::BackUpNow)),
+                        )
+                        .push(
+                            widget::button::standard(fl!("restore-open")).on_press_maybe(
+                                (self.is_unlocked() && self.has_snapshots())
+                                    .then_some(Message::Restore),
+                            ),
+                        ),
                 ),
         )
     }
@@ -584,6 +611,7 @@ mod tests {
                 report: Some(BackupReport {
                     snapshot: summary(99),
                 }),
+                restored: None,
             })),
             &profile(),
         );
@@ -625,5 +653,19 @@ mod tests {
                 .update(Message::DeleteSnapshot("abc".into()), &profile())
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn restore_when_unlocked_opens_the_restore_page_once() {
+        let mut state = ProfileState::new();
+        state.restore_when_unlocked = true;
+
+        let effects = state.update(
+            Message::Opened(Secret::new("pw"), Ok(vec![summary(10)])),
+            &profile(),
+        );
+
+        assert!(matches!(effects.as_slice(), [Effect::OpenRestore(_)]));
+        assert!(!state.restore_when_unlocked, "only the first unlock");
     }
 }

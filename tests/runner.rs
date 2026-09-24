@@ -7,7 +7,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
-use stellarshot::engine::{self, BackupRequest, ErrorKind, Location, Phase, Secret, lock};
+use stellarshot::engine::{
+    self, BackupRequest, ConflictPolicy, ErrorKind, Location, Phase, RestoreRequest, Secret,
+    Target, lock,
+};
 use stellarshot::runner::{Event, Job};
 use tempfile::TempDir;
 
@@ -48,6 +51,7 @@ impl Fixture {
                 sources: vec![self.source.clone()],
                 ..BackupRequest::default()
             }),
+            restore: None,
             snapshot: None,
             destination: None,
             ids: Vec::new(),
@@ -98,6 +102,7 @@ fn runner_backs_up_and_reports_done() {
     match events.last() {
         Some(Event::Done {
             report: Some(report),
+            ..
         }) => {
             assert!(report.snapshot.files_new >= 1);
         }
@@ -241,4 +246,52 @@ fn backup_finishes_after_the_window_goes_away() {
         "a closed stdout must not stop the backup: {status}"
     );
     assert_eq!(fixture.snapshot_count(), 1);
+}
+
+#[test]
+fn runner_restores_a_selection_keeping_both() {
+    let fixture = Fixture::new();
+    let (_, status) = fixture.run("backup", &fixture.backup_job(PASSWORD));
+    assert!(status.success());
+    let file = fixture.source.join("a file.txt");
+    std::fs::write(&file, b"changed since").unwrap();
+
+    let job = Job {
+        request: None,
+        restore: Some(RestoreRequest {
+            snapshot: "latest".into(),
+            paths: vec![file.clone()],
+            target: Target::Original,
+            policy: ConflictPolicy::KeepBoth,
+        }),
+        ..fixture.backup_job(PASSWORD)
+    };
+    let (events, status) = fixture.run("restore", &job);
+
+    assert!(status.success(), "events: {events:?}");
+    match events.last() {
+        Some(Event::Done {
+            restored: Some(restored),
+            ..
+        }) => {
+            assert_eq!(restored.files, 1);
+            assert_eq!(restored.conflicts, 1);
+        }
+        other => panic!("expected a done event with what was restored, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        b"changed since",
+        "Keep both never touches the existing file"
+    );
+    let copies: Vec<_> = std::fs::read_dir(&fixture.source)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("a file (restored "))
+        .collect();
+    assert_eq!(copies.len(), 1, "one restored copy: {copies:?}");
+    assert_eq!(
+        std::fs::read(fixture.source.join(&copies[0])).unwrap(),
+        b"hello"
+    );
 }

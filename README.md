@@ -22,8 +22,9 @@ snapshot you ever made.
 
 > **Status: early, and not yet something to trust with your only copy.** You
 > can set up backups of folders to a USB drive, another folder, an SSH server
-> or Google Drive, run them in the background, and manage their snapshots.
-> Restore and schedules are still to come. Keep another backup, and follow the
+> or Google Drive, run them in the background, manage their snapshots, and get
+> files back. Scheduled backups are still to come. Keep another backup, and
+> follow the
 > [3-2-1 rule](https://www.backblaze.com/blog/the-3-2-1-backup-strategy/).
 
 **[Roadmap](ROADMAP.md)** · **[Changelog](CHANGELOG.md)** ·
@@ -73,6 +74,15 @@ snapshot you ever made.
 - **Opens existing backups.** Point it at a repository made by an earlier
   Stellarshot, by `restic` or by `rustic`, give the password, and it carries on
   with the same folders the last snapshot covered.
+- **Getting files back without the command line.** Browse any snapshot as a
+  folder tree, search it, and see every version of a file, with identical
+  versions marked. **Deleted files** lists what your backups still have that is
+  no longer on disk, and **Compare** shows what changed between two snapshots.
+- **A restore that shows you what it will do first.** Put files back where
+  they were or in another folder. When a file is already there, choose **Keep
+  both** (the default: your file is not touched and the restored copy gets a
+  dated name), **Overwrite** or **Skip**. A dry run counts what will be
+  restored, replaced, kept alongside or left alone before anything is written.
 - **Incremental and deduplicated.** Unchanged files are not stored again, and
   identical data is stored once however many files contain it.
 - **Your language.** English, Bulgarian, German, Swedish and Swiss German,
@@ -80,13 +90,10 @@ snapshot you ever made.
 
 ## What is coming
 
-In the order it will land (the detail is in [ROADMAP.md](ROADMAP.md)):
+Next (the detail is in [ROADMAP.md](ROADMAP.md)):
 
-1. **A complete restore**: browse snapshots, restore single files or folders,
-   see every version of a file, find deleted files, compare two snapshots, and
-   preview exactly what a restore will do.
-2. **Automation**: scheduled backups, retention policies, notifications and
-   periodic integrity checks.
+- **Automation**: scheduled backups, retention policies, notifications and
+  periodic integrity checks.
 
 ---
 
@@ -223,6 +230,45 @@ If the password is not remembered, the page asks for it first. Enter it once
 and it is kept for the rest of the session (and in the keyring if you leave
 **Remember password** on).
 
+### Getting files back
+
+On a backup's page, press **Restore…** (or choose **Restore Files** from the
+launcher's right-click menu, which opens the selected backup's restore page as
+soon as it is unlocked).
+
+![Browsing a snapshot to restore files](docs/screenshots/restore.png)
+
+| Tab | What it is for |
+| --- | --- |
+| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Restore This Version…** restores just that one |
+| **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
+| **Compare** | Choose two snapshots to list what was added, removed and changed between them. Ticking a changed or removed item restores it as it was in the snapshot on the left |
+
+Tick the files and folders you want and press **Restore…**. Then choose:
+
+- **Restore to:** *Where they were*, or *Another folder…* (each item lands
+  in it under its own name).
+- **If a file already exists:**
+
+  | Choice | What happens to your file | What happens to the backed-up copy |
+  | --- | --- | --- |
+  | **Keep both** (default) | Not touched | Restored next to it as `name (restored 2026-09-23).ext` |
+  | **Overwrite** | Replaced | Restored in its place |
+  | **Skip** | Not touched | Not restored |
+
+Before anything is written, a dry run shows how many files will be restored
+and how many existing ones will be kept alongside, replaced or skipped.
+Files that are already identical are never rewritten. **Restore** stays
+unavailable until the dry run for your current choices has finished. The
+restore then runs in the background with progress and **Cancel**.
+
+Restoring never deletes anything: files that are on disk but not in the
+snapshot are left alone.
+
+**Open Copy** restores the one file into a private folder in your session's
+runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out),
+makes it read-only, and opens it with its usual application.
+
 ### Changing a backup
 
 The **Manage** section at the bottom of each backup's page:
@@ -252,6 +298,7 @@ Individual snapshots are deleted with the bin icon on their row.
 | --- | --- |
 | `stellarshot` | Open the window |
 | `stellarshot --new-backup` | Open the window straight into the setup wizard (the launcher's **New Backup** action) |
+| `stellarshot --restore` | Open the selected backup's restore page as soon as it is unlocked (the launcher's **Restore Files** action) |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
 ### Reading your backups without Stellarshot
@@ -342,6 +389,15 @@ Only one process may write to a backup at a time. Wait for the other one to
 finish. If none is running, nothing is holding the lock either: it is released
 automatically when a process ends, even when it crashes.
 
+**Restore… is greyed out.**
+The backup needs to be unlocked (the password entered or remembered), hold at
+least one snapshot, and not be in the middle of a backup.
+
+**"Nothing is missing" in Deleted files, but I deleted something.**
+It only looks under the folder shown at the top of the tab, and only in
+backups from the last 30 days. Press **Change Folder…** to look somewhere else,
+or find the file under **Browse** in an older snapshot.
+
 **"The password is incorrect."**
 The password is the one set when the backup was created. There is no way to
 recover or reset it.
@@ -363,8 +419,10 @@ written to stderr too.
   how fast it may be used; very large first backups can be slower than with
   your own client ID.
 - **No schedule yet.** Backups run when you press **Back Up Now**.
-- **No restore in the app yet.** Use `restic restore` or `rustic restore` (see
-  [Reading your backups](#reading-your-backups-without-stellarshot)).
+- **Search, Deleted files and Compare show at most 500 entries.** Narrow the
+  search, choose a smaller folder, or compare snapshots closer together.
+- **Opening the restore page reads the whole index first,** which can take a
+  while for a large backup on a slow connection.
 - **Old snapshots are kept until you delete them.** Retention policies come
   with scheduling. Deleting a snapshot does not free its space until the
   repository is pruned, which also comes with scheduling.
@@ -381,17 +439,17 @@ written to stderr too.
   ┌────────────────────────────────────┐        job on stdin (JSON,
   │  window  (libcosmic)               │        including the password)
   │  sidebar of backups, profile page, │ ───────────────────────────┐
-  │  setup wizard, dialogs             │                            │
+  │  restore page, setup wizard        │                            │
   └──────┬─────────────────────────────┘                            ▼
          │ reads on blocking threads          ┌──────────────────────────────┐
-         │ (open, list, estimate, probe)      │  stellarshot --run backup    │
-         │                                    │  one write, in its own       │
+         │ (open, browse, estimate, probe,    │  stellarshot --run backup    │
+         │  dry-run restore)                  │  one write, in its own       │
          │ ◀──── progress and outcome ─────── │  process; holds the lock     │
          │       as JSON lines on stdout      └──────────────┬───────────────┘
          ▼                                                   ▼
   ┌──────────────────────────────────────────────────────────────────────────┐
   │  engine: the only code that talks to rustic                              │
-  │  open · init · probe · estimate · snapshots · backup · restore · check   │
+  │  open · init · probe · estimate · snapshots · browse · backup · restore  │
   └──────────────────────────────────┬───────────────────────────────────────┘
                                      ▼
                     rustic_core → restic-format repository
@@ -413,13 +471,15 @@ running as you can read.
 | `engine::location` | Whether a folder may hold a repository; deleting only a repository's own entries |
 | `engine::lock` | One writer per repository, shared by every process; released by the kernel if the holder dies |
 | `engine::rclone` | The rclone commands besides the backup itself: probing a remote folder, deleting a repository's entries, signing in, copying one of your remotes |
+| `engine::browse` | Looking inside snapshots with the index loaded once: folders, search, versions of a file, comparing two snapshots, deleted files |
+| `engine::restore` | Selected files to their original place or a folder, with the Keep both, Overwrite or Skip decision made before rustic sees the file list, and a dry run that counts the same way |
 | `engine::estimate` | The size of a backup before it runs, from the same file list the backup reads |
 | `drives` | Mounted removable drives, and where a drive with a given ID is mounted now |
 | `dejadup` | Reading Déjà Dup's settings (never its password) and turning them into a backup |
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
 | `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
 | `app` | The window: sidebar, menus, dialogs, settings |
-| `app::pages` | The first-launch screen and each backup's page |
+| `app::pages` | The first-launch screen, each backup's page, and the restore page |
 | `app::wizard` | The setup wizard's steps and validation; `place` is the "where" step |
 | `app::tasks` | Engine calls off the UI thread, the folder chooser, the estimate as a stream |
 | `app::child` | Spawns `--run`, streams its events into the UI, cancels it |

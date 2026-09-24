@@ -23,6 +23,12 @@
       keyring.
     </p>
     <p>
+      Getting files back happens inside the app: browse any snapshot, search
+      it, see every version of a file, find files you deleted, and compare two
+      snapshots. A dry run shows what a restore will do before anything is
+      written, and an existing file is kept unless you choose otherwise.
+    </p>
+    <p>
       Stellarshot is a fork of the cosmic-utils Stellarshot project and is under
       active development.
     </p>
@@ -44,6 +50,10 @@
     <screenshot>
       <caption>Setting up a backup, with a live size estimate</caption>
       <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/wizard.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Browsing a snapshot to restore files</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/restore.png</image>
     </screenshot>
     <screenshot>
       <caption>The first screen, before anything is backed up</caption>

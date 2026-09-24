@@ -190,3 +190,91 @@ dejadup-none = Es sind kei Déjà-Dup-Iistellige gfunde worde.
 dejadup-other-format = Die Déjà-Dup-Sicherig bruucht s älteri duplicity-Format, wo Sterneschuss nöd läse cha. Mach statt dem e neui Sicherig; di alt blibt i Déjà Dup lesbar.
 dejadup-unsupported = Déjà Dup bhaltet die Sicherig amene Ort, wo Sterneschuss nöd bruuche cha ({ $backend }). Mach statt dem e neui Sicherig.
 menu-import-dejadup = Us Déjà Dup importiere …
+
+# Restore
+restore-open = Widerherstelle …
+restore-title = Widerherstelle us { $name }
+restore-loading = D Sicherig wird göffnet …
+tab-browse = Durchsueche
+tab-deleted = Glöschti Dateie
+tab-compare = Vergliiche
+selected-count = { $count ->
+    [one] 1 Element usgwählt
+   *[other] { $count } Element usgwählt
+}
+restore-button = Widerherstelle …
+search-placeholder = Die Momentuufnahm durchsueche
+search-results = { $count ->
+    [one] 1 Träffer
+   *[other] { $count } Träffer
+}
+folder-empty = De Ordner isch leer.
+versions-title = Versione
+versions-same = { $count ->
+    [one] ↳ i 1 älterer Momentuufnahm glich
+   *[other] ↳ i { $count } ältere Momentuufnahme glich
+}
+open-copy = Kopie öffne
+restore-this-version = Die Version widerherstelle …
+deleted-scope = Dateie i { $folder }, wo i Sicherige vo de letschte { $days } Täg drin sind, aber nüme vorhande.
+deleted-change-folder = Ordner ändere …
+deleted-find = Glöschti Dateie sueche
+restore-searching = Wird gsuecht …
+deleted-intro = Suech nach glöschte Dateie, wo e Sicherig no hät.
+deleted-none = Es fählt nüt: Jedi Datei us dene Sicherige isch no da.
+deleted-last-seen = zletscht gsicheret { $when }
+compare-button = Vergliiche
+compare-intro = Wähl zwei Momentuufnahme, zum gseh, was sich gänderet hät.
+compare-none = Zwüsche dene Momentuufnahme hät sich nüt gänderet.
+compare-summary = { $added } dezue · { $removed } weg · { $changed } gänderet
+restore-sheet-title = { $count ->
+    [one] 1 Element widerherstelle
+   *[other] { $count } Element widerherstelle
+}
+restore-to = Widerherstelle nach
+restore-to-original = Wo si gsi sind
+restore-to-folder = In en andere Ordner …
+restore-to-folder-chosen = I { $folder }
+restore-existing = Wänn e Datei scho existiert
+policy-keep-both = Beidi bhalte
+policy-keep-both-description = Di widerhergstellt Kopie überchunnt en neue Name; dini Datei blibt unberüert.
+policy-overwrite = Überschriibe
+policy-overwrite-description = Dur di gsicheret Kopie ersetze.
+policy-skip = Überspringe
+policy-skip-description = Bhalte und die Datei nöd widerherstelle.
+restore-previewing = Es wird usegfunde, was passiert …
+restore-choose-folder = Wähl de Ordner, wo widerhergstellt werde söll.
+restore-preview-failed = Es hät nöd chöne usegfunde wärde, was d Widerherstellig mache würd.
+preview-restore = { $count ->
+    [one] 1 Datei wird widerhergstellt ({ $size })
+   *[other] { $count } Dateie wärded widerhergstellt ({ $size })
+}
+preview-kept = { $count ->
+    [one] 1 vorhandeni Datei isch anders und wird dernäbe bhalte
+   *[other] { $count } vorhandeni Dateie sind anders und wärded dernäbe bhalte
+}
+preview-replaced = { $count ->
+    [one] 1 vorhandeni Datei isch anders und wird ersetzt
+   *[other] { $count } vorhandeni Dateie sind anders und wärded ersetzt
+}
+preview-skipped = { $count ->
+    [one] 1 vorhandeni Datei isch anders und wird übersprunge
+   *[other] { $count } vorhandeni Dateie sind anders und wärded übersprunge
+}
+preview-unchanged = { $count ->
+    [one] 1 Datei isch scho glich und blibt unberüert
+   *[other] { $count } Dateie sind scho glich und blibed unberüert
+}
+restore-done-title = Widerherstellig fertig
+restore-done-body = { $count ->
+    [one] 1 Datei widerhergstellt ({ $size }).
+   *[other] { $count } Dateie widerhergstellt ({ $size }).
+} { $conflicts ->
+    [0] {""}
+   *[other] Scho vorhandeni Dateie sind wie gwählt behandlet worde.
+}
+restore-failed = D Widerherstellig isch nöd fertig worde.
+browse-failed = Die Sicherig hät nöd chöne gläse wärde.
+open-copy-failed = Es hät kei Kopie vo dere Datei chöne göffnet wärde.
+select-scope-folder = Wähl en Ordner zum Durchsueche
+select-restore-folder = Wähl, wohi widerhergstellt werde söll

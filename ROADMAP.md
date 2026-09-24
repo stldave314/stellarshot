@@ -50,8 +50,8 @@ A new backup engine behind one module, on the current rustic release.
 
 - [x] Backup profiles: name, destination, folders to include and exclude
       (schedule and retention settings arrive with M5)
-- [x] Status-first main screen: last backup, **Back Up Now** (next backup
-      arrives with M5, **Restore…** with M4)
+- [x] Status-first main screen: last backup, **Back Up Now**, **Restore…**
+      (next backup arrives with M5)
 - [x] A **Create a Backup…** button on the empty main screen
 - [x] Setup wizard: what, where, password ("when" arrives with M5)
 - [x] Live estimate of the backup size that subtracts excluded folders inside
@@ -73,15 +73,17 @@ A new backup engine behind one module, on the current rustic release.
 - [x] Import from Déjà Dup (restic-format backups only; passwords are never
       imported)
 
-## M4 — Restore
+## M4 — Restore (done)
 
-- [ ] Browse any snapshot as a file tree, with search
-- [ ] Restore selected files and folders to their original place or elsewhere
-- [ ] Conflict handling: overwrite, keep both, or skip, with a dry-run summary
+- [x] Browse any snapshot as a file tree, with search
+- [x] Restore selected files and folders to their original place or elsewhere
+- [x] Conflict handling: overwrite, keep both, or skip, with a dry-run summary
       before anything is written
-- [ ] Every version of a file, with identical versions collapsed
-- [ ] Deleted files: what is in your backups but no longer on disk
-- [ ] Compare any two snapshots
+- [x] Every version of a file, with identical versions marked
+- [x] Deleted files: what is in your backups but no longer on disk
+- [x] Compare any two snapshots
+- [x] Open one version of a file read-only without restoring it
+- [x] A "Restore Files" launcher action
 
 ## M5 — Automation
 

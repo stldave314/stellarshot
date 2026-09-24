@@ -79,5 +79,6 @@ pub fn get_flags() -> Flags {
         config_handler: StellarshotConfig::config_handler(),
         config: StellarshotConfig::config(),
         start_wizard: false,
+        start_restore: false,
     }
 }

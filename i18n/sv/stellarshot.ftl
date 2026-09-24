@@ -190,3 +190,91 @@ dejadup-none = Inga inställningar för Déjà Dup hittades.
 dejadup-other-format = Den här Déjà Dup-säkerhetskopian använder det äldre duplicity-formatet, som Stellarshot inte kan läsa. Skapa en ny säkerhetskopia i stället; den gamla går fortfarande att läsa i Déjà Dup.
 dejadup-unsupported = Déjà Dup förvarar den här säkerhetskopian på en plats som Stellarshot inte kan använda ({ $backend }). Skapa en ny säkerhetskopia i stället.
 menu-import-dejadup = Importera från Déjà Dup…
+
+# Restore
+restore-open = Återställ…
+restore-title = Återställ från { $name }
+restore-loading = Öppnar säkerhetskopian…
+tab-browse = Bläddra
+tab-deleted = Borttagna filer
+tab-compare = Jämför
+selected-count = { $count ->
+    [one] 1 objekt markerat
+   *[other] { $count } objekt markerade
+}
+restore-button = Återställ…
+search-placeholder = Sök i den här ögonblicksbilden
+search-results = { $count ->
+    [one] 1 träff
+   *[other] { $count } träffar
+}
+folder-empty = Den här mappen är tom.
+versions-title = Versioner
+versions-same = { $count ->
+    [one] ↳ likadan i 1 äldre ögonblicksbild
+   *[other] ↳ likadan i { $count } äldre ögonblicksbilder
+}
+open-copy = Öppna kopia
+restore-this-version = Återställ den här versionen…
+deleted-scope = Filer i { $folder } som finns i säkerhetskopior från de senaste { $days } dagarna men inte längre finns på disken.
+deleted-change-folder = Byt mapp…
+deleted-find = Hitta borttagna filer
+restore-searching = Letar…
+deleted-intro = Leta efter filer du tagit bort som en säkerhetskopia fortfarande har.
+deleted-none = Inget saknas: varje fil i de här säkerhetskopiorna finns kvar.
+deleted-last-seen = senast säkerhetskopierad { $when }
+compare-button = Jämför
+compare-intro = Välj två ögonblicksbilder för att se vad som ändrats.
+compare-none = Inget ändrades mellan de här ögonblicksbilderna.
+compare-summary = { $added } tillagda · { $removed } borttagna · { $changed } ändrade
+restore-sheet-title = { $count ->
+    [one] Återställ 1 objekt
+   *[other] Återställ { $count } objekt
+}
+restore-to = Återställ till
+restore-to-original = Där de var
+restore-to-folder = En annan mapp…
+restore-to-folder-chosen = Till { $folder }
+restore-existing = Om en fil redan finns
+policy-keep-both = Behåll båda
+policy-keep-both-description = Den återställda kopian får ett nytt namn; din fil rörs inte.
+policy-overwrite = Skriv över
+policy-overwrite-description = Ersätt den med den säkerhetskopierade kopian.
+policy-skip = Hoppa över
+policy-skip-description = Låt den vara och återställ inte den filen.
+restore-previewing = Räknar ut vad som kommer att hända…
+restore-choose-folder = Välj mappen att återställa till.
+restore-preview-failed = Det gick inte att räkna ut vad återställningen skulle göra.
+preview-restore = { $count ->
+    [one] 1 fil återställs ({ $size })
+   *[other] { $count } filer återställs ({ $size })
+}
+preview-kept = { $count ->
+    [one] 1 befintlig fil skiljer sig och behålls bredvid
+   *[other] { $count } befintliga filer skiljer sig och behålls bredvid
+}
+preview-replaced = { $count ->
+    [one] 1 befintlig fil skiljer sig och ersätts
+   *[other] { $count } befintliga filer skiljer sig och ersätts
+}
+preview-skipped = { $count ->
+    [one] 1 befintlig fil skiljer sig och hoppas över
+   *[other] { $count } befintliga filer skiljer sig och hoppas över
+}
+preview-unchanged = { $count ->
+    [one] 1 fil är redan identisk och rörs inte
+   *[other] { $count } filer är redan identiska och rörs inte
+}
+restore-done-title = Återställningen är klar
+restore-done-body = { $count ->
+    [one] Återställde 1 fil ({ $size }).
+   *[other] Återställde { $count } filer ({ $size }).
+} { $conflicts ->
+    [0] {""}
+   *[other] Filer som redan fanns hanterades som du valde.
+}
+restore-failed = Återställningen slutfördes inte.
+browse-failed = Säkerhetskopian kunde inte läsas.
+open-copy-failed = Det gick inte att öppna en kopia av filen.
+select-scope-folder = Välj en mapp att leta i
+select-restore-folder = Välj vart du vill återställa

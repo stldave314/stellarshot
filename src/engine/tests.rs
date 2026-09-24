@@ -398,3 +398,373 @@ fn exclude_through_a_symlinked_path_still_applies() {
         "the exclude must follow the symlink"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Browsing
+// ---------------------------------------------------------------------------
+
+fn browser(fixture: &Fixture) -> Browser {
+    open(&fixture.repo, &secret()).unwrap().browse().unwrap()
+}
+
+#[test]
+fn lists_a_folder_in_a_snapshot() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let entries = browser(&fixture).list("latest", &fixture.source).unwrap();
+
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    assert!(names.contains(&"nested") && names.contains(&"plain.txt"));
+    let first_file = entries
+        .iter()
+        .position(|e| e.kind != EntryKind::Directory)
+        .unwrap();
+    assert!(
+        entries[..first_file]
+            .iter()
+            .all(|e| e.kind == EntryKind::Directory),
+        "folders come first"
+    );
+    let plain = entries.iter().find(|e| e.name == "plain.txt").unwrap();
+    assert_eq!(plain.path, fixture.source.join("plain.txt"));
+    assert_eq!(plain.size, 5);
+}
+
+#[test]
+fn search_finds_names_anywhere() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let found = browser(&fixture).search("latest", "DATA", 10).unwrap();
+
+    assert_eq!(found.len(), 1, "case is ignored");
+    assert_eq!(found[0].path, fixture.source.join("nested/deeper/data.bin"));
+}
+
+#[test]
+fn versions_collapse_identical_content() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("plain.txt"), b"second").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    back_up(&fixture, &sources(&fixture.source));
+
+    let versions = browser(&fixture)
+        .versions(&fixture.source.join("plain.txt"))
+        .unwrap();
+
+    assert_eq!(versions.len(), 3);
+    assert!(!versions[0].same_as_newer, "the newest is always shown");
+    assert!(
+        versions[1].same_as_newer,
+        "unchanged between the last two backups"
+    );
+    assert!(
+        !versions[2].same_as_newer,
+        "the first backup had other content"
+    );
+    assert_eq!(versions[2].size, 5);
+}
+
+#[test]
+fn diff_reports_added_removed_modified() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let before = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+    fs::write(fixture.source.join("plain.txt"), b"changed").unwrap();
+    fs::remove_file(fixture.source.join("with space.txt")).unwrap();
+    fs::write(fixture.source.join("new.txt"), b"new").unwrap();
+    let after = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+
+    let diff = browser(&fixture).diff(&before, &after).unwrap();
+
+    let change = |name: &str| {
+        diff.iter()
+            .find(|d| d.path == fixture.source.join(name))
+            .map(|d| d.change)
+    };
+    assert_eq!(change("plain.txt"), Some(Change::Modified));
+    assert_eq!(change("with space.txt"), Some(Change::Removed));
+    assert_eq!(change("new.txt"), Some(Change::Added));
+    assert_eq!(
+        change("100% done.txt"),
+        None,
+        "unchanged files are not listed"
+    );
+}
+
+#[test]
+fn a_snapshot_compared_with_itself_has_no_changes() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let id = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+
+    assert!(browser(&fixture).diff(&id, &id).unwrap().is_empty());
+}
+
+#[test]
+fn missing_finds_deleted_files_with_their_last_snapshot() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let latest = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+    fs::remove_file(fixture.source.join("with space.txt")).unwrap();
+
+    let missing = browser(&fixture).missing(&fixture.source, 0, 100).unwrap();
+
+    assert_eq!(missing.len(), 1, "only the deleted file: {missing:?}");
+    assert_eq!(missing[0].path, fixture.source.join("with space.txt"));
+    assert_eq!(
+        missing[0].last_seen.id, latest,
+        "restored from the newest snapshot"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Selective restore
+// ---------------------------------------------------------------------------
+
+fn restore_request(paths: Vec<PathBuf>, target: Target, policy: ConflictPolicy) -> RestoreRequest {
+    RestoreRequest {
+        snapshot: "latest".to_owned(),
+        paths,
+        target,
+        policy,
+    }
+}
+
+fn run_restore(fixture: &Fixture, request: &RestoreRequest) -> RestorePreview {
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(request, Arc::new(NoProgress))
+        .unwrap()
+}
+
+fn preview(fixture: &Fixture, request: &RestoreRequest) -> RestorePreview {
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .preview_restore(request)
+        .unwrap()
+}
+
+/// The copy Keep both makes next to `path`.
+fn kept_copy(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap();
+    let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+    fs::read_dir(parent)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|candidate| {
+            let name = candidate
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            name.starts_with(&format!("{stem} (restored "))
+        })
+        .unwrap_or_else(|| panic!("no kept copy next to {}", path.display()))
+}
+
+#[test]
+fn restore_to_a_folder_keeps_names() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![
+                fixture.source.join("nested"),
+                fixture.source.join("plain.txt"),
+            ],
+            Target::Folder(target.clone()),
+            ConflictPolicy::Overwrite,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(target.join("nested/deeper/data.bin")).unwrap(),
+        pseudo_random(64 * 1024, 1)
+    );
+    assert_eq!(fs::read(target.join("plain.txt")).unwrap(), b"plain");
+}
+
+#[test]
+fn keep_both_never_touches_the_existing_file() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let plain = fixture.source.join("plain.txt");
+    fs::write(&plain, b"edited since").unwrap();
+
+    let done = run_restore(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.clone()],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(&plain).unwrap(),
+        b"edited since",
+        "the user's file is untouched"
+    );
+    assert_eq!(
+        fs::read(kept_copy(&plain)).unwrap(),
+        b"plain",
+        "the backed-up copy is beside it"
+    );
+    assert_eq!(done.conflicts, 1);
+}
+
+#[test]
+fn keep_both_for_a_single_file() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let plain = fixture.source.join("plain.txt");
+    fs::write(&plain, b"edited since").unwrap();
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![plain.clone()],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    );
+
+    assert_eq!(fs::read(&plain).unwrap(), b"edited since");
+    assert_eq!(fs::read(kept_copy(&plain)).unwrap(), b"plain");
+}
+
+#[test]
+fn skip_restores_only_what_is_missing() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("plain.txt"), b"edited since").unwrap();
+    fs::remove_file(fixture.source.join("with space.txt")).unwrap();
+
+    let done = run_restore(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.clone()],
+            Target::Original,
+            ConflictPolicy::Skip,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(fixture.source.join("with space.txt")).unwrap(),
+        b"space"
+    );
+    assert_eq!(
+        fs::read(fixture.source.join("plain.txt")).unwrap(),
+        b"edited since"
+    );
+    assert_eq!(done.conflicts, 1, "the edited file was skipped");
+}
+
+#[test]
+fn overwrite_replaces_changed_files() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("plain.txt"), b"edited since").unwrap();
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.clone()],
+            Target::Original,
+            ConflictPolicy::Overwrite,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(fixture.source.join("plain.txt")).unwrap(),
+        b"plain"
+    );
+}
+
+#[test]
+fn preview_counts_match_the_restore() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("plain.txt"), b"edited since").unwrap();
+    fs::remove_file(fixture.source.join("with space.txt")).unwrap();
+    let request = restore_request(
+        vec![fixture.source.clone()],
+        Target::Original,
+        ConflictPolicy::Overwrite,
+    );
+
+    let before = preview(&fixture, &request);
+    // The preview writes nothing.
+    assert!(!fixture.source.join("with space.txt").exists());
+    assert_eq!(
+        fs::read(fixture.source.join("plain.txt")).unwrap(),
+        b"edited since"
+    );
+
+    let done = run_restore(&fixture, &request);
+
+    assert_eq!(before, done);
+    assert_eq!(
+        before.files, 2,
+        "one missing and one changed file: {before:?}"
+    );
+    assert!(before.unchanged > 0);
+}
+
+#[test]
+fn preview_creates_nothing() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("not-yet");
+
+    let planned = preview(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.join("nested")],
+            Target::Folder(target.clone()),
+            ConflictPolicy::Overwrite,
+        ),
+    );
+
+    assert!(planned.files > 0);
+    assert!(!target.exists(), "a preview must not create folders");
+}
+
+#[test]
+fn restores_into_a_deleted_folder() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::remove_dir_all(fixture.source.join("nested")).unwrap();
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.join("nested")],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(fixture.source.join("nested/deeper/data.bin")).unwrap(),
+        pseudo_random(64 * 1024, 1)
+    );
+}

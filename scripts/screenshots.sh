@@ -16,7 +16,9 @@
 # Needs: xdotool, ImageMagick (import), a running desktop session with a
 # Secret Service (the keyring).
 #
-# Usage: scripts/screenshots.sh
+# Usage: scripts/screenshots.sh [name...]
+#   With names (empty, wizard, profile, restore, profile-light), only those
+#   screenshots are written; the others are left as they are.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -37,6 +39,7 @@ PROFILE_ID="screenshot-demo"
 PASSWORD="demo-password"
 OUT="docs/screenshots"
 BIN="target/debug/stellarshot"
+ONLY=("$@")
 
 DEMO=$(mktemp -d /tmp/stellarshot-demo.XXXXXX)
 APP_PID=""
@@ -79,6 +82,9 @@ run_app() {
     # $1: screenshot name; the rest: arguments for Stellarshot.
     local name="$1"
     shift
+    if [[ ${#ONLY[@]} -gt 0 && ! " ${ONLY[*]} " =~ " $name " ]]; then
+        return
+    fi
     env -u WAYLAND_DISPLAY HOME="$HOME_DIR" XDG_CONFIG_HOME="$CONFIG" \
         XDG_RUNTIME_DIR="$DEMO/runtime" "$BIN" "$@" >/dev/null 2>&1 &
     APP_PID=$!
@@ -86,7 +92,7 @@ run_app() {
     window=$(xdotool search --sync --onlyvisible --pid "$APP_PID" | head -1)
     # Let the page settle: the keyring lookup, the snapshot list, the size
     # estimate.
-    sleep 6
+    sleep "${SETTLE:-6}"
     import -window "$window" "$OUT/$name.png"
     kill "$APP_PID"
     wait "$APP_PID" 2>/dev/null || true
@@ -122,6 +128,11 @@ RON
 DEMO_PASSWORD="$PASSWORD" target/debug/examples/demo_keyring store "$PROFILE_ID"
 run_app profile
 
-# 4. The same page in the light theme, for the second store screenshot.
+# 4. Getting files back: the restore page, straight from the desktop
+#    entry's "Restore Files" action.
+# Loading the tree index takes a while in an unoptimized debug build.
+SETTLE=25 run_app restore --restore
+
+# 5. The profile page in the light theme, for the second store screenshot.
 echo "Light" > "$SETTINGS/app_theme"
 run_app profile-light

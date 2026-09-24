@@ -31,6 +31,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Restore inside the app.** A restore page for each backup, with three
+  tabs: **Browse** any snapshot as a folder tree with search and every version
+  of a file (identical versions marked), **Deleted files** that a backup from
+  the last 30 days still has, and **Compare** two snapshots. Selected files and
+  folders go back where they were or into another folder.
+- **Keep both, Overwrite or Skip** for files that already exist, with Keep
+  both the default: the existing file is never touched and the restored copy
+  is named `name (restored YYYY-MM-DD).ext`. The decision is made on the file
+  list before rustic sees it, and rustic's option to delete files missing from
+  the snapshot is never used.
+- **A dry run before every restore** counts what will be restored, replaced,
+  kept alongside, skipped or left alone because it is already identical. The
+  restore cannot start until the dry run for the current choices has
+  finished, and a test holds the dry run's counts to what the restore then
+  does.
+- **Open Copy** opens one version of a file read-only from a private folder
+  in the session's runtime directory, without restoring it.
+- **A "Restore Files" launcher action** (`stellarshot --restore`) that opens
+  the selected backup's restore page as soon as it is unlocked.
 - **More places to keep a backup:** removable drives recognised by their
   filesystem ID wherever they are mounted, SSH servers (through rclone, with
   host keys checked against `~/.ssh/known_hosts`), Google Drive with sign-in

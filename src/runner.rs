@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::debug::ENGINE;
 use crate::engine::{
     self, BackupReport, BackupRequest, EngineError, ErrorKind, Location, ProgressEvent,
-    ProgressSink, Secret, lock,
+    ProgressSink, RestorePreview, RestoreRequest, Secret, lock,
 };
 use crate::{debug_log, error_log};
 
@@ -65,7 +65,11 @@ pub struct Job {
     /// For `backup`.
     #[serde(default)]
     pub request: Option<BackupRequest>,
-    /// For `restore`: an ID, a unique prefix, or `latest`.
+    /// For `restore`: what to restore, where, and what to do about files
+    /// that already exist.
+    #[serde(default)]
+    pub restore: Option<RestoreRequest>,
+    /// For a whole-snapshot `restore`: an ID, a unique prefix, or `latest`.
     #[serde(default)]
     pub snapshot: Option<String>,
     /// For `restore`.
@@ -80,9 +84,17 @@ pub struct Job {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum Event {
-    Progress { progress: ProgressEvent },
-    Done { report: Option<BackupReport> },
-    Error { error: EngineError },
+    Progress {
+        progress: ProgressEvent,
+    },
+    Done {
+        report: Option<BackupReport>,
+        #[serde(default)]
+        restored: Option<RestorePreview>,
+    },
+    Error {
+        error: EngineError,
+    },
 }
 
 /// Writes events to stdout, one JSON object per line, and mirrors progress to
@@ -133,11 +145,18 @@ fn missing(what: &str) -> EngineError {
 }
 
 /// Run `operation` for `job`, holding the repository's write lock throughout.
+/// What a finished operation reports.
+#[derive(Debug, Default)]
+pub struct Outcome {
+    pub report: Option<BackupReport>,
+    pub restored: Option<RestorePreview>,
+}
+
 pub fn run(
     operation: Operation,
     job: Job,
     sink: Arc<dyn ProgressSink>,
-) -> Result<Option<BackupReport>, EngineError> {
+) -> Result<Outcome, EngineError> {
     let _lock = lock::acquire(&job.repository)?;
     // Declared after the lock, so it is dropped (and the file removed) while
     // the lock is still held. A process that failed to get the lock never
@@ -148,16 +167,25 @@ pub fn run(
     match operation {
         Operation::Backup => {
             let request = job.request.ok_or_else(|| missing("backup request"))?;
-            repo.backup(&request, sink).map(Some)
+            repo.backup(&request, sink).map(|report| Outcome {
+                report: Some(report),
+                ..Outcome::default()
+            })
         }
-        Operation::Restore => {
-            let snapshot = job.snapshot.ok_or_else(|| missing("snapshot"))?;
-            let destination = job.destination.ok_or_else(|| missing("destination"))?;
-            repo.restore_all(&snapshot, &destination, sink)
-                .map(|()| None)
-        }
-        Operation::Check => repo.check().map(|()| None),
-        Operation::DeleteSnapshots => repo.delete_snapshots(&job.ids).map(|()| None),
+        Operation::Restore => match job.restore {
+            Some(request) => repo.restore(&request, sink).map(|restored| Outcome {
+                restored: Some(restored),
+                ..Outcome::default()
+            }),
+            None => {
+                let snapshot = job.snapshot.ok_or_else(|| missing("snapshot"))?;
+                let destination = job.destination.ok_or_else(|| missing("destination"))?;
+                repo.restore_all(&snapshot, &destination, sink)
+                    .map(|()| Outcome::default())
+            }
+        },
+        Operation::Check => repo.check().map(|()| Outcome::default()),
+        Operation::DeleteSnapshots => repo.delete_snapshots(&job.ids).map(|()| Outcome::default()),
     }
 }
 
@@ -190,8 +218,11 @@ pub fn main(args: &[String]) -> ExitCode {
 
     let result = job.and_then(|job| run(operation, job, output.clone()));
     match result {
-        Ok(report) => {
-            output.emit(&Event::Done { report });
+        Ok(outcome) => {
+            output.emit(&Event::Done {
+                report: outcome.report,
+                restored: outcome.restored,
+            });
             ExitCode::SUCCESS
         }
         Err(error) => {

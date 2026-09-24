@@ -190,3 +190,91 @@ dejadup-none = No Déjà Dup backup settings were found.
 dejadup-other-format = This Déjà Dup backup uses the older duplicity format, which Stellarshot cannot read. Create a new backup instead; the old one stays readable in Déjà Dup.
 dejadup-unsupported = Déjà Dup keeps this backup in a place Stellarshot cannot use ({ $backend }). Create a new backup instead.
 menu-import-dejadup = Import from Déjà Dup…
+
+# Restore
+restore-open = Restore…
+restore-title = Restore from { $name }
+restore-loading = Opening the backup…
+tab-browse = Browse
+tab-deleted = Deleted files
+tab-compare = Compare
+selected-count = { $count ->
+    [one] 1 item selected
+   *[other] { $count } items selected
+}
+restore-button = Restore…
+search-placeholder = Search this snapshot
+search-results = { $count ->
+    [one] 1 match
+   *[other] { $count } matches
+}
+folder-empty = This folder is empty.
+versions-title = Versions
+versions-same = { $count ->
+    [one] ↳ the same in 1 older snapshot
+   *[other] ↳ the same in { $count } older snapshots
+}
+open-copy = Open Copy
+restore-this-version = Restore This Version…
+deleted-scope = Files in { $folder } that are in backups from the last { $days } days but no longer on disk.
+deleted-change-folder = Change Folder…
+deleted-find = Find Deleted Files
+restore-searching = Looking…
+deleted-intro = Look for files you deleted that a backup still has.
+deleted-none = Nothing is missing: every file in these backups is still on disk.
+deleted-last-seen = last backed up { $when }
+compare-button = Compare
+compare-intro = Choose two snapshots to see what changed between them.
+compare-none = Nothing changed between these snapshots.
+compare-summary = { $added } added · { $removed } removed · { $changed } changed
+restore-sheet-title = { $count ->
+    [one] Restore 1 item
+   *[other] Restore { $count } items
+}
+restore-to = Restore to
+restore-to-original = Where they were
+restore-to-folder = Another folder…
+restore-to-folder-chosen = Into { $folder }
+restore-existing = If a file already exists
+policy-keep-both = Keep both
+policy-keep-both-description = The restored copy gets a new name; your file is not touched.
+policy-overwrite = Overwrite
+policy-overwrite-description = Replace it with the backed-up copy.
+policy-skip = Skip
+policy-skip-description = Leave it, and do not restore that file.
+restore-previewing = Working out what will happen…
+restore-choose-folder = Choose the folder to restore into.
+restore-preview-failed = Could not work out what the restore would do.
+preview-restore = { $count ->
+    [one] 1 file will be restored ({ $size })
+   *[other] { $count } files will be restored ({ $size })
+}
+preview-kept = { $count ->
+    [one] 1 existing file differs and will be kept alongside
+   *[other] { $count } existing files differ and will be kept alongside
+}
+preview-replaced = { $count ->
+    [one] 1 existing file differs and will be replaced
+   *[other] { $count } existing files differ and will be replaced
+}
+preview-skipped = { $count ->
+    [one] 1 existing file differs and will be skipped
+   *[other] { $count } existing files differ and will be skipped
+}
+preview-unchanged = { $count ->
+    [one] 1 file is already identical and will not be touched
+   *[other] { $count } files are already identical and will not be touched
+}
+restore-done-title = Restore finished
+restore-done-body = { $count ->
+    [one] Restored 1 file ({ $size }).
+   *[other] Restored { $count } files ({ $size }).
+} { $conflicts ->
+    [0] {""}
+   *[other] Files that already existed were handled as you chose.
+}
+restore-failed = The restore did not finish.
+browse-failed = Could not read this backup.
+open-copy-failed = Could not open a copy of this file.
+select-scope-folder = Choose a folder to look in
+select-restore-folder = Choose where to restore to

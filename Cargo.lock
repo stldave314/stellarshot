@@ -6047,6 +6047,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "stellarshot"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "futures-util",
  "gethostname",
  "i18n-embed",
@@ -6060,6 +6061,7 @@ dependencies = [
  "rust-embed",
  "rustic_backend",
  "rustic_core",
+ "rustix 1.1.5",
  "serde",
  "serde_json",
  "sha2 0.11.0",

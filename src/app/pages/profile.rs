@@ -3,6 +3,8 @@
 //! One backup profile: is it safe, back it up now, its snapshots, and
 //! keeping it healthy.
 
+use std::time::Instant;
+
 use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
 
@@ -10,6 +12,7 @@ use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::errors;
 use crate::app::format::{self, Ago};
 use crate::app::wizard::retention_label;
+use crate::constants::STALL_NOTICE;
 use crate::engine::{
     EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SnapshotSummary,
 };
@@ -34,6 +37,29 @@ pub struct Running {
     work: Work,
     handle: Option<ChildHandle>,
     progress: Option<ProgressEvent>,
+    started: Instant,
+    /// When the progress last moved: bytes read or bytes uploaded.
+    moved: Instant,
+}
+
+impl Running {
+    fn new(work: Work) -> Self {
+        Self {
+            work,
+            handle: None,
+            progress: None,
+            started: Instant::now(),
+            moved: Instant::now(),
+        }
+    }
+
+    fn update(&mut self, progress: ProgressEvent) {
+        let key = |p: &ProgressEvent| (p.phase, p.done, p.uploaded);
+        if self.progress.as_ref().map(key) != Some(key(&progress)) {
+            self.moved = Instant::now();
+        }
+        self.progress = Some(progress);
+    }
 }
 
 /// Everything the page knows beyond the profile's saved settings.
@@ -142,11 +168,7 @@ impl ProfileState {
     /// backup is unlocked.
     fn start(&mut self, work: Work) -> Option<Secret> {
         let secret = self.secret.clone().filter(|_| self.work.is_none())?;
-        self.work = Some(Running {
-            work,
-            handle: None,
-            progress: None,
-        });
+        self.work = Some(Running::new(work));
         Some(secret)
     }
 
@@ -325,7 +347,7 @@ impl ProfileState {
             }
             ChildEvent::Event(Event::Progress { progress }) => {
                 if let Some(running) = self.work.as_mut() {
-                    running.progress = Some(progress);
+                    running.update(progress);
                 }
                 Vec::new()
             }
@@ -642,7 +664,9 @@ fn trouble<'a>(
 }
 
 /// A backup, check or clean-up in progress, with a way to stop it where
-/// stopping is safe.
+/// stopping is safe. The running time counts up every second, and when the
+/// figures have not moved for [`STALL_NOTICE`] the card says why they may
+/// not, so a slow destination never looks like a hung backup.
 fn progress(running: &Running) -> Element<'_, Message> {
     let spacing = theme::active().cosmic().spacing;
     let (label, fraction, detail) = match &running.progress {
@@ -659,7 +683,7 @@ fn progress(running: &Running) -> Element<'_, Message> {
                 .total
                 .filter(|total| *total > 0)
                 .map_or(0.0, |total| progress.done as f32 / total as f32);
-            let detail = match (progress.bytes, progress.total) {
+            let amount = match (progress.bytes, progress.total) {
                 (true, Some(total)) => fl!(
                     "progress-amount",
                     done = format::bytes(progress.done),
@@ -668,15 +692,41 @@ fn progress(running: &Running) -> Element<'_, Message> {
                 (true, None) => format::bytes(progress.done),
                 (false, _) => String::new(),
             };
+            let detail = match progress
+                .uploaded
+                .filter(|_| progress.phase == Phase::BackingUp)
+            {
+                Some(uploaded) => fl!(
+                    "progress-uploaded",
+                    amount = amount,
+                    uploaded = format::bytes(uploaded)
+                ),
+                None => amount,
+            };
             (label, fraction, detail)
         }
     };
 
-    widget::column::with_capacity(4)
+    let elapsed = fl!(
+        "progress-elapsed",
+        time = format::duration(running.started.elapsed().as_secs())
+    );
+    let still = running.moved.elapsed();
+    let waiting = (still >= STALL_NOTICE).then(|| {
+        let seconds = format::duration(still.as_secs());
+        match running.progress.as_ref().map(|progress| progress.phase) {
+            None | Some(Phase::Preparing) => fl!("progress-waiting-preparing", time = seconds),
+            Some(_) => fl!("progress-waiting", time = seconds),
+        }
+    });
+
+    widget::column::with_capacity(6)
         .spacing(spacing.space_xs)
         .push(widget::text::title4(label))
         .push(widget::progress_bar::determinate_linear(fraction))
         .push(widget::text::caption(detail))
+        .push(widget::text::caption(elapsed))
+        .push_maybe(waiting.map(widget::text::caption))
         .push(if running.work == Work::CleanUp {
             // Pruning deletes data as it goes; it is left to finish.
             widget::text::caption(fl!("clean-up-cannot-stop")).into()

@@ -12,12 +12,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::format;
-use crate::engine::{BackupRequest, EngineError, Probe, Secret, SizeEstimate};
+use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secret, SizeEstimate};
 use crate::fl;
 use crate::profile::{Destination, Profile, Retention, Schedule, default_excludes};
 
@@ -80,6 +81,8 @@ pub struct EstimateView {
     pub generation: u64,
     pub running: bool,
     pub total: Option<SizeEstimate>,
+    /// What the exclusions take out, once the total is known.
+    pub breakdown: Option<ExclusionBreakdown>,
     /// Size of each excluded folder that sits inside an included one.
     pub exclude_sizes: HashMap<PathBuf, u64>,
 }
@@ -89,7 +92,8 @@ pub struct EstimateView {
 pub enum EstimateEvent {
     Progress(SizeEstimate),
     Done(SizeEstimate),
-    ExcludeSize(PathBuf, u64),
+    /// What the exclusions take out, with the sizes of these folders.
+    Breakdown(Vec<PathBuf>, ExclusionBreakdown),
     Failed(String),
 }
 
@@ -97,6 +101,9 @@ pub struct Wizard {
     pub mode: Mode,
     pub step: Step,
     pub name: String,
+    /// The name was typed (or came with the backup), so the destination no
+    /// longer suggests one.
+    name_chosen: bool,
     pub sources: Vec<PathBuf>,
     pub excludes: Vec<PathBuf>,
     pub patterns: Vec<String>,
@@ -122,8 +129,11 @@ pub struct Wizard {
     pub remember: bool,
     pub estimate: EstimateView,
     cancel: Arc<AtomicBool>,
-    /// Finishing: the repository is being created or opened.
-    pub busy: bool,
+    /// Finishing: the repository is being created or opened, since when.
+    busy_since: Option<Instant>,
+    /// Next was pressed on the "where" step before the destination had been
+    /// checked: move on by itself once the check succeeds.
+    advance_when_checked: bool,
     /// Opening a backup Déjà Dup made.
     pub importing: bool,
 }
@@ -192,6 +202,7 @@ impl Wizard {
             mode,
             step,
             name: String::new(),
+            name_chosen: false,
             sources: Vec::new(),
             excludes: Vec::new(),
             patterns: Vec::new(),
@@ -217,7 +228,8 @@ impl Wizard {
             remember: true,
             estimate: EstimateView::default(),
             cancel: Arc::new(AtomicBool::new(false)),
-            busy: false,
+            busy_since: None,
+            advance_when_checked: false,
             importing: false,
         }
     }
@@ -246,6 +258,7 @@ impl Wizard {
         let mut wizard = Self::new(Mode::Open);
         wizard.importing = true;
         wizard.name = fl!("dejadup-name");
+        wizard.name_chosen = true;
         wizard.sources = import.sources.clone();
         wizard.excludes = import.excludes.clone();
         wizard.set_schedule(import.schedule);
@@ -301,6 +314,7 @@ impl Wizard {
     fn editing(mode: Mode, profile: &Profile) -> Self {
         let mut wizard = Self::new(mode);
         wizard.name = profile.name.clone();
+        wizard.name_chosen = true;
         wizard.sources = profile.sources.clone();
         wizard.excludes = profile.excludes.clone();
         wizard.patterns = profile.exclude_patterns.clone();
@@ -390,6 +404,7 @@ impl Wizard {
         self.cancel = Arc::new(AtomicBool::new(false));
         self.estimate.generation += 1;
         self.estimate.running = true;
+        self.estimate.breakdown = None;
         self.estimate.exclude_sizes.clear();
         let exclude_folders = self
             .excludes
@@ -417,26 +432,69 @@ impl Wizard {
         self.position() + 1 == self.mode.steps().len()
     }
 
-    /// Whether the current step is complete enough to move on.
+    /// Finishing: the repository is being created or opened.
+    pub fn busy(&self) -> bool {
+        self.busy_since.is_some()
+    }
+
+    /// Something is under way that the wizard shows a running time for.
+    pub fn waiting(&self) -> bool {
+        self.busy() || self.place.checking_since().is_some()
+    }
+
+    /// What the "where" step needs to find at the destination.
+    fn wanted(&self) -> Probe {
+        match self.mode {
+            Mode::Open => Probe::Repository,
+            _ => Probe::Empty,
+        }
+    }
+
+    /// The destination has been checked and is what this step needs.
+    fn place_accepted(&self) -> bool {
+        matches!(self.place.probe(), Some(Ok(probe)) if *probe == self.wanted())
+    }
+
+    /// Whether Next can be pressed. On the "where" step that is as soon as a
+    /// destination is described: Next checks it, and moves on when the
+    /// check succeeds. A check that found the wrong thing there blocks it; a
+    /// check that failed can be tried again with Next.
     pub fn can_advance(&self) -> bool {
-        if self.busy {
+        if self.busy() {
             return false;
         }
         match self.step {
             Step::What => !self.sources.is_empty(),
             Step::Where => {
-                let wanted = match self.mode {
-                    Mode::Open => Probe::Repository,
-                    _ => Probe::Empty,
-                };
                 !self.name.trim().is_empty()
-                    && matches!(self.place.probe(), Some(Ok(probe)) if *probe == wanted)
+                    && self.place.destination().is_some()
+                    && self.place.checking_since().is_none()
+                    && match self.place.probe() {
+                        None | Some(Err(_)) => true,
+                        Some(Ok(_)) => self.place_accepted(),
+                    }
             }
             Step::When => true,
             Step::Secure => match self.mode {
                 Mode::Create => !self.password.is_empty() && self.password == self.confirm,
                 _ => !self.password.is_empty(),
             },
+        }
+    }
+
+    /// Go to the next step, or finish on the last.
+    fn advance(&mut self) -> Vec<Effect> {
+        if self.is_last_step() {
+            return self.finish();
+        }
+        self.step = self.mode.steps()[self.position() + 1];
+        match self.step {
+            Step::Where => self.place_effects(self.place.enter()),
+            Step::When => {
+                self.keep_labels = self.keep_labels();
+                Vec::new()
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -469,7 +527,7 @@ impl Wizard {
             profile.prune = self.prune;
         }
         let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
-        self.busy = true;
+        self.busy_since = Some(Instant::now());
         vec![Effect::Finish(Finish {
             mode: self.mode.clone(),
             profile,
@@ -537,12 +595,14 @@ impl Wizard {
                 if generation == self.estimate.generation {
                     match event {
                         EstimateEvent::Progress(total) => self.estimate.total = Some(total),
-                        EstimateEvent::Done(total) => {
-                            self.estimate.total = Some(total);
+                        EstimateEvent::Done(total) => self.estimate.total = Some(total),
+                        EstimateEvent::Breakdown(folders, breakdown) => {
+                            self.estimate.exclude_sizes = folders
+                                .into_iter()
+                                .zip(breakdown.per_folder.iter().copied())
+                                .collect();
+                            self.estimate.breakdown = Some(breakdown);
                             self.estimate.running = false;
-                        }
-                        EstimateEvent::ExcludeSize(path, bytes) => {
-                            self.estimate.exclude_sizes.insert(path, bytes);
                         }
                         EstimateEvent::Failed(_) => self.estimate.running = false,
                     }
@@ -550,17 +610,29 @@ impl Wizard {
                 Vec::new()
             }
             Message::Name(name) => {
+                self.name_chosen = !name.trim().is_empty();
                 self.name = name;
                 Vec::new()
             }
             Message::Place(message) => {
                 let effects = self.place.update(message);
-                if self.name.trim().is_empty()
+                // Follows the destination, including a host name as it is
+                // typed, until a name of its own is typed.
+                if !self.name_chosen
                     && let Some(name) = self.place.suggested_name()
                 {
                     self.name = name;
                 }
-                self.place_effects(effects)
+                let mut effects = self.place_effects(effects);
+                if self.advance_when_checked && self.place.checking_since().is_none() {
+                    // The check Next started has finished, or the
+                    // destination changed under it.
+                    self.advance_when_checked = false;
+                    if self.step == Step::Where && self.place_accepted() {
+                        effects.extend(self.advance());
+                    }
+                }
+                effects
             }
             Message::Password(password) => {
                 self.password = password;
@@ -609,25 +681,19 @@ impl Wizard {
                 if !self.can_advance() {
                     return Vec::new();
                 }
-                if self.is_last_step() {
-                    return self.finish();
+                if self.step == Step::Where && !self.place_accepted() {
+                    self.advance_when_checked = true;
+                    let effects = self.place.check();
+                    return self.place_effects(effects);
                 }
-                self.step = self.mode.steps()[self.position() + 1];
-                match self.step {
-                    Step::Where => self.place_effects(self.place.enter()),
-                    Step::When => {
-                        self.keep_labels = self.keep_labels();
-                        Vec::new()
-                    }
-                    _ => Vec::new(),
-                }
+                self.advance()
             }
             Message::Cancel => {
                 self.cancel.store(true, Ordering::Relaxed);
                 vec![Effect::Close]
             }
             Message::Finished(result) => {
-                self.busy = false;
+                self.busy_since = None;
                 match result {
                     Ok(()) => {
                         self.cancel.store(true, Ordering::Relaxed);
@@ -662,16 +728,34 @@ impl Wizard {
             Step::Secure => self.secure_view(),
         };
 
-        let next_label = match (self.is_last_step(), &self.mode) {
-            (false, _) => fl!("next"),
-            (true, Mode::Create) => fl!("wizard-finish-create"),
-            (true, Mode::Open) => fl!("wizard-finish-open"),
-            (true, Mode::Edit { .. } | Mode::Schedule { .. }) => fl!("save"),
+        let time = |since: Instant| format::duration(since.elapsed().as_secs());
+        let next_label = match (self.busy_since, self.is_last_step(), &self.mode) {
+            (Some(since), _, Mode::Create) => fl!("wizard-creating", time = time(since)),
+            (Some(since), _, Mode::Open) => fl!("wizard-opening", time = time(since)),
+            (Some(_), _, _) => fl!("wizard-saving"),
+            (None, _, _) if self.step == Step::Where && self.advance_when_checked => {
+                match self.place.checking_since() {
+                    Some(since) => fl!("place-checking-for", time = time(since)),
+                    None => fl!("next"),
+                }
+            }
+            (None, false, _) => fl!("next"),
+            (None, true, Mode::Create) => fl!("wizard-finish-create"),
+            (None, true, Mode::Open) => fl!("wizard-finish-open"),
+            (None, true, Mode::Edit { .. } | Mode::Schedule { .. }) => fl!("save"),
         };
-        let mut footer = widget::row::with_capacity(4)
+        // Creating a repository on cloud storage takes a while; say so where
+        // the button that started it is.
+        let busy_note = match (self.busy(), &self.mode) {
+            (true, Mode::Create) => Some(fl!("wizard-creating-note")),
+            (true, Mode::Open) => Some(fl!("wizard-opening-note")),
+            _ => None,
+        };
+        let mut footer = widget::row::with_capacity(5)
             .spacing(spacing.space_xs)
             .align_y(Alignment::Center)
             .push(widget::button::standard(fl!("cancel")).on_press(Message::Cancel))
+            .push_maybe(busy_note.map(widget::text::caption))
             .push(widget::space::horizontal());
         if self.position() > 0 {
             footer = footer.push(widget::button::standard(fl!("back")).on_press(Message::Back));
@@ -689,7 +773,16 @@ impl Wizard {
                     .push(widget::text::title3(title))
                     .push(widget::text::caption(step_label)),
             )
-            .push(widget::scrollable(body).height(Length::Fill))
+            .push(
+                // Room inside the scrolled area: on the left for the focus
+                // ring a field draws just outside itself, which the edge of
+                // the area would otherwise cut off, and on the right for the
+                // scrollbar, which would otherwise cover every row.
+                widget::container(body)
+                    .padding([0, spacing.space_s, 0, spacing.space_xxxs])
+                    .apply(widget::scrollable)
+                    .height(Length::Fill),
+            )
             .push(footer)
             .apply(widget::container)
             .max_width(760)
@@ -700,7 +793,13 @@ impl Wizard {
 
     fn what_view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
-        let per_source = self.estimate.total.as_ref().map(|total| &total.per_source);
+        // Each include shows everything it holds once that is known, as the
+        // arithmetic under the estimate counts it; until then, what the walk
+        // has found so far.
+        let per_source = match &self.estimate.breakdown {
+            Some(breakdown) => Some(&breakdown.per_source),
+            None => self.estimate.total.as_ref().map(|total| &total.per_source),
+        };
 
         let mut include = widget::settings::section().title(fl!("wizard-include"));
         for (index, source) in self.sources.iter().enumerate() {
@@ -732,7 +831,19 @@ impl Wizard {
         exclude = exclude
             .add(widget::button::text(fl!("wizard-add-folders")).on_press(Message::AddExcludes));
 
+        let by_patterns = match (&self.estimate.breakdown, &self.estimate.total) {
+            (Some(breakdown), Some(total)) if !self.patterns.is_empty() => {
+                Some(breakdown.by_patterns(total.bytes)).filter(|bytes| *bytes > 0)
+            }
+            _ => None,
+        };
         let mut advanced = widget::settings::section().title(fl!("wizard-advanced"));
+        if let Some(bytes) = by_patterns {
+            advanced = advanced.add(widget::text::caption(fl!(
+                "wizard-patterns-remove",
+                size = format::bytes(bytes)
+            )));
+        }
         for (index, pattern) in self.patterns.iter().enumerate() {
             advanced = advanced.add(
                 widget::settings::item::builder(pattern.clone()).control(
@@ -779,15 +890,32 @@ impl Wizard {
             size = format::bytes(total.bytes),
             files = files
         );
-        let status = if self.estimate.running {
-            fl!("wizard-estimate-counting")
-        } else {
-            fl!("wizard-estimate-note")
+        // "45 GB included − 12 GB excluded = 33 GB", once both walks are in.
+        let arithmetic = self.estimate.breakdown.as_ref().map(|breakdown| {
+            let excluded = breakdown.excluded(total.bytes);
+            if excluded == 0 {
+                fl!("wizard-estimate-nothing-excluded")
+            } else {
+                fl!(
+                    "wizard-estimate-arithmetic",
+                    included = format::bytes(breakdown.included),
+                    excluded = format::bytes(excluded),
+                    total = format::bytes(total.bytes)
+                )
+            }
+        });
+        let status = match (&self.estimate.total, self.estimate.running) {
+            (None, true) => fl!("wizard-estimate-counting"),
+            (Some(_), true) if self.estimate.breakdown.is_none() => {
+                fl!("wizard-estimate-adding-up")
+            }
+            _ => fl!("wizard-estimate-note"),
         };
-        widget::column::with_capacity(3)
+        widget::column::with_capacity(4)
             .spacing(spacing.space_xxs)
             .push(widget::text::caption(fl!("wizard-estimate-label")))
             .push(widget::text::title4(headline))
+            .push_maybe(arithmetic.map(widget::text::body))
             .push(widget::text::caption(status))
             .apply(widget::container)
             .padding(spacing.space_s)
@@ -1011,10 +1139,22 @@ mod tests {
 
         place_folder(&mut wizard, "/srv/backups/laptop", Ok(Probe::Empty));
         assert!(wizard.can_advance());
-        assert_eq!(
-            wizard.name, "dave",
-            "the name defaults to the first place chosen"
-        );
+        assert_eq!(wizard.name, "laptop", "the name follows the place chosen");
+    }
+
+    #[test]
+    fn the_suggested_name_follows_typing_until_a_name_is_typed() {
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        wizard.update(Message::Next);
+        wizard.update(Message::Place(place::Message::Kind(place::Kind::Server)));
+        for host in ["n", "na", "nas.local"] {
+            wizard.update(Message::Place(place::Message::Host(host.into())));
+        }
+        assert_eq!(wizard.name, "nas.local", "not frozen at the first letter");
+
+        wizard.update(Message::Name("Home to the NAS".into()));
+        wizard.update(Message::Place(place::Message::Host("nas2.local".into())));
+        assert_eq!(wizard.name, "Home to the NAS", "a typed name is kept");
     }
 
     #[test]
@@ -1054,7 +1194,7 @@ mod tests {
                 path: "/srv/backups/laptop".into()
             }
         );
-        assert!(wizard.busy);
+        assert!(wizard.busy());
     }
 
     #[test]
@@ -1073,14 +1213,99 @@ mod tests {
     }
 
     #[test]
-    fn an_unreachable_destination_blocks_next() {
+    fn an_unreachable_destination_is_checked_again_by_next() {
         let (mut wizard, _) = Wizard::open();
         place_folder(
             &mut wizard,
             "/gone",
             Err(EngineError::new(ErrorKind::DestinationUnavailable, "/gone")),
         );
+        assert!(wizard.can_advance(), "Next tries again");
+
+        let effects = wizard.update(Message::Next);
+        assert!(
+            matches!(effects.as_slice(), [Effect::Place(place::Effect::Probe(_))]),
+            "Next checks again rather than moving on"
+        );
+        assert_eq!(wizard.step, Step::Where);
+        assert!(!wizard.can_advance(), "not while the check runs");
+        let destination = wizard.place.destination().unwrap();
+        wizard.update(Message::Place(place::Message::Probed(
+            destination,
+            Err(EngineError::new(ErrorKind::TimedOut, "60")),
+        )));
+        assert_eq!(wizard.step, Step::Where, "a failed check stays put");
+    }
+
+    /// Fill in an SFTP destination, which is not checked until asked.
+    fn describe_server(wizard: &mut Wizard) {
+        for message in [
+            place::Message::Kind(place::Kind::Server),
+            place::Message::Host("nas.local".into()),
+            place::Message::ServerPath("backups/laptop".into()),
+        ] {
+            wizard.update(Message::Place(message));
+        }
+    }
+
+    #[test]
+    fn one_press_of_next_checks_the_destination_and_moves_on() {
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        wizard.update(Message::Next);
+        describe_server(&mut wizard);
+        assert!(wizard.place.probe().is_none(), "not checked yet");
+        assert!(wizard.can_advance(), "Next can be pressed straight away");
+
+        let effects = wizard.update(Message::Next);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Place(place::Effect::Probe(_))]
+        ));
+        assert!(wizard.waiting(), "the check shows its running time");
+        assert!(
+            !wizard.can_advance(),
+            "a second press does not start another"
+        );
+
+        let destination = wizard.place.destination().unwrap();
+        wizard.update(Message::Place(place::Message::Probed(
+            destination,
+            Ok(Probe::Empty),
+        )));
+        assert_eq!(wizard.step, Step::When, "moved on without another press");
+        assert!(!wizard.waiting());
+    }
+
+    #[test]
+    fn a_check_that_finds_other_files_does_not_move_on() {
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        wizard.update(Message::Next);
+        describe_server(&mut wizard);
+        wizard.update(Message::Next);
+        let destination = wizard.place.destination().unwrap();
+        wizard.update(Message::Place(place::Message::Probed(
+            destination,
+            Ok(Probe::NotEmpty),
+        )));
+        assert_eq!(wizard.step, Step::Where);
         assert!(!wizard.can_advance());
+    }
+
+    #[test]
+    fn a_check_for_an_edited_destination_does_not_move_on() {
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        wizard.update(Message::Next);
+        describe_server(&mut wizard);
+        wizard.update(Message::Next);
+        let checked = wizard.place.destination().unwrap();
+        wizard.update(Message::Place(place::Message::ServerPath(
+            "backups/other".into(),
+        )));
+        wizard.update(Message::Place(place::Message::Probed(
+            checked,
+            Ok(Probe::Empty),
+        )));
+        assert_eq!(wizard.step, Step::Where, "the new path is still unchecked");
     }
 
     #[test]

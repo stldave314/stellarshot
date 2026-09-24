@@ -57,6 +57,10 @@ and a mode-0600 file.
 | `check_passes_on_a_sound_repository` / `check_reports_a_damaged_repository` | The integrity check passes a sound repository **and fails** one whose index was removed, so it is known to detect damage |
 | `backup_reports_progress_ending_at_the_total` | Progress reports every byte of every regular file |
 | `throttle_sends_first_and_final` (`progress.rs`) | 1,000 rapid increments produce few reports, and the last one is exact |
+| `a_finished_upload_repeats_the_last_event_with_the_bytes_stored` (`progress.rs`) | A finished upload is reported even while reading stands still, so the progress card keeps moving |
+| `packs_upload_side_by_side` (`uploads.rs`) | Eight packs to storage that takes 200 ms per write go four at a time: four writes are seen in flight together, and the whole takes well under the 1.6 s one at a time would |
+| `an_index_is_written_only_after_every_pack_arrived` (`uploads.rs`) | Writing an index waits for every pack in flight: all six are stored when it returns |
+| `a_failed_upload_fails_the_index_and_everything_after_it` (`uploads.rs`) | When one pack upload fails, the index write fails, so no index can name a missing pack, and so does every write after it; only packs reach the storage |
 
 ### Browsing and restoring (`src/engine/tests.rs`)
 
@@ -101,6 +105,7 @@ the top, then reports an error instead of looping.
 | `forget_applies_the_rules` | Four snapshots a day apart, "keep 2 daily": the two newest days stay and exactly two are removed |
 | `forget_leaves_other_computers_alone` | Forgetting on behalf of another host name removes nothing, so a shared repository keeps the other computer's history |
 | `forget_keeps_everything_without_rules` | No rules, nothing removed |
+| `only_the_newest_snapshot_of_a_day_is_kept`, `days_without_a_backup_are_passed_over_not_counted`, `weeks_and_months_are_counted_the_same_way_and_overlap_with_days`, `the_first_snapshot_is_kept_until_twelve_months_are_covered` (`maintenance.rs`) | Each sentence of the "Smart" explanation in the README and the app, checked against rustic on 400 days of history with a gap: 7 days, 4 weeks and 12 months, the newest of each; gaps skipped; one snapshot counting for all three; the first snapshot kept while under a year and not after |
 | `prune_reclaims_forgotten_data` | After forgetting the snapshots that held a 512 KiB file, prune reports at least that much unused; the repository then checks clean and the kept snapshot restores. **Cannot pass vacuously:** it first asserts two snapshots were forgotten |
 | `retention_rules`, `prune_defaults_to_on_only_for_this_computer`, `older_settings_load_with_no_prune_choice` | Each "Keep" choice maps to the right rules; freeing space defaults on for local folders and drives only; settings from before M5 load unchanged |
 
@@ -139,6 +144,7 @@ These run the real `stellarshot` binary, the way the window does.
 | `a_backup_streams_started_progress_and_done` | The window's stream yields `Started`, progress, then `Done` |
 | `cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Cancelled`, with no snapshot left behind |
 | `a_missing_executable_is_reported_not_hung` | If the child cannot start, the stream ends with an error instead of waiting forever |
+| `cancelling_a_backup_through_rclone_ends_it_and_stops_rclone` (`tests/rclone.rs`) | Cancel during a backup through rclone ends the stream as `Cancelled` within 30 seconds, and no `rclone serve` for the repository is left running. **Proven able to fail:** before the child ran in its own process group, the stream never ended (the orphaned rclone held its output open) and the test timed out |
 
 ### Backup profiles (`src/profile.rs`)
 
@@ -156,6 +162,7 @@ These run the real `stellarshot` binary, the way the window does.
 | `estimate_matches_the_backup` | With an exclusion nested inside an include, an overlapping include, a pattern and a hard link, the estimate **equals** the byte total the backup then reports; per-folder totals are exact too. This is the regression Déjà Dup has |
 | `exclude_through_a_symlinked_path_still_applies` (`src/engine/tests.rs`) | An exclusion written through a symlinked path (`/home` → `/var/home`) still leaves the folder out |
 | `estimate_respects_cancel` | A cancelled estimate stops and reports nothing, so a stale total never replaces a newer one |
+| `the_arithmetic_adds_up_to_the_estimate` | "Included − excluded = total" holds exactly; each excluded folder is sized, nested ones count once towards the total, and what only a pattern removes is reported apart |
 
 ### Storage through rclone (`tests/rclone.rs`, `src/engine/rclone.rs`)
 
@@ -168,7 +175,7 @@ if it is not; CI installs it.
 
 | Test | What it proves |
 | --- | --- |
-| `backup_through_rclone_round_trips` | Create, back up and restore through rclone; the restored file matches |
+| `backup_through_rclone_round_trips` | Create, back up and restore through rclone; the restored file matches, and no rclone is left running once the repositories are closed |
 | `rclone_probe_classifies_like_a_folder` | A missing folder, a folder of other files and a repository are told apart exactly as for a local folder |
 | `rclone_delete_leaves_foreign_files` | Deleting through rclone removes the repository's entries and leaves a neighbouring `report.odt` byte-for-byte intact |
 | `rclone_delete_refuses_a_folder_that_is_not_a_repository` | Nothing is deleted from a folder that is not a repository |
@@ -204,7 +211,9 @@ A drive is remembered by UUID; a check only counts for the destination it
 checked, so editing a field after a check needs a new one; a server needs a
 host, a folder and a valid port; Google needs a sign-in first and only one
 sign-in runs at a time; one of the user's remotes is only ever used through
-Stellarshot's own copy of it.
+Stellarshot's own copy of it; a destination edited while it is being checked
+is not left "checking", and can be checked again
+(`editing_during_a_check_does_not_leave_it_checking`).
 
 ### The keyring (`tests/keyring.rs`)
 
@@ -219,11 +228,15 @@ gnome-keyring in a private D-Bus session.
 
 State and effects are tested without rendering:
 
-- **Wizard:** a backup cannot leave "what" without a folder; a destination
-  holding other files blocks "next"; "open" needs an existing repository; an
-  unreachable destination blocks "next"; passwords must match; editing keeps
-  the profile ID and needs no password; stale probe and estimate results are
-  ignored.
+- **Wizard:** a backup cannot leave "what" without a folder; one press of
+  "next" checks an unchecked destination and moves on when the check passes,
+  without a second press (`one_press_of_next_checks_the_destination_and_moves_on`);
+  a destination holding other files, or edited while it was checked, does not
+  move on; an unreachable destination or a timed-out check stays put and
+  "next" checks again; "open" needs an existing repository; passwords must
+  match; the suggested name follows a host name as it is typed until a name
+  is typed; editing keeps the profile ID and needs no password; stale probe
+  and estimate results are ignored.
 - **Profile page:** the keyring is consulted once; a remembered password opens
   without storing it again; a typed password is cleared from the field once
   used; a wrong password stays locked and is reported; Back Up Now needs a
@@ -318,6 +331,9 @@ Things a test cannot reach yet, and how they were confirmed.
 | Generated units are valid, including an executable path with a space and `%` | `systemd-analyze --user verify` on the service and timer: no errors, and the escaped path resolved to the real file | M5 |
 | A timer installs, runs its service and uninstalls cleanly | Installed for a throwaway ID in the real user session: listed by `list-timers` with the next run, `enabled`, its service started and exited; after removal no unit, no `timers.target.wants` link and no timer remained | M5 |
 | A scheduled run works inside a systemd user service | `systemd-run --user --wait … stellarshot --scheduled <id>` with a demo profile: exit 0, a snapshot, and `last_success` and `last_check` recorded; the keyring was reachable from the service | M5 |
+| The wizard no longer clips fields or hides rows under the scrollbar | `scripts/screenshots.sh wizard` before and after: the scrollbar now sits beside the cards instead of over them; a focused SFTP field under Xwayland shows its whole focus ring at the left edge | 0.1.x |
+| One press of Next checks an SFTP destination | Under Xwayland with `xdotool`: one press ran the check (a closed port on 127.0.0.1), which failed at once, stayed on the step and left Next ready to try again | 0.1.x |
+| Déjà Dup's rclone settings | The running Déjà Dup's rclone environment (names and non-secret values only): its own `RCLONE_DRIVE_CLIENT_ID`, `RCLONE_DRIVE_SCOPE=drive.file`, `RCLONE_DRIVE_USE_TRASH=false`, run by restic as `rclone serve restic --stdio` | 0.1.x |
 | Déjà Dup's schedule defaults | Read from the installed Flatpak's `org.gnome.DejaDup.gschema.xml`: `periodic` false, `periodic-period` 7, `delete-after` 0 (forever) | M5 |
 
 ### Not yet verified end to end
@@ -326,6 +342,11 @@ Things a test cannot reach yet, and how they were confirmed.
   person at a browser with a Google account. The rclone transport it uses is
   covered by `tests/rclone.rs`; the sign-in step itself (`rclone config
   create … drive`) has not been run to completion by the tests.
+- **Google Drive speed against Déjà Dup.** Four uploads at once and one
+  request per pack are covered by `uploads.rs` and the rclone tests; how much
+  faster that makes a real Google Drive backup has not been measured. The
+  "Checking… 0:12" count and the one-minute limit have not been seen against
+  a slow real account either.
 - **A backup to a real SSH server.** Covered only through the same rclone
   transport and the remote-string tests.
 - **Importing a real Déjà Dup Google Drive backup**, which needs the sign-in

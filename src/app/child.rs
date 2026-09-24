@@ -12,6 +12,7 @@ use cosmic::iced::futures::{SinkExt, Stream, channel::mpsc};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
+use crate::constants::DRAIN_AFTER_EXIT;
 use crate::debug::ENGINE;
 use crate::engine::{EngineError, ErrorKind};
 use crate::runner::{Event, Job, Operation};
@@ -19,7 +20,7 @@ use crate::{debug_log, error_log};
 
 /// A running child, shared so the UI can cancel it.
 #[derive(Clone)]
-pub struct ChildHandle(Arc<Mutex<Child>>);
+pub struct ChildHandle(Arc<Mutex<Child>>, Option<rustix::process::Pid>);
 
 impl fmt::Debug for ChildHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -30,10 +31,30 @@ impl fmt::Debug for ChildHandle {
 impl ChildHandle {
     /// Stop the operation. Safe for a backup: the snapshot file is written
     /// last, so nothing half-written is ever referenced.
+    ///
+    /// The whole process group is killed, not only the child: for SFTP and
+    /// cloud storage, rustic runs `rclone serve restic` under it, and an
+    /// rclone left behind keeps the child's stdout open, so the operation
+    /// would never be seen to end.
     pub fn cancel(&self) {
         if let Ok(mut child) = self.0.lock() {
             debug_log!(ENGINE, "cancelling child {:?}", child.id());
+            // `id()` is `None` once the child has been reaped, after which
+            // its group ID could in time belong to someone else.
+            if child.id().is_some() {
+                self.kill_group();
+            }
             let _ = child.start_kill();
+        }
+    }
+
+    /// Kill every process in the child's group.
+    fn kill_group(&self) {
+        if let Some(group) = self.1
+            && let Err(err) =
+                rustix::process::kill_process_group(group, rustix::process::Signal::KILL)
+        {
+            debug_log!(ENGINE, "killing process group {group:?}: {err}");
         }
     }
 }
@@ -92,6 +113,9 @@ async fn drive(
         // Closing the window must not abandon a backup halfway: the child
         // finishes on its own.
         .kill_on_drop(false)
+        // Its own process group, so cancelling reaches everything it
+        // started (see `ChildHandle::cancel`).
+        .process_group(0)
         .spawn()?;
 
     let job = serde_json::to_vec(&job)
@@ -103,13 +127,38 @@ async fn drive(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    let handle = ChildHandle(Arc::new(Mutex::new(child)));
+    let group = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw);
+    let handle = ChildHandle(Arc::new(Mutex::new(child)), group);
     let _ = out.send(ChildEvent::Started(handle.clone())).await;
 
     let mut reported = false;
     if let Some(stdout) = stdout {
         let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut exited = std::pin::pin!(wait(&handle));
+        // Once the child has exited, what it wrote is already in the pipe;
+        // anything still holding the pipe open is an orphan it started.
+        let mut deadline = None;
+        loop {
+            let line = tokio::select! {
+                line = lines.next_line() => line,
+                _ = &mut exited, if deadline.is_none() => {
+                    deadline = Some(tokio::time::Instant::now() + DRAIN_AFTER_EXIT);
+                    continue;
+                }
+                () = sleep_until(deadline) => {
+                    // Still holding the pipe, so still in the group: the
+                    // group ID cannot have been reused.
+                    debug_log!(ENGINE, "child exited but its output stayed open");
+                    handle.kill_group();
+                    break;
+                }
+            };
+            let Ok(Some(line)) = line else {
+                break;
+            };
             match serde_json::from_str::<Event>(&line) {
                 Ok(event) => {
                     reported |= !matches!(event, Event::Progress { .. });
@@ -141,6 +190,14 @@ async fn drive(
         ErrorKind::Internal,
         format!("{status}: {}", diagnostics.trim()),
     ))
+}
+
+/// Sleep until `deadline`, or forever without one.
+async fn sleep_until(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Wait for the child without holding its lock, so it can still be cancelled.

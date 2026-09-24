@@ -135,8 +135,9 @@ pub async fn finish(
     })
 }
 
-/// Size what `request` covers, then each folder in `exclude_folders`, as a
-/// stream of events. Stops early when `cancel` is set.
+/// Size what `request` covers, then what its exclusions take out, including
+/// each folder in `exclude_folders`, as a stream of events. Stops early when
+/// `cancel` is set.
 pub fn estimate(
     request: BackupRequest,
     exclude_folders: Vec<PathBuf>,
@@ -158,10 +159,12 @@ pub fn estimate(
             match result {
                 Ok(Some(total)) => {
                     deliver(EstimateEvent::Done(total));
-                    for folder in exclude_folders {
-                        if let Some(bytes) = engine::folder_size(&folder, &cancel) {
-                            deliver(EstimateEvent::ExcludeSize(folder, bytes));
+                    match engine::exclusion_breakdown(&request, &exclude_folders, &cancel) {
+                        Ok(Some(breakdown)) => {
+                            deliver(EstimateEvent::Breakdown(exclude_folders, breakdown));
                         }
+                        Ok(None) => {}
+                        Err(err) => deliver(EstimateEvent::Failed(err.detail)),
                     }
                 }
                 Ok(None) => {}

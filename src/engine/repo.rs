@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use rustic_backend::BackendOptions;
 use rustic_core::{
-    ConfigOptions, Credentials, KeyOptions, OpenStatus, Repository, RepositoryOptions,
+    ConfigOptions, Credentials, KeyOptions, OpenStatus, Repository, RepositoryBackends,
+    RepositoryOptions,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,6 +18,8 @@ use sha2::{Digest, Sha256};
 use super::error::{EngineError, ErrorKind};
 use super::location::{InitCheck, check_init_location, is_repository};
 use super::progress::{ProgressSink, SinkBars, SlotGuard};
+use super::uploads::ParallelUploads;
+use crate::constants::RCLONE_SERVE_FLAGS;
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -123,10 +126,12 @@ impl Location {
                     return Err(EngineError::new(ErrorKind::RcloneMissing, "rclone"));
                 }
                 // rustic starts `rclone serve restic` itself; this is how it
-                // is told to use Stellarshot's configuration and nothing else.
+                // is told to use Stellarshot's configuration and nothing else,
+                // and how rclone is tuned for backups (see `RCLONE_SERVE_FLAGS`).
                 let command = format!(
-                    "rclone serve restic --addr localhost:0 --config '{}'",
-                    config.display()
+                    "rclone serve restic --addr localhost:0 --config '{}' {}",
+                    config.display(),
+                    RCLONE_SERVE_FLAGS.join(" ")
                 );
                 let mut options = BTreeMap::new();
                 options.insert("rclone-command".to_owned(), command);
@@ -227,7 +232,12 @@ impl Repo {
 }
 
 fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, EngineError> {
-    let backends = location.backend_options()?.to_backends()?;
+    let mut backends = location.backend_options()?.to_backends()?;
+    // Storage behind a network connection gets several uploads at once.
+    if let Location::Rclone { .. } = location {
+        let uploads = ParallelUploads::new(backends.repository(), bars.slot.clone());
+        backends = RepositoryBackends::new(Arc::new(uploads), backends.repo_hot());
+    }
     Ok(Repository::new_with_progress(
         &RepositoryOptions::default(),
         &backends,

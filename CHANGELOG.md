@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Fixes from testing 0.1.0.
+
+### Fixed
+
+- **Cancel stops a backup to an SSH server or cloud storage.** rustic starts
+  `rclone serve restic` for these, with the backup's output inherited. Cancel
+  killed the backup process but not rclone, which kept the output open, so the
+  window never saw the backup end, and rclone kept running. The backup now
+  runs in its own process group and Cancel stops all of it; the window also
+  stops waiting two seconds after the backup process ends, whatever it left
+  behind.
+- **Google Drive backups upload four packs at once.** rustic uploads one pack
+  at a time and waits for each, which left a slow connection idle between
+  packs and made the backup appear to stall; restic, which Déjà Dup runs,
+  uses several connections. Uploads to SSH servers and cloud storage now run
+  four at a time, and no index or snapshot is written until every pack it
+  names has arrived, so a failed upload fails the backup exactly as before.
+  Google Drive also receives each pack in one request instead of 8 MiB
+  chunks.
+- **Cleaning up Google Drive frees space.** rclone moved deleted data to
+  Drive's trash, where it still counted against the quota for 30 days. Data
+  rustic deletes is deleted permanently now, as Déjà Dup does.
+- **One press of Next.** On the "where" step, Next was unavailable until the
+  destination had been checked, and a destination checked while it was being
+  edited could stay "checking" for good. Next now checks the destination
+  itself and moves on when the check passes, and a check only counts for what
+  it checked.
+- **Checking a cloud location gives up after a minute** and says so, instead
+  of waiting without end; rclone retries fewer times, so a real error shows
+  sooner. Next tries again.
+- **The wizard's fields are no longer clipped**: the focus ring on the left
+  and the rows under the scrollbar on the right.
+- **The suggested backup name follows the destination** as it is typed,
+  instead of stopping at the first letter of a server's name.
+
+### Added
+
+- **Running times.** The progress card counts how long a backup has been
+  running, shows how much has been stored on SSH or cloud storage, and after
+  15 seconds without movement says what it is waiting for. Checking a
+  destination and creating or opening a backup count their seconds on the
+  button.
+- **The estimate as a sum**: "45 GB included − 12 GB excluded = 33 GB",
+  exact, because both figures come from the same walk rules. Each included
+  folder shows everything it holds, and the patterns show what they remove
+  beyond the excluded folders.
+- **"Smart" explained exactly**, in the app and in the README, with tests
+  that hold each rule to what rustic does.
+- stldave314 on the About page.
+
 ## [0.1.0] - 2026-09-24
 
 The first release: several independent backups, local, removable, SSH and

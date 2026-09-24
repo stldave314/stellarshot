@@ -12,6 +12,7 @@
 //! knows which operation will follow.
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -58,6 +59,11 @@ pub struct ProgressEvent {
     /// Total units, once known.
     pub total: Option<u64>,
     pub bytes: bool,
+    /// Bytes stored at the destination so far, for storage that uploads
+    /// packs in the background (see [`super::uploads`]). Stored bytes are
+    /// compressed and deduplicated, so they do not add up to `done`.
+    #[serde(default)]
+    pub uploaded: Option<u64>,
 }
 
 /// Receives progress reports. Called from rustic's worker threads.
@@ -73,24 +79,61 @@ impl ProgressSink for NoProgress {
 }
 
 /// Where progress for the current operation goes. Cloned into every handle
-/// rustic creates; empty between operations.
+/// rustic creates, and into the upload workers; empty between operations.
 #[derive(Clone, Default)]
-pub(crate) struct SinkSlot(Arc<RwLock<Option<Arc<dyn ProgressSink>>>>);
+pub(crate) struct SinkSlot(Arc<SlotState>);
+
+#[derive(Default)]
+struct SlotState {
+    sink: RwLock<Option<Arc<dyn ProgressSink>>>,
+    /// Uploads are counted: the storage uploads in the background.
+    counts_uploads: AtomicBool,
+    /// Bytes uploaded during the current operation.
+    uploaded: AtomicU64,
+    /// The last event sent, repeated with a new upload figure when a pack
+    /// arrives while nothing else moves.
+    last: Mutex<Option<ProgressEvent>>,
+}
 
 impl SinkSlot {
     /// Send progress to `sink` until the returned guard is dropped.
     pub(crate) fn attach(&self, sink: Arc<dyn ProgressSink>) -> SlotGuard {
-        if let Ok(mut slot) = self.0.write() {
+        if let Ok(mut slot) = self.0.sink.write() {
             *slot = Some(sink);
+        }
+        self.0.uploaded.store(0, Ordering::Relaxed);
+        if let Ok(mut last) = self.0.last.lock() {
+            *last = None;
         }
         SlotGuard(self.clone())
     }
 
+    /// Include the bytes uploaded in every event from now on.
+    pub(crate) fn count_uploads(&self) {
+        self.0.counts_uploads.store(true, Ordering::Relaxed);
+    }
+
+    /// A pack of `bytes` has been stored at the destination.
+    pub(crate) fn uploaded(&self, bytes: u64) {
+        self.0.uploaded.fetch_add(bytes, Ordering::Relaxed);
+        let last = self.0.last.lock().ok().and_then(|last| last.clone());
+        if let Some(last) = last {
+            self.send(&last);
+        }
+    }
+
     fn send(&self, event: &ProgressEvent) {
-        if let Ok(slot) = self.0.read()
+        let mut event = event.clone();
+        if self.0.counts_uploads.load(Ordering::Relaxed) {
+            event.uploaded = Some(self.0.uploaded.load(Ordering::Relaxed));
+        }
+        if let Ok(mut last) = self.0.last.lock() {
+            *last = Some(event.clone());
+        }
+        if let Ok(slot) = self.0.sink.read()
             && let Some(sink) = slot.as_ref()
         {
-            sink.update(event);
+            sink.update(&event);
         }
     }
 }
@@ -101,7 +144,7 @@ pub(crate) struct SlotGuard(SinkSlot);
 
 impl Drop for SlotGuard {
     fn drop(&mut self) {
-        if let Ok(mut slot) = (self.0).0.write() {
+        if let Ok(mut slot) = (self.0).0.sink.write() {
             *slot = None;
         }
     }
@@ -178,6 +221,7 @@ impl Handle {
             done: state.done,
             total: state.total,
             bytes: self.bytes,
+            uploaded: None,
         });
     }
 }
@@ -253,6 +297,25 @@ mod tests {
         assert_eq!(last.done, 1000);
         assert_eq!(last.phase, Phase::BackingUp);
         assert!(last.bytes);
+    }
+
+    #[test]
+    fn a_finished_upload_repeats_the_last_event_with_the_bytes_stored() {
+        let bars = SinkBars::default();
+        bars.slot.count_uploads();
+        let recorder = Arc::new(Recorder::default());
+        let _guard = bars.slot.attach(recorder.clone());
+
+        let progress = bars.progress(ProgressType::Bytes, "backing up...");
+        progress.inc(100);
+        bars.slot.uploaded(40);
+        bars.slot.uploaded(2);
+
+        let events = recorder.0.lock().unwrap();
+        let last = events.last().unwrap();
+        assert_eq!(last.done, 100, "reading has not moved");
+        assert_eq!(last.uploaded, Some(42), "uploading has");
+        assert_eq!(events.first().unwrap().uploaded, Some(0));
     }
 
     #[test]

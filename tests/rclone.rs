@@ -65,6 +65,9 @@ fn backup_through_rclone_round_trips() {
         .join(source.strip_prefix("/").unwrap())
         .join("nested/file with space.txt");
     assert_eq!(std::fs::read(restored).unwrap(), b"through rclone");
+    // Each repository stopped its rclone when it was dropped.
+    let repo = scratch.path().join("repo").display().to_string();
+    assert!(!running_with(&repo), "rclone is still running for {repo}");
 }
 
 #[test]
@@ -150,4 +153,89 @@ fn signing_in_never_writes_into_a_readable_configuration() {
     assert_eq!(mode, 0o600, "rclone keeps an existing file's mode");
     let text = std::fs::read_to_string(&config).unwrap();
     assert!(text.contains("[probe]") && text.contains("[old]"));
+}
+
+/// Whether any process is still running with `needle` in its command line.
+fn running_with(needle: &str) -> bool {
+    std::fs::read_dir("/proc").unwrap().flatten().any(|entry| {
+        std::fs::read(entry.path().join("cmdline"))
+            .map(|cmdline| String::from_utf8_lossy(&cmdline).contains(needle))
+            .unwrap_or(false)
+    })
+}
+
+#[test]
+fn cancelling_a_backup_through_rclone_ends_it_and_stops_rclone() {
+    use cosmic::iced::futures::StreamExt;
+    use stellarshot::app::child::{self, ChildEvent};
+    use stellarshot::engine::Phase;
+    use stellarshot::runner::{Event, Job, Operation};
+
+    require_rclone();
+    let scratch = TempDir::new().unwrap();
+    let source = scratch.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    for index in 0..96 {
+        let block: Vec<u8> = (0..1024 * 1024)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state >> 24) as u8
+            })
+            .collect();
+        std::fs::write(source.join(format!("{index}.bin")), block).unwrap();
+    }
+    let repo = scratch.path().join("repo");
+    let location = through_rclone(scratch.path(), &repo);
+    engine::init(&location, &Secret::new(PASSWORD)).unwrap();
+    let job = Job {
+        request: Some(BackupRequest {
+            sources: vec![source],
+            ..BackupRequest::default()
+        }),
+        ..Job::new(location, Secret::new(PASSWORD))
+    };
+    let exe = Ok(std::path::PathBuf::from(env!("CARGO_BIN_EXE_stellarshot")));
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let last = runtime.block_on(async {
+        let run = async {
+            let mut stream = std::pin::pin!(child::run_with(exe, Operation::Backup, job));
+            let mut handle = None;
+            let mut last = None;
+            while let Some(event) = stream.next().await {
+                match &event {
+                    ChildEvent::Started(started) => handle = Some(started.clone()),
+                    ChildEvent::Event(Event::Progress { progress })
+                        if progress.phase == Phase::BackingUp && progress.done > 0 =>
+                    {
+                        handle.as_ref().expect("started before progress").cancel();
+                    }
+                    _ => {}
+                }
+                last = Some(event);
+            }
+            last
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), run)
+            .await
+            .expect("the backup must end promptly once cancelled")
+    });
+
+    match last {
+        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, engine::ErrorKind::Cancelled),
+        other => panic!("expected the backup to end cancelled, got {other:?}"),
+    }
+    // rclone is stopped with the backup, not left serving the repository.
+    let repo = repo.display().to_string();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while running_with(&repo) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!running_with(&repo), "rclone is still running for {repo}");
 }

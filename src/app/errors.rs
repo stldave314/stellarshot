@@ -39,6 +39,7 @@ pub fn explain(error: &EngineError) -> String {
         ErrorKind::RcloneMissing => fl!("error-rclone-missing"),
         ErrorKind::PasswordNotRemembered => fl!("error-password-not-remembered"),
         ErrorKind::AuthFailed => fl!("error-auth-failed", details = error.detail.clone()),
+        ErrorKind::TimedOut => fl!("error-timed-out", seconds = error.detail.clone()),
         ErrorKind::Io | ErrorKind::Internal => {
             fl!("error-details", details = error.detail.clone())
         }

@@ -42,13 +42,17 @@ snapshot you ever made.
   (`~/.cache`, the Trash, `~/Downloads`) already left out.
 - **A size estimate you can trust.** The wizard shows how much will be backed up
   while you choose, with excluded folders **subtracted** from the folders they
-  sit in. It is worked out from the very same file list the backup reads, so
-  it matches what the backup processes, to the byte. Each included folder shows
+  sit in, and the sum written out: *45 GB included − 12 GB excluded = 33 GB*.
+  It is worked out from the very same file list the backup reads, so it
+  matches what the backup processes, to the byte. Each included folder shows
   its own size, and each exclusion shows how much it takes out.
 - **"Back Up Now" on the main screen**, with a progress card and **Cancel**.
-  Backups run in their own process: the window never freezes, a cancelled or
-  interrupted backup never leaves a half-written snapshot, and closing the
-  window lets a running backup finish.
+  The card counts its running time, shows how much has reached cloud storage,
+  and says what it is waiting for when the figures stand still. Backups run
+  in their own process: the window never freezes, **Cancel** stops the backup
+  and the rclone connection under it at once, a cancelled or interrupted
+  backup never leaves a half-written snapshot, and closing the window lets a
+  running backup finish.
 - **Passwords remembered in your keyring**, if you want (it is on by default).
   They go to the desktop's Secret Service (GNOME Keyring, KWallet) and nowhere
   else. Without it, the page asks once per session.
@@ -87,9 +91,10 @@ snapshot you ever made.
   computer was off runs as soon as you are back. If one fails, a notification
   says so and a click opens the backup; an unplugged drive is simply tried
   again at the next slot.
-- **Old snapshots cleaned up for you.** Keep a smart history (a snapshot a day
-  for a week, a week for a month, a month for a year) or everything from the
-  last 3 months, 6 months or year. Space no snapshot needs is freed
+- **Old snapshots cleaned up for you.** Keep a smart history (the newest
+  snapshot of each of the last 7 days, 4 weeks and 12 months that have one;
+  [exactly how](#how-smart-decides-what-to-keep)) or everything from the last
+  3 months, 6 months or year. Space no snapshot needs is freed
   automatically where that is safe, and the repository is checked for damage
   every 30 days.
 - **Incremental and deduplicated.** Unchanged files are not stored again, and
@@ -99,11 +104,9 @@ snapshot you ever made.
 
 ## What is coming
 
-First, fixes from testing (a Cancel button that does not stop a backup,
-slow and silent Google Drive steps, progress that seems to stall). Then a
-clearer picture of every backup, finer control over what is backed up, more
-storage options and alerts beyond the desktop, on the way to 1.0. The detail
-is in [ROADMAP.md](ROADMAP.md).
+A clearer picture of every backup, finer control over what is backed up,
+more storage options and alerts beyond the desktop, on the way to 1.0. The
+detail is in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -171,7 +174,9 @@ right-click menu).
 1. **What.** Your home folder is included, with `~/.cache`, the Trash and
    `~/Downloads` left out. **Add Folders…** under *Include* or *Exclude* adds
    more (you can pick several at once). The estimate at the top updates as you
-   go. An exclusion that is not inside any included folder is marked as
+   go, and once it has counted, it writes out the sum: what the included
+   folders hold, minus what the exclusions take out, equals the backup. An
+   exclusion that is not inside any included folder is marked as
    changing nothing. Under **Advanced** you can leave out names that match a
    pattern anywhere, such as `*.tmp` or `node_modules`, and choose whether to
    stay on the same drive (on by default, so a network share mounted inside
@@ -186,16 +191,19 @@ right-click menu).
    | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive |
    | **One of your rclone remotes** | Pick a remote you set up with `rclone config` (OneDrive, Dropbox, S3, …) and a folder on it |
 
-   Press **Check** (folders and drives are checked straight away). A location
-   that already holds other files is refused; one that already holds a backup
-   is pointed out, so you can open it instead.
+   **Next** checks the location and moves on as soon as the check passes; the
+   button counts the seconds while it waits (folders and drives are checked
+   straight away, and **Check** checks without moving on). A check that gets
+   no answer within a minute stops and says so, and **Next** tries again. A
+   location that already holds other files is refused; one that already
+   holds a backup is pointed out, so you can open it instead.
 3. **When.** **Back up automatically** is on, daily, by default; choose
    hourly or weekly, or turn it off. **Keep** decides which old snapshots are
    forgotten:
 
    | Keep | What stays |
    | --- | --- |
-   | **Smart** (default) | One snapshot a day for a week, one a week for a month, one a month for a year |
+   | **Smart** (default) | The newest snapshot of each of the last 7 days, 4 weeks and 12 months that have one ([exactly how](#how-smart-decides-what-to-keep)) |
    | **At least 3 months / 6 months / a year** | Every snapshot from that long before the newest one |
    | **Forever** | Everything; the backup only grows |
 
@@ -205,7 +213,8 @@ right-click menu).
    time.
 4. **Password.** Choose one and confirm it. **Remember password** keeps it in
    your keyring. Automatic backups need it remembered: they run when nobody
-   is there to type it.
+   is there to type it. While the backup is being created the button counts
+   the seconds; on cloud storage this can take a minute.
 
 **Create and Back Up Now** creates the backup and takes the first snapshot
 straight away.
@@ -248,8 +257,19 @@ Déjà Dup so the two apps do not both back up the same folders.
 ### Backing up
 
 Select the backup in the sidebar and press **Back Up Now**
-(<kbd>Ctrl</kbd>+<kbd>B</kbd>). A progress card shows the phase and how much
-has been stored; **Cancel** stops it, keeping nothing half-finished.
+(<kbd>Ctrl</kbd>+<kbd>B</kbd>). A progress card shows the phase, how much has
+been read, and how long it has been running; **Cancel** stops it, keeping
+nothing half-finished.
+
+For SSH servers and cloud storage the card also shows how much has been
+stored there. That figure is smaller than what has been read, because data is
+compressed and anything already in the backup is not sent again. Four pieces
+of the backup are uploaded at once, so a slow connection is kept busy.
+
+If the figures stand still for 15 seconds, the card says so and why: at the
+start, the backup is reading what the repository already holds, which takes a
+while on cloud storage; later, the destination is slow to accept data or is
+limiting requests. The backup carries on by itself either way.
 
 If the password is not remembered, the page asks for it first. Enter it once
 and it is kept for the rest of the session (and in the keyring if you leave
@@ -317,6 +337,46 @@ space if that is turned on.
 
 Only one thing writes to a backup at a time: if you press **Back Up Now**
 while a scheduled backup is running, you are told it is busy.
+
+### How "Smart" decides what to keep
+
+A backup is only as trustworthy as the rules that delete from it, so here
+they are in full. After each automatic backup, and on **Clean Up Now**,
+Smart keeps:
+
+1. **Days.** The newest snapshot of each of the last **7 days that have one**.
+   A day with no backup is passed over, not counted: after a week away, the 7
+   days kept are the 7 most recent days you did back up.
+2. **Weeks.** The newest snapshot of each of the last **4 weeks that have
+   one**. Weeks run Monday to Sunday.
+3. **Months.** The newest snapshot of each of the last **12 calendar months
+   that have one**.
+4. **The very first snapshot**, for as long as the backups span fewer than 12
+   calendar months.
+
+The newest snapshot of a day is the one taken latest that day; earlier ones
+the same day are not kept by these rules. The rules overlap: today's newest
+snapshot is also this week's and this month's, so it counts for all three,
+and Smart keeps at most 23 snapshots, usually fewer. Every snapshot none of
+the rules keeps is **forgotten**: removed from the list, and its data freed
+by the next clean-up if **Free up space automatically** is on. Days, weeks and
+months are those of the time each snapshot was taken, in the time zone it was
+taken in. A week that runs across New Year is counted as two, one in each
+year, as rustic counts it.
+
+Two limits keep the rules from reaching further than they should:
+
+- **Only this computer's snapshots.** Another computer backing up to the
+  same place is never touched.
+- **Each set of folders on its own.** Snapshots are grouped by the folders
+  they back up. Changing the folders starts a new group with its own 7 days,
+  4 weeks and 12 months, and the old group keeps its snapshots under the same
+  rules.
+
+The rules are rustic's own `keep-daily 7`, `keep-weekly 4` and
+`keep-monthly 12`, so `rustic forget --keep-daily 7 --keep-weekly 4
+--keep-monthly 12 --dry-run` shows exactly what the next clean-up would
+forget. `src/engine/maintenance.rs` has tests for each rule above.
 
 ### Changing a backup
 
@@ -434,11 +494,31 @@ SSH servers, Google Drive and other cloud storage go through rclone. Install
 it (`sudo apt install rclone` on Debian, Ubuntu and Pop!\_OS) and go back to
 the step.
 
+**Checking a cloud location says there was no answer.**
+The check waits up to a minute. Google Drive in particular slows down apps
+that make many requests, and rclone then waits and retries. Wait a moment and
+press **Next** again. If it keeps happening, check that `rclone lsf
+<remote>:` works in a terminal with Stellarshot's configuration
+(`--config ~/.config/stellarshot/rclone.conf`).
+
+**A cloud backup is slower than I expected.**
+The first backup uploads everything, and cloud storage limits how fast one
+app may send requests (see *Known limitations*). Stellarshot uploads four
+pieces at once and sends Google Drive each piece in one go. Later backups
+only send what changed.
+
+**Clean Up Now freed no space on Google Drive.**
+Data Stellarshot deletes from Google Drive is deleted permanently, not moved
+to Drive's trash, so the space is freed straight away. Two exceptions: data
+no snapshot needs is only deleted by a clean-up a day or more after it was
+first found unused (see *Known limitations*), and clean-ups by earlier
+versions moved data to the trash, which you can empty in Google Drive.
+
 **An SSH server is refused with a host key error.**
 Stellarshot checks the server's key against `~/.ssh/known_hosts` and refuses
 servers it does not know, so a changed or spoofed key is never trusted
 silently. Connect once with `ssh user@server` and accept the key, then press
-**Check** again.
+**Next** again.
 
 **Google sign-in does not finish.**
 Sign-in happens in your browser and hands the result back to Stellarshot on
@@ -468,6 +548,13 @@ or find the file under **Browse** in an older snapshot.
 The password is the one set when the backup was created. There is no way to
 recover or reset it.
 
+**Cancel does not seem to stop a backup.**
+Cancel stops the backup's process and everything it started, including the
+`rclone` that carries SSH and cloud backups. If a backup keeps going after
+**Cancel**, it was probably started by the timer rather than by the window:
+the window can only stop what it started. Stop a timer's run with
+`systemctl --user stop 'stellarshot-backup-*'`.
+
 **Something else is wrong.**
 Turn on developer logging: set `DEVELOPER_LOGGING` to `true` in
 `src/debug.rs`, rebuild *without* `--features release-build`, reproduce the
@@ -483,7 +570,8 @@ written to stderr too.
   `rclone config` and choose it under **One of your rclone remotes**.
 - **Google sign-in uses rclone's shared Google client**, which Google limits in
   how fast it may be used; very large first backups can be slower than with
-  your own client ID.
+  your own client ID. Déjà Dup has a Google client of its own, which is one
+  reason its Google Drive backups can be faster.
 - **Timers need systemd.** On a system without a systemd user session,
   automatic backups cannot be set up; **Back Up Now** still works.
 - **Search, Deleted files and Compare show at most 500 entries.** Narrow the
@@ -529,7 +617,9 @@ written to stderr too.
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
 process, `stellarshot --run <operation>`, because rustic cannot be interrupted
-once an operation starts and a process can. The password reaches the child on stdin,
+once an operation starts and a process can. Cancelling kills the child's whole
+process group, so the `rclone` that rustic starts for SSH and cloud storage
+stops with it. The password reaches the child on stdin,
 never in its command line or environment, both of which other programs
 running as you can read.
 
@@ -539,7 +629,8 @@ running as you can read.
 | `engine` | Everything that touches rustic: repositories, backup, restore, checks, snapshots, the size estimate. Synchronous, plain types, typed errors |
 | `engine::location` | Whether a folder may hold a repository; deleting only a repository's own entries |
 | `engine::lock` | One writer per repository, shared by every process; released by the kernel if the holder dies |
-| `engine::rclone` | The rclone commands besides the backup itself: probing a remote folder, deleting a repository's entries, signing in, copying one of your remotes |
+| `engine::rclone` | The rclone commands besides the backup itself: probing a remote folder (with a time limit), deleting a repository's entries, signing in, copying one of your remotes |
+| `engine::uploads` | Several pack uploads at once for SSH and cloud storage, without letting an index or snapshot be written before every pack it names has arrived |
 | `engine::browse` | Looking inside snapshots with the index loaded once: folders, search, versions of a file, comparing two snapshots, deleted files |
 | `engine::restore` | Selected files to their original place or a folder, with the Keep both, Overwrite or Skip decision made before rustic sees the file list, and a dry run that counts the same way |
 | `engine::estimate` | The size of a backup before it runs, from the same file list the backup reads |
@@ -556,7 +647,7 @@ running as you can read.
 | `app::pages` | The first-launch screen, each backup's page, and the restore page |
 | `app::wizard` | The setup wizard's steps and validation; `place` is the "where" step |
 | `app::tasks` | Engine calls off the UI thread, the folder chooser, the estimate as a stream |
-| `app::child` | Spawns `--run`, streams its events into the UI, cancels it |
+| `app::child` | Spawns `--run` in its own process group, streams its events into the UI, cancels it and everything it started |
 | `app::errors` | A localized explanation for every kind of engine error |
 | `app::migrate` | One-time moves of settings from older versions |
 

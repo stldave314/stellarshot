@@ -19,11 +19,12 @@ pub mod rclone;
 mod repo;
 mod restore;
 mod snapshots;
+mod uploads;
 
 pub use backup::{BackupReport, BackupRequest};
 pub use browse::{Browser, Change, DiffEntry, EntryKind, FileVersion, MissingEntry, TreeEntry};
 pub use error::{EngineError, ErrorKind};
-pub use estimate::{SizeEstimate, estimate, folder_size};
+pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdown};
 pub use maintenance::{ForgetReport, KeepRules, PruneReport, hostname};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
 pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, open, probe};

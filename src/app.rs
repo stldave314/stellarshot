@@ -100,6 +100,8 @@ pub enum Message {
     BackUpSelected,
     Profile(String, profile::Message),
     Wizard(wizard::Message),
+    /// A second passed while something shows a running time.
+    WaitingTick,
     RestorePage(restore::Message),
     WizardFinished(Result<tasks::Finished, EngineError>),
     /// Installing or removing a backup's timer failed.
@@ -387,6 +389,12 @@ impl App {
         };
         let effects = self.pages.entry(id.clone()).or_default().activate();
         self.run_profile_effects(&id, effects)
+    }
+
+    /// Something on screen shows a running time.
+    fn waiting(&self) -> bool {
+        self.wizard.as_ref().is_some_and(Wizard::waiting)
+            || self.pages.values().any(ProfileState::is_busy)
     }
 
     fn show_error(&mut self, context: &str, error: &EngineError) {
@@ -1089,7 +1097,10 @@ impl Application for App {
                     concat!(env!("CARGO_PKG_REPOSITORY"), "/issues"),
                 ),
             ])
+            // libcosmic links every developer by email; the GitHub no-reply
+            // address, never a personal one.
             .developers([
+                ("stldave314", "stldave314@users.noreply.github.com"),
                 ("Aaron Honeycutt", "aaronhoneycutt@proton.me"),
                 ("Eduardo Flores", "edfloreshz@proton.me"),
             ]);
@@ -1285,6 +1296,13 @@ impl Application for App {
             )
             .map(|_| Message::SystemThemeModeChange),
             cosmic::iced::time::every(CLOCK_TICK).map(|_| Message::Tick),
+            // Running times count up only while something is running.
+            if self.waiting() {
+                cosmic::iced::time::every(crate::constants::WAITING_TICK)
+                    .map(|_| Message::WaitingTick)
+            } else {
+                Subscription::none()
+            },
         ])
     }
 
@@ -1369,6 +1387,8 @@ impl Application for App {
                 self.now = format::now();
                 self.reload_runs();
             }
+            // Only redraws, so running times count up.
+            Message::WaitingTick => {}
             Message::ScheduleFailed(detail) => {
                 self.dialog = Some(Dialog::Error(errors::describe(
                     &fl!("schedule-failed"),

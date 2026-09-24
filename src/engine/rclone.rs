@@ -13,12 +13,15 @@
 //! or changed, and removing a backup can never damage a remote the user set up
 //! for something else.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use super::error::{EngineError, ErrorKind};
 use super::location::REPOSITORY_ENTRIES;
 use super::repo::Probe;
+use crate::constants::{PROBE_TIMEOUT, RCLONE_LOOK_FLAGS};
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -61,6 +64,72 @@ fn rclone(config: &Path, args: &[&str]) -> Result<Output, EngineError> {
         })
 }
 
+/// Run rclone with Stellarshot's configuration, killing it if it has not
+/// finished within `limit`. For commands that only look: a location that does
+/// not answer must turn into an explanation, not a wait without end.
+fn rclone_within(config: &Path, args: &[&str], limit: Duration) -> Result<Output, EngineError> {
+    debug_log!(ENGINE, "rclone {} (within {limit:?})", args.join(" "));
+    let mut child = Command::new(RCLONE)
+        .arg("--config")
+        .arg(config)
+        .args(RCLONE_LOOK_FLAGS)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                EngineError::new(ErrorKind::RcloneMissing, RCLONE)
+            } else {
+                EngineError::from(err)
+            }
+        })?;
+    // Read both pipes as they fill, so a long listing cannot block rclone.
+    let read = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut bytes);
+            }
+            bytes
+        })
+    };
+    let stdout = read(
+        child
+            .stdout
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let stderr = read(
+        child
+            .stderr
+            .take()
+            .map(|p| Box::new(p) as Box<dyn Read + Send>),
+    );
+    let deadline = Instant::now() + limit;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            debug_log!(ENGINE, "rclone {} timed out", args.join(" "));
+            return Err(EngineError::new(
+                ErrorKind::TimedOut,
+                limit.as_secs().to_string(),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    Ok(Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
 /// Whether rclone is installed and runs.
 pub fn available() -> bool {
     Command::new(RCLONE)
@@ -75,7 +144,11 @@ fn stderr(output: &Output) -> String {
 
 /// What is at `remote:path`, as [`super::probe`] reports for a folder.
 pub fn probe(config: &Path, remote: &str, path: &str) -> Result<Probe, EngineError> {
-    let output = rclone(config, &["lsf", "--max-depth", "1", &target(remote, path)])?;
+    let output = rclone_within(
+        config,
+        &["lsf", "--max-depth", "1", &target(remote, path)],
+        PROBE_TIMEOUT,
+    )?;
     if !output.status.success() {
         return if output.status.code() == Some(EXIT_DIRECTORY_NOT_FOUND) {
             Ok(Probe::Empty)

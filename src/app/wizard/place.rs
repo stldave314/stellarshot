@@ -9,6 +9,7 @@
 //! always asks for a new one.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use cosmic::{Element, theme, widget};
 
@@ -67,7 +68,8 @@ pub struct Place {
     pub user_remote: Option<(usize, Option<String>)>,
     pub remote_path: String,
     pub rclone_available: Option<bool>,
-    pub checking: bool,
+    /// The destination being checked, and since when.
+    checking: Option<(Destination, Instant)>,
     probe: Option<(Destination, Result<Probe, EngineError>)>,
     /// A problem to show under the form: a failed sign-in or copy.
     pub problem: Option<String>,
@@ -144,7 +146,7 @@ impl Default for Place {
             user_remote: None,
             remote_path: default_folder(),
             rclone_available: None,
-            checking: false,
+            checking: None,
             probe: None,
             problem: None,
             preferred_drive: None,
@@ -215,6 +217,15 @@ impl Place {
         }
     }
 
+    /// When the check of the destination as it is now began, while it runs.
+    pub fn checking_since(&self) -> Option<Instant> {
+        let current = self.destination()?;
+        match &self.checking {
+            Some((checked, since)) if *checked == current => Some(*since),
+            _ => None,
+        }
+    }
+
     /// A name for the backup, from what was chosen.
     pub fn suggested_name(&self) -> Option<String> {
         match self.kind {
@@ -241,10 +252,14 @@ impl Place {
         matches!(self.kind, Kind::Server | Kind::Google | Kind::Remote)
     }
 
-    fn check(&mut self) -> Vec<Effect> {
+    /// Check the destination as it is now, unless that is already under way.
+    pub fn check(&mut self) -> Vec<Effect> {
+        if self.checking_since().is_some() {
+            return Vec::new();
+        }
         match self.destination() {
             Some(destination) => {
-                self.checking = true;
+                self.checking = Some((destination.clone(), Instant::now()));
                 vec![Effect::Probe(destination)]
             }
             None => Vec::new(),
@@ -373,8 +388,14 @@ impl Place {
             }
             Message::Check => self.check(),
             Message::Probed(destination, result) => {
+                if self
+                    .checking
+                    .as_ref()
+                    .is_some_and(|(checked, _)| *checked == destination)
+                {
+                    self.checking = None;
+                }
                 if self.destination().as_ref() == Some(&destination) {
-                    self.checking = false;
                     self.probe = Some((destination, result));
                 }
                 Vec::new()
@@ -429,8 +450,12 @@ impl Place {
         column = column.push(self.form());
 
         let verdict: Option<String> = match self.probe() {
-            None if self.checking => Some(fl!("place-checking")),
-            None => None,
+            None => self.checking_since().map(|since| {
+                fl!(
+                    "place-checking-for",
+                    time = format::duration(since.elapsed().as_secs())
+                )
+            }),
             Some(Ok(Probe::Empty)) if opening => Some(fl!("wizard-where-no-repository")),
             Some(Ok(Probe::Empty)) => Some(fl!("wizard-where-new")),
             Some(Ok(Probe::Repository)) if opening => Some(fl!("wizard-where-found")),
@@ -457,7 +482,8 @@ impl Place {
     fn form(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
         let check = widget::button::standard(fl!("place-check")).on_press_maybe(
-            (self.destination().is_some() && !self.checking).then_some(Message::Check),
+            (self.destination().is_some() && self.checking_since().is_none())
+                .then_some(Message::Check),
         );
         match self.kind {
             Kind::Folder => {
@@ -621,6 +647,31 @@ mod tests {
         // Editing a field invalidates the check.
         place.update(Message::ServerPath("backups/laptop".into()));
         assert!(place.probe().is_none());
+    }
+
+    #[test]
+    fn editing_during_a_check_does_not_leave_it_checking() {
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Server));
+        place.update(Message::Host("nas.local".into()));
+        place.update(Message::ServerPath("backups".into()));
+        let first = place.destination().unwrap();
+        assert!(matches!(
+            place.update(Message::Check).as_slice(),
+            [Effect::Probe(_)]
+        ));
+        assert!(place.checking_since().is_some());
+
+        place.update(Message::ServerPath("backups/laptop".into()));
+        assert!(
+            place.checking_since().is_none(),
+            "the new path is not being checked"
+        );
+        place.update(Message::Probed(first, Ok(Probe::Empty)));
+        assert!(
+            matches!(place.update(Message::Check).as_slice(), [Effect::Probe(_)]),
+            "the new path can be checked"
+        );
     }
 
     #[test]

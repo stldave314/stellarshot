@@ -41,6 +41,9 @@ pub enum ErrorKind {
     /// A scheduled backup found no remembered password to open the
     /// repository with.
     PasswordNotRemembered,
+    /// The storage did not answer in time. The detail is the limit, in
+    /// seconds.
+    TimedOut,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }

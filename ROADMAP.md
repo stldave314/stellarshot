@@ -111,30 +111,36 @@ A new backup engine behind one module, on the current rustic release.
       **Clean Up Now** on the page
 - [x] Déjà Dup's schedule and "Keep" setting come across on import
 
-## 0.1.x — Fixes from testing
+## 0.1.x — Fixes from testing (done)
 
-- [ ] **Cancel does nothing during a backup.** The child-process cancel is
-      tested, so look at what a real backup (and the rclone process under
-      it) does with the signal
-- [ ] **Next needs two clicks in the new-backup wizard**, then disables with
-      no feedback while it works: one click, and a visible "checking…" state
-- [ ] **Checking a Google Drive folder stalls with no feedback**: show
-      progress, and time it out with an explanation
-- [ ] **Google Drive backups are far slower than Déjà Dup's**, which also runs
-      restic through rclone: compare the rclone flags and rustic's pack sizes
-      (`set_datapack_size`, which rustic already exposes) and tune them, and
-      measure rustic_backend's direct connections against rclone
-- [ ] **Progress appears to stall** (at 560 MB, then 665 MB, for a long time):
-      keep the card moving and say what is happening while bytes are not
-- [ ] **Wizard layout**: focused fields are clipped on the left and every row
+- [x] **Cancel does nothing during a backup.** rustic starts rclone with the
+      backup's output inherited; killing the backup left rclone holding it
+      open. The backup runs in its own process group and Cancel stops all of
+      it
+- [x] **Next needs two clicks in the new-backup wizard**, then disables with
+      no feedback while it works: Next checks the destination itself and
+      moves on, counting the seconds on the button
+- [x] **Checking a Google Drive folder stalls with no feedback**: the check
+      counts its seconds, gives up after a minute with an explanation, and
+      rclone retries less
+- [x] **Google Drive backups are far slower than Déjà Dup's**: rustic uploads
+      one pack at a time where restic uses five connections. Four uploads now
+      run at once (without changing rustic, and never writing an index
+      before its packs), each pack goes to Drive in one request, and deleted
+      data skips Drive's trash. Still to measure on a real account: the
+      speed against Déjà Dup, and rustic_backend's direct connections
+      against rclone (0.4). Déjà Dup also has a Google client ID of its own,
+      where Stellarshot shares rclone's
+- [x] **Progress appears to stall** (at 560 MB, then 665 MB, for a long time):
+      the card counts its running time, shows what has been stored, and says
+      what it is waiting for after 15 seconds without movement
+- [x] **Wizard layout**: focused fields are clipped on the left and every row
       is covered by the scrollbar on the right
-- [ ] **The estimate as arithmetic**: "45 GB − 12 GB excluded = 33 GB", plus
-      the summary section from the design mockups
-- [ ] **Explain "Smart" exactly**, in the README and in the app, with no
-      ambiguity: the newest snapshot of each calendar day, week and month
-      that has one; days without a backup do not count; this computer's
-      snapshots only, grouped by folders; everything else is forgotten
-- [ ] Add stldave314 to the About page's authors
+- [x] **The estimate as arithmetic**: "45 GB included − 12 GB excluded =
+      33 GB", exact
+- [x] **Explain "Smart" exactly**, in the README and in the app, with tests
+      for every rule
+- [x] Add stldave314 to the About page's authors
 
 ## 0.2 — See what is going on
 
@@ -221,6 +227,8 @@ A new backup engine behind one module, on the current rustic release.
       (rustic_backend's `rest` feature)
 - [ ] **Several destinations for one backup** (cloud and a USB drive), each
       with its own "in sync" state, using rustic's repository `copy`
+- [ ] **Stellarshot's own Google client ID**, instead of rclone's shared one,
+      which Google limits for all rclone users together
 - [ ] **One Google sign-in per account**, shared by every backup that uses
       it, so a restore needs one sign-in per account rather than per backup
 - [ ] **Google sign-in lifetime**: find out when rclone's Google tokens can

@@ -24,6 +24,17 @@ pub fn bytes(count: u64) -> String {
     }
 }
 
+/// A running time as a clock shows it: `0:42`, `4:07`, `1:02:03`. Numbers
+/// and colons read the same in every language, so it needs no translation.
+pub fn duration(seconds: u64) -> String {
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
 /// A Unix time as a local date and time, `2026-09-23 14:02`.
 pub fn local_time(seconds: i64) -> String {
     match Timestamp::from_second(seconds) {
@@ -79,6 +90,14 @@ pub fn now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn durations_read_like_a_clock() {
+        assert_eq!(duration(0), "0:00");
+        assert_eq!(duration(42), "0:42");
+        assert_eq!(duration(247), "4:07");
+        assert_eq!(duration(3723), "1:02:03");
+    }
 
     #[test]
     fn sizes_use_decimal_units() {

@@ -894,3 +894,14 @@ fn prune_reclaims_forgotten_data() {
         "the kept snapshot is whole"
     );
 }
+
+#[test]
+fn lock_keys_are_stable_across_versions() {
+    // Every process writing to a repository must name its lock the same way,
+    // including an older Stellarshot still running during an upgrade. The
+    // value is the first 8 bytes of `printf /mnt/backup/home | sha256sum`.
+    assert_eq!(
+        Location::local("/mnt/backup/home").key(),
+        "556651669569762a"
+    );
+}

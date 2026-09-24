@@ -205,19 +205,34 @@ pub fn copy_user_remote(config: &Path, user_remote: &str, name: &str) -> Result<
     append_section(config, name, &body)
 }
 
-/// Add `[name]` with `body` to the configuration file, creating it private.
+/// Add `[name]` with `body` to the configuration file.
 fn append_section(config: &Path, name: &str, body: &str) -> Result<(), EngineError> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Some(dir) = config.parent() {
-        std::fs::create_dir_all(dir)?;
+    make_private(config)?;
+    let mut file = std::fs::OpenOptions::new().append(true).open(config)?;
+    writeln!(file, "\n[{name}]\n{}", body.trim())?;
+    Ok(())
+}
+
+/// Make sure the configuration file exists and only its owner can read it,
+/// *before* anything secret is written to it. Opening a file for writing
+/// keeps the mode it already has, and rclone does the same, so a file that
+/// had become readable by others (copied, restored from a backup) would
+/// otherwise receive a token first and be tightened only afterwards.
+fn make_private(config: &Path) -> Result<(), EngineError> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+    if let Some(dir) = config.parent().filter(|dir| !dir.exists()) {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
     }
-    let mut file = std::fs::OpenOptions::new()
+    std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
         .open(config)?;
-    writeln!(file, "\n[{name}]\n{}", body.trim())?;
+    std::fs::set_permissions(config, std::fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
@@ -231,13 +246,10 @@ pub fn sign_in(
     provider: &str,
     params: &[&str],
 ) -> Result<(), EngineError> {
-    if let Some(dir) = config.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+    make_private(config)?;
     let mut args = vec!["config", "create", name, provider];
     args.extend_from_slice(params);
     let output = rclone(config, &args)?;
-    restrict(config);
     if output.status.success() {
         Ok(())
     } else {
@@ -255,15 +267,51 @@ pub fn delete_remote(config: &Path, name: &str) -> Result<(), EngineError> {
     }
 }
 
-/// The configuration holds tokens: keep it readable by the user only.
-fn restrict(config: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(config, std::fs::Permissions::from_mode(0o600));
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_new_configuration_is_private_from_the_start() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("stellarshot/rclone.conf");
+
+        append_section(&config, "copied", "type = drive\ntoken = secret").unwrap();
+
+        assert_eq!(mode(&config), 0o600);
+        assert_eq!(mode(config.parent().unwrap()), 0o700);
+    }
+
+    #[test]
+    fn a_readable_configuration_is_tightened_before_a_token_goes_in() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("rclone.conf");
+        std::fs::write(&config, "[old]\ntype = local\n").unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            mode(&config),
+            0o644,
+            "the fixture starts readable by others"
+        );
+
+        make_private(&config).unwrap();
+        assert_eq!(mode(&config), 0o600, "tightened before anything is written");
+
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+        append_section(&config, "copied", "token = secret").unwrap();
+        assert_eq!(mode(&config), 0o600, "appending tightens it first too");
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(
+            text.contains("[old]") && text.contains("[copied]"),
+            "nothing lost"
+        );
+    }
 
     #[test]
     fn listings_are_classified_like_folders() {

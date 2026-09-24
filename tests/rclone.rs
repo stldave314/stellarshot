@@ -134,3 +134,20 @@ fn an_unreachable_remote_is_unavailable() {
 
     assert_eq!(err.kind, engine::ErrorKind::DestinationUnavailable);
 }
+
+#[test]
+fn signing_in_never_writes_into_a_readable_configuration() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::TempDir::new().unwrap();
+    let config = dir.path().join("rclone.conf");
+    std::fs::write(&config, "[old]\ntype = local\n").unwrap();
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    // `local` needs no browser; a cloud sign-in writes its token the same way.
+    stellarshot::engine::rclone::sign_in(&config, "probe", "local", &[]).unwrap();
+
+    let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "rclone keeps an existing file's mode");
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("[probe]") && text.contains("[old]"));
+}

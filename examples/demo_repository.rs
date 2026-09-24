@@ -3,7 +3,8 @@
 //! Build a demo repository for screenshots: `scripts/screenshots.sh` runs
 //! this. Creates a repository at `<repository>` and takes `<count>` real
 //! snapshots of `<source>`, changing a file between them so each one has
-//! something new in it.
+//! something new in it. They are dated a day apart, ending two hours ago, so
+//! the history looks like a backup that has been running for a while.
 //!
 //! Usage: cargo run --example demo_repository -- <repository> <source> <count>
 //! The password is read from the `DEMO_PASSWORD` environment variable.
@@ -27,13 +28,17 @@ fn main() {
     engine::init(&location, &secret).expect("the repository could not be created");
 
     let source = PathBuf::from(source);
-    let request = BackupRequest {
+    let mut request = BackupRequest {
         sources: vec![source.clone()],
         excludes: vec![source.join(".cache"), source.join("Downloads")],
         exclude_patterns: vec!["node_modules".into()],
         one_file_system: true,
+        time: None,
     };
+    let now = jiff::Timestamp::now().as_second();
     for round in 0..count {
+        let days_ago = (count - 1 - round) as i64;
+        request.time = Some(now - 2 * 3600 - days_ago * 86_400);
         std::fs::write(
             source.join("Documents/notes.odt"),
             format!("notes, revision {round}"),

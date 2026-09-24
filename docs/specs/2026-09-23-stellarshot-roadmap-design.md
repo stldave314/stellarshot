@@ -95,7 +95,7 @@ Destination =
   - Include `$HOME`.
   - Exclude `~/.cache`, `~/.local/share/Trash` and `~/Downloads`.
   - `one_file_system = true`, `Schedule::Daily`, `Retention::Smart`.
-- **`Custom(KeepSpec)`** covers keep-last/daily/weekly/monthly/yearly and `keep_within`, which maps onto rustic's `KeepOptions`. `keep_within` is what Déjà Dup's `delete-after` imports into.
+- **`Custom(KeepSpec)`** covers keep-last/daily/weekly/monthly/yearly and `keep_within`, which maps onto rustic's `KeepOptions`. `keep_within` is what Déjà Dup's `delete-after` imports into. *(Changed in M5: `Custom(KeepSpec)` became `KeepFor { days }`, Déjà Dup's "Keep at least…" choice. Arbitrary rules remain available through `rustic forget`. `keep_within` is measured from the newest snapshot, so a backup that has not run for a while keeps its history. Run facts such as `last_check` live in cosmic-config's state store, one key per profile, so a scheduled run never rewrites the profile list.)*
 - **Passwords never go in the config.** They live only in the keyring, under `stellarshot/<profile-id>`.
 - **rclone configuration is our own.** It lives at `~/.config/stellarshot/rclone.conf` and is passed through `RCLONE_CONFIG`. We never read or write `~/.config/rclone/rclone.conf`. The Déjà Dup importer *copies* a remote section into ours when needed.
 - **Tuning values** (progress interval, size-scan debounce, rclone timeouts, the default exclude list, the check interval) go in `src/constants.rs`, never in runtime config.

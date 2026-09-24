@@ -1,13 +1,78 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Repository integrity checks.
+//! Keeping a repository healthy: integrity checks, forgetting old snapshots
+//! under a retention policy, and pruning the data no snapshot needs.
 
-use rustic_core::CheckOptions;
+use rustic_core::{
+    CheckOptions, ForgetGroups, Grouped, KeepOptions, PruneOptions, SnapshotGroupCriterion,
+};
+use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
 use crate::debug::ENGINE;
 use crate::debug_log;
+
+/// Which snapshots to keep. A snapshot is kept if any rule keeps it; with no
+/// rules at all, everything is kept.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeepRules {
+    /// The most recent `n` snapshots.
+    pub last: Option<u32>,
+    /// The newest snapshot of each of the last `n` hours, days, … that have
+    /// one.
+    pub hourly: Option<u32>,
+    pub daily: Option<u32>,
+    pub weekly: Option<u32>,
+    pub monthly: Option<u32>,
+    pub yearly: Option<u32>,
+    /// Every snapshot taken in the last `n` days.
+    pub within_days: Option<u32>,
+}
+
+impl KeepRules {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn options(&self) -> KeepOptions {
+        let count = |n: Option<u32>| n.map(|n| i32::try_from(n).unwrap_or(i32::MAX));
+        let mut options = KeepOptions::default();
+        options.keep_last = count(self.last);
+        options.keep_hourly = count(self.hourly);
+        options.keep_daily = count(self.daily);
+        options.keep_weekly = count(self.weekly);
+        options.keep_monthly = count(self.monthly);
+        options.keep_yearly = count(self.yearly);
+        options.keep_within = self
+            .within_days
+            .map(|days| jiff::Span::new().days(i64::from(days)));
+        options
+    }
+}
+
+/// What forgetting did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForgetReport {
+    /// Snapshots removed from the repository's list.
+    pub removed: u64,
+    /// This computer's snapshots that the rules kept.
+    pub kept: u64,
+}
+
+/// What pruning did.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruneReport {
+    /// Bytes of data no snapshot needs any more. rustic keeps unused data for
+    /// a day before deleting it, in case a backup elsewhere is still using
+    /// it, so some of this is freed by the next prune rather than this one.
+    pub bytes: u64,
+}
+
+/// The name this computer puts on its snapshots.
+pub fn hostname() -> String {
+    gethostname::gethostname().to_string_lossy().into_owned()
+}
 
 impl Repo {
     /// Verify the repository's structure: that every snapshot, tree and index
@@ -18,5 +83,52 @@ impl Repo {
         results
             .is_ok()
             .map_err(|err| EngineError::new(ErrorKind::RepositoryDamaged, err.to_string()))
+    }
+
+    /// Forget the snapshots `rules` do not keep, considering only those
+    /// taken on `host`. Another computer backing up to the same repository
+    /// has its own policy, and its snapshots are never touched.
+    ///
+    /// Snapshots are grouped by host, label and folders, as restic does, so
+    /// that changing what a backup covers starts a new history instead of
+    /// counting against the old one.
+    pub fn forget(&self, rules: &KeepRules, host: &str) -> Result<ForgetReport, EngineError> {
+        let snapshots = self
+            .inner
+            .get_matching_snapshots(|snapshot| snapshot.hostname == host)?;
+        let total = snapshots.len() as u64;
+        if rules.is_empty() {
+            return Ok(ForgetReport {
+                removed: 0,
+                kept: total,
+            });
+        }
+        let grouped = Grouped::from_items(snapshots, SnapshotGroupCriterion::default());
+        let ids = ForgetGroups::from_grouped_snapshots_with_retention(
+            grouped,
+            &rules.options(),
+            &jiff::Zoned::now(),
+        )?
+        .into_forget_ids();
+        self.inner.delete_snapshots(&ids)?;
+        let removed = ids.len() as u64;
+        debug_log!(ENGINE, "forget on {host}: removed {removed} of {total}");
+        Ok(ForgetReport {
+            removed,
+            kept: total - removed,
+        })
+    }
+
+    /// Remove the data no snapshot needs any more.
+    pub fn prune(&self) -> Result<PruneReport, EngineError> {
+        let options = PruneOptions::default();
+        let plan = self.inner.prune_plan(&options)?;
+        // Unused data in packs that go entirely, plus the unused part of
+        // packs that are rewritten without it.
+        let sizes = plan.stats.size_sum();
+        let bytes = sizes.remove + sizes.repackrm;
+        self.inner.prune(&options, plan)?;
+        debug_log!(ENGINE, "prune: {bytes} bytes unused");
+        Ok(PruneReport { bytes })
     }
 }

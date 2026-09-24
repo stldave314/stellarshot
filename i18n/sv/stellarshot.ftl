@@ -278,3 +278,76 @@ browse-failed = Säkerhetskopian kunde inte läsas.
 open-copy-failed = Det gick inte att öppna en kopia av filen.
 select-scope-folder = Välj en mapp att leta i
 select-restore-folder = Välj vart du vill återställa
+
+# Automation
+error-password-not-remembered = Schemalagda säkerhetskopieringar behöver lösenordet sparat i nyckelringen. Öppna säkerhetskopian, ange lösenordet med ”Kom ihåg lösenordet” påslaget, så körs nästa schemalagda säkerhetskopiering.
+change = Ändra…
+schedule-row = När den körs
+check-row = Leta efter skador
+check-row-last = Senast kontrollerad { $when }
+check-row-never = Aldrig kontrollerad
+check-now = Kontrollera nu
+check-again = Kontrollera igen
+check-failed = Kontrollen slutfördes inte.
+check-passed-title = Inga skador hittades
+check-passed-body = Varje ögonblicksbild, mapp och indexpost i säkerhetskopian finns och stämmer.
+clean-up-row = Frigör utrymme
+clean-up-row-description = Glömmer ögonblicksbilder som inställningen ”Behåll” inte längre behöver och tar bort data som ingen ögonblicksbild använder.
+clean-up-now = Städa nu
+clean-up-failed = Städningen slutfördes inte.
+clean-up-cannot-stop = Frigörandet kan inte stoppas när det har börjat.
+clean-up-done-title = Städningen är klar
+clean-up-done-body = { $count ->
+    [one] Glömde 1 ögonblicksbild.
+   *[other] Glömde { $count } ögonblicksbilder.
+} { $size } behövs inte längre.
+progress-cleaning-up = Frigör utrymme…
+damaged-title = En kontroll hittade skador i säkerhetskopian
+damaged-body = Automatiskt frigörande av utrymme är pausat tills en kontroll godkänns. Ögonblicksbilderna kan fortfarande gå att återställa; för säkerhets skull, starta en ny säkerhetskopia någon annanstans.
+failed-just-now = alldeles nyss
+failed-minutes-ago = { $count ->
+    [one] för en minut sedan
+   *[other] för { $count } minuter sedan
+}
+failed-hours-ago = { $count ->
+    [one] för en timme sedan
+   *[other] för { $count } timmar sedan
+}
+failed-days-ago = { $count ->
+    [one] i går
+   *[other] för { $count } dagar sedan
+}
+scheduled-backup-failed = Den automatiska säkerhetskopieringen misslyckades ({ $when })
+scheduled-cleanup-failed = Städningen efter den automatiska säkerhetskopieringen misslyckades ({ $when })
+scheduled-check-failed = Den automatiska kontrollen misslyckades ({ $when })
+schedule-failed = Schemat kunde inte ställas in.
+schedule-manual = Säkerhetskopierar bara när du trycker på Säkerhetskopiera nu
+schedule-hourly = Säkerhetskopierar automatiskt varje timme
+schedule-daily = Säkerhetskopierar automatiskt varje dag
+schedule-weekly = Säkerhetskopierar automatiskt varje vecka
+frequency-hourly = Varje timme
+frequency-daily = Varje dag
+frequency-weekly = Varje vecka
+keep-smart = Smart (rekommenderas)
+keep-3-months = Minst 3 månader
+keep-6-months = Minst 6 månader
+keep-1-year = Minst ett år
+keep-days = Minst { $days } dagar
+keep-forever = För alltid
+keep-smart-description = En ögonblicksbild om dagen i en vecka, en i veckan i en månad och en i månaden i ett år.
+keep-forever-description = Varje ögonblicksbild behålls. Säkerhetskopian bara växer.
+keep-for-description = Varje ögonblicksbild från de { $days } dagarna före den senaste, och äldre allteftersom.
+wizard-schedule-title = När ”{ $name }” körs
+wizard-when-intro = Säkerhetskopior kan köras av sig själva. Är datorn avstängd eller i vila vid den tiden körs säkerhetskopieringen så snart du är tillbaka.
+wizard-automatic = Säkerhetskopiera automatiskt
+wizard-automatic-description = Körs i bakgrunden, även när Stellarshot är stängt.
+wizard-frequency = Hur ofta
+wizard-keep = Gamla ögonblicksbilder
+wizard-keep-label = Behåll
+wizard-prune = Frigör utrymme automatiskt
+wizard-prune-description = Tar bort data som ingen ögonblicksbild längre behöver. Låt det vara av om en annan dator säkerhetskopierar till samma plats.
+wizard-remember-for-schedule = Schemalagda säkerhetskopieringar kan bara köras med sparat lösenord.
+notify-backup-failed = Säkerhetskopian ”{ $name }” misslyckades
+notify-cleanup-failed = Städningen av ”{ $name }” misslyckades
+notify-check-failed = Kontrollen av ”{ $name }” misslyckades
+notify-open = Öppna

@@ -28,3 +28,12 @@ pub const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// Secret Service, or one waiting on a prompt nobody can see) turns into
 /// "not remembered" instead of a request that never ends.
 pub const KEYRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How often a scheduled backup also checks the repository for damage. A
+/// check reads every index and tree, which is slow on a large backup behind
+/// a slow connection, so it runs after a backup at most this often.
+pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30 * 86_400);
+
+/// How long a scheduled run waits for the user to click its failure
+/// notification before exiting. Clicking opens the backup in Stellarshot.
+pub const NOTIFICATION_WAIT: std::time::Duration = std::time::Duration::from_secs(15 * 60);

@@ -78,6 +78,13 @@ CONFIG="$DEMO/config"
 mkdir -p "$DEMO/runtime"
 chmod 700 "$DEMO/runtime"
 
+# The demo backup is scheduled, and Stellarshot installs timers for
+# scheduled backups when it starts. A stand-in systemctl keeps the demo from
+# touching the real user session's systemd.
+mkdir -p "$DEMO/bin"
+printf '#!/bin/sh\nexit 0\n' > "$DEMO/bin/systemctl"
+chmod +x "$DEMO/bin/systemctl"
+
 run_app() {
     # $1: screenshot name; the rest: arguments for Stellarshot.
     local name="$1"
@@ -86,7 +93,8 @@ run_app() {
         return
     fi
     env -u WAYLAND_DISPLAY HOME="$HOME_DIR" XDG_CONFIG_HOME="$CONFIG" \
-        XDG_RUNTIME_DIR="$DEMO/runtime" "$BIN" "$@" >/dev/null 2>&1 &
+        XDG_STATE_HOME="$DEMO/state" XDG_RUNTIME_DIR="$DEMO/runtime" \
+        PATH="$DEMO/bin:$PATH" "$BIN" "$@" >/dev/null 2>&1 &
     APP_PID=$!
     local window
     window=$(xdotool search --sync --onlyvisible --pid "$APP_PID" | head -1)
@@ -119,8 +127,8 @@ cat > "$SETTINGS/profiles" <<RON
         excludes: ["$HOME_DIR/.cache", "$HOME_DIR/Downloads"],
         exclude_patterns: ["node_modules"],
         one_file_system: true,
-        schedule: Manual,
-        retention: KeepForever,
+        schedule: Daily,
+        retention: Smart,
         last_success: None,
     ),
 ]

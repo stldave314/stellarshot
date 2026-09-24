@@ -2,7 +2,7 @@
 
 //! `stellarshot --run <operation>`: one write operation in its own process.
 //!
-//! Backups, restores and checks run here rather than in the window's process
+//! Backups, restores, checks and clean-ups run here rather than in the window's process
 //! because rustic cannot be interrupted once an operation starts. A child
 //! process can be: killing it is safe, because the snapshot file is written
 //! last and an interrupted backup leaves only unreferenced data behind.
@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::debug::ENGINE;
 use crate::engine::{
-    self, BackupReport, BackupRequest, EngineError, ErrorKind, Location, ProgressEvent,
-    ProgressSink, RestorePreview, RestoreRequest, Secret, lock,
+    self, BackupReport, BackupRequest, EngineError, ErrorKind, ForgetReport, KeepRules, Location,
+    ProgressEvent, ProgressSink, PruneReport, RestorePreview, RestoreRequest, Secret, lock,
 };
 use crate::{debug_log, error_log};
 
@@ -33,6 +33,8 @@ pub enum Operation {
     Restore,
     Check,
     DeleteSnapshots,
+    /// Forget snapshots under the retention rules, then prune if asked.
+    Maintain,
 }
 
 impl Operation {
@@ -42,6 +44,7 @@ impl Operation {
             Self::Restore => "restore",
             Self::Check => "check",
             Self::DeleteSnapshots => "delete-snapshots",
+            Self::Maintain => "maintain",
         }
     }
 
@@ -51,6 +54,7 @@ impl Operation {
             Self::Restore,
             Self::Check,
             Self::DeleteSnapshots,
+            Self::Maintain,
         ]
         .into_iter()
         .find(|op| op.as_arg() == arg)
@@ -78,6 +82,30 @@ pub struct Job {
     /// For `delete-snapshots`.
     #[serde(default)]
     pub ids: Vec<String>,
+    /// For `maintain`: the retention rules to forget by, if any.
+    #[serde(default)]
+    pub keep: Option<KeepRules>,
+    /// For `maintain`: prune after forgetting.
+    #[serde(default)]
+    pub prune: bool,
+}
+
+impl Job {
+    /// A job for `repository` with nothing else set; each operation fills in
+    /// the fields it reads.
+    pub fn new(repository: Location, password: Secret) -> Self {
+        Self {
+            repository,
+            password,
+            request: None,
+            restore: None,
+            snapshot: None,
+            destination: None,
+            ids: Vec::new(),
+            keep: None,
+            prune: false,
+        }
+    }
 }
 
 /// One line of the child's output.
@@ -91,6 +119,10 @@ pub enum Event {
         report: Option<BackupReport>,
         #[serde(default)]
         restored: Option<RestorePreview>,
+        #[serde(default)]
+        forgotten: Option<ForgetReport>,
+        #[serde(default)]
+        pruned: Option<PruneReport>,
     },
     Error {
         error: EngineError,
@@ -99,17 +131,27 @@ pub enum Event {
 
 /// Writes events to stdout, one JSON object per line, and mirrors progress to
 /// the repository's progress file for any window that did not start this run.
-struct Output {
-    stdout: Mutex<std::io::Stdout>,
+pub(crate) struct Output {
+    /// `None` for a scheduled run, whose stdout is the journal: progress
+    /// many times a second does not belong there.
+    stdout: Option<Mutex<std::io::Stdout>>,
     progress_file: PathBuf,
 }
 
 impl Output {
+    /// Progress to the repository's progress file only.
+    pub(crate) fn progress_file_only(location: &Location) -> Self {
+        Self {
+            stdout: None,
+            progress_file: lock::progress_path(location),
+        }
+    }
+
     fn emit(&self, event: &Event) {
         let Ok(line) = serde_json::to_string(event) else {
             return;
         };
-        if let Ok(mut stdout) = self.stdout.lock() {
+        if let Some(Ok(mut stdout)) = self.stdout.as_ref().map(Mutex::lock) {
             // A closed stdout (the window went away) must not stop the job.
             let _ = writeln!(stdout, "{line}");
             let _ = stdout.flush();
@@ -144,14 +186,16 @@ fn missing(what: &str) -> EngineError {
     EngineError::new(ErrorKind::Internal, format!("the job has no {what}"))
 }
 
-/// Run `operation` for `job`, holding the repository's write lock throughout.
 /// What a finished operation reports.
 #[derive(Debug, Default)]
 pub struct Outcome {
     pub report: Option<BackupReport>,
     pub restored: Option<RestorePreview>,
+    pub forgotten: Option<ForgetReport>,
+    pub pruned: Option<PruneReport>,
 }
 
+/// Run `operation` for `job`, holding the repository's write lock throughout.
 pub fn run(
     operation: Operation,
     job: Job,
@@ -186,6 +230,18 @@ pub fn run(
         },
         Operation::Check => repo.check().map(|()| Outcome::default()),
         Operation::DeleteSnapshots => repo.delete_snapshots(&job.ids).map(|()| Outcome::default()),
+        Operation::Maintain => {
+            let forgotten = job
+                .keep
+                .map(|rules| repo.forget(&rules, &engine::hostname()))
+                .transpose()?;
+            let pruned = job.prune.then(|| repo.prune()).transpose()?;
+            Ok(Outcome {
+                forgotten,
+                pruned,
+                ..Outcome::default()
+            })
+        }
     }
 }
 
@@ -193,7 +249,9 @@ pub fn run(
 /// after `--run`.
 pub fn main(args: &[String]) -> ExitCode {
     let Some(operation) = args.first().and_then(|arg| Operation::from_arg(arg)) else {
-        eprintln!("usage: stellarshot --run <backup|restore|check|delete-snapshots> < job.json");
+        eprintln!(
+            "usage: stellarshot --run <backup|restore|check|delete-snapshots|maintain> < job.json"
+        );
         return ExitCode::from(2);
     };
 
@@ -209,7 +267,7 @@ pub fn main(args: &[String]) -> ExitCode {
     drop(input);
 
     let output = Arc::new(Output {
-        stdout: Mutex::new(std::io::stdout()),
+        stdout: Some(Mutex::new(std::io::stdout())),
         progress_file: job
             .as_ref()
             .map(|job| lock::progress_path(&job.repository))
@@ -222,6 +280,8 @@ pub fn main(args: &[String]) -> ExitCode {
             output.emit(&Event::Done {
                 report: outcome.report,
                 restored: outcome.restored,
+                forgotten: outcome.forgotten,
+                pruned: outcome.pruned,
             });
             ExitCode::SUCCESS
         }

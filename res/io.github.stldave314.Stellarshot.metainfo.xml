@@ -16,11 +16,12 @@
       command-line tools even without this app.
     </p>
     <p>
-      Set up several independent backups, each with its own folders and
-      destination. A setup wizard shows exactly how much will be backed up,
-      with excluded folders subtracted. Backups run in the background with
-      progress and Cancel, and passwords can be remembered in the desktop
-      keyring.
+      Set up several independent backups, each with its own folders,
+      destination and schedule. A setup wizard shows exactly how much will be
+      backed up, with excluded folders subtracted. Backups run hourly, daily or
+      weekly in the background, catch up after the computer was off, clean up
+      old snapshots under a retention policy, check themselves for damage, and
+      notify you if something fails.
     </p>
     <p>
       Getting files back happens inside the app: browse any snapshot, search

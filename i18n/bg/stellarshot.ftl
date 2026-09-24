@@ -278,3 +278,76 @@ browse-failed = Това копие не можа да бъде прочетен
 open-copy-failed = Не можа да се отвори копие на този файл.
 select-scope-folder = Изберете папка за търсене
 select-restore-folder = Изберете къде да се възстанови
+
+# Automation
+error-password-not-remembered = Планираните архивирания изискват паролата да е запомнена в ключодържателя. Отворете архива, въведете паролата му с включено „Запомняне на паролата“ и следващото планирано архивиране ще се изпълни.
+change = Промяна…
+schedule-row = Кога се изпълнява
+check-row = Проверка за повреди
+check-row-last = Последна проверка { $when }
+check-row-never = Никога не е проверявано
+check-now = Проверка сега
+check-again = Нова проверка
+check-failed = Проверката не завърши.
+check-passed-title = Не са открити повреди
+check-passed-body = Всяко моментно състояние, папка и запис в индекса на този архив е налице и е съгласувано.
+clean-up-row = Освобождаване на място
+clean-up-row-description = Забравя моментните състояния, които настройката „Пазене“ вече не изисква, и изтрива данни, които не се използват.
+clean-up-now = Почистване сега
+clean-up-failed = Почистването не завърши.
+clean-up-cannot-stop = Освобождаването на място не може да бъде спряно, след като започне.
+clean-up-done-title = Почистването приключи
+clean-up-done-body = { $count ->
+    [one] Забравено е 1 моментно състояние.
+   *[other] Забравени са { $count } моментни състояния.
+} { $size } вече не са нужни.
+progress-cleaning-up = Освобождаване на място…
+damaged-title = Проверка откри повреда в този архив
+damaged-body = Автоматичното освобождаване на място е спряно, докато проверка не премине успешно. Моментните състояния може все още да се възстановяват; за всеки случай започнете нов архив на друго място.
+failed-just-now = току-що
+failed-minutes-ago = { $count ->
+    [one] преди минута
+   *[other] преди { $count } минути
+}
+failed-hours-ago = { $count ->
+    [one] преди час
+   *[other] преди { $count } часа
+}
+failed-days-ago = { $count ->
+    [one] вчера
+   *[other] преди { $count } дни
+}
+scheduled-backup-failed = Автоматичното архивиране не успя ({ $when })
+scheduled-cleanup-failed = Почистването след автоматичното архивиране не успя ({ $when })
+scheduled-check-failed = Автоматичната проверка не успя ({ $when })
+schedule-failed = Графикът не можа да бъде настроен.
+schedule-manual = Архивира само когато натиснете „Резервно копие сега“
+schedule-hourly = Архивира автоматично всеки час
+schedule-daily = Архивира автоматично всеки ден
+schedule-weekly = Архивира автоматично всяка седмица
+frequency-hourly = Всеки час
+frequency-daily = Всеки ден
+frequency-weekly = Всяка седмица
+keep-smart = Интелигентно (препоръчително)
+keep-3-months = Поне 3 месеца
+keep-6-months = Поне 6 месеца
+keep-1-year = Поне година
+keep-days = Поне { $days } дни
+keep-forever = Завинаги
+keep-smart-description = По едно моментно състояние на ден за седмица, по едно на седмица за месец и по едно на месец за година.
+keep-forever-description = Всяко моментно състояние се пази. Архивът само расте.
+keep-for-description = Всяко моментно състояние от { $days } дни преди най-новото, а по-старите постепенно отпадат.
+wizard-schedule-title = Кога се изпълнява „{ $name }“
+wizard-when-intro = Архивирането може да се изпълнява само. Ако компютърът е изключен или заспал по това време, архивирането се изпълнява веднага щом се върнете.
+wizard-automatic = Автоматично архивиране
+wizard-automatic-description = Изпълнява се във фонов режим, дори когато Stellarshot е затворен.
+wizard-frequency = Колко често
+wizard-keep = Стари моментни състояния
+wizard-keep-label = Пазене
+wizard-prune = Автоматично освобождаване на място
+wizard-prune-description = Изтрива данни, които вече не са нужни. Оставете изключено, ако друг компютър архивира на същото място.
+wizard-remember-for-schedule = Планираните архивирания могат да се изпълняват само със запомнена парола.
+notify-backup-failed = Архивирането „{ $name }“ не успя
+notify-cleanup-failed = Почистването на „{ $name }“ не успя
+notify-check-failed = Проверката на „{ $name }“ не успя
+notify-open = Отваряне

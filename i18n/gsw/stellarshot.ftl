@@ -278,3 +278,76 @@ browse-failed = Die Sicherig hät nöd chöne gläse wärde.
 open-copy-failed = Es hät kei Kopie vo dere Datei chöne göffnet wärde.
 select-scope-folder = Wähl en Ordner zum Durchsueche
 select-restore-folder = Wähl, wohi widerhergstellt werde söll
+
+# Automation
+error-password-not-remembered = Planti Sicherige bruuched s Passwort im Schlüsselbund. Öffne d Sicherig, gib ihres Passwort mit «Passwort merke» ii, denn lauft di nächst plant Sicherig.
+change = Ändere …
+schedule-row = Wänn si lauft
+check-row = Uf Schäde prüefe
+check-row-last = Zletscht prüeft { $when }
+check-row-never = No nie prüeft
+check-now = Jetzt prüefe
+check-again = Nomal prüefe
+check-failed = D Prüefig isch nöd fertig worde.
+check-passed-title = Kei Schäde gfunde
+check-passed-body = Jedi Momentuufnahm, jede Ordner und jede Indexiitrag vo dere Sicherig isch da und stimmt.
+clean-up-row = Platz freigäh
+clean-up-row-description = Vergisst Momentuufnahme, wo d Iistellig «Bhalte» nüme bruucht, und löscht Date, wo kei Momentuufnahm bruucht.
+clean-up-now = Jetzt ufruume
+clean-up-failed = S Ufruume isch nöd fertig worde.
+clean-up-cannot-stop = S Freigäh vo Platz cha nach em Start nöd aghalte wärde.
+clean-up-done-title = Ufruume fertig
+clean-up-done-body = { $count ->
+    [one] 1 Momentuufnahm vergässe.
+   *[other] { $count } Momentuufnahme vergässe.
+} { $size } wärded nüme bruucht.
+progress-cleaning-up = Platz wird freigäh …
+damaged-title = E Prüefig hät Schäde i dere Sicherig gfunde
+damaged-body = S automatische Freigäh vo Platz isch pausiert, bis e Prüefig besteht. Momentuufnahme lönd sich vilicht no widerherstelle; sicherheitshalber fang e neui Sicherig amene andere Ort aa.
+failed-just-now = grad eben
+failed-minutes-ago = { $count ->
+    [one] vor ere Minute
+   *[other] vor { $count } Minute
+}
+failed-hours-ago = { $count ->
+    [one] vor ere Stund
+   *[other] vor { $count } Stunde
+}
+failed-days-ago = { $count ->
+    [one] geschter
+   *[other] vor { $count } Täg
+}
+scheduled-backup-failed = Di automatisch Sicherig isch fählgschlage ({ $when })
+scheduled-cleanup-failed = S Ufruume nach de automatische Sicherig isch fählgschlage ({ $when })
+scheduled-check-failed = Di automatisch Prüefig isch fählgschlage ({ $when })
+schedule-failed = De Zitplan hät nöd chöne iigrichtet wärde.
+schedule-manual = Sicheret nur, wänn du «Jetzt sichere» drucksch
+schedule-hourly = Sicheret automatisch jedi Stund
+schedule-daily = Sicheret automatisch jede Tag
+schedule-weekly = Sicheret automatisch jedi Wuche
+frequency-hourly = Jedi Stund
+frequency-daily = Jede Tag
+frequency-weekly = Jedi Wuche
+keep-smart = Intelligent (empfohle)
+keep-3-months = Mindestens 3 Mönet
+keep-6-months = Mindestens 6 Mönet
+keep-1-year = Mindestens es Jahr
+keep-days = Mindestens { $days } Täg
+keep-forever = Für immer
+keep-smart-description = Ei Momentuufnahm pro Tag für e Wuche, eini pro Wuche für en Monet und eini pro Monet für es Jahr.
+keep-forever-description = Jedi Momentuufnahm wird bhalte. D Sicherig wachst nur.
+keep-for-description = Jedi Momentuufnahm us de { $days } Täg vor de neuschte, älteri wärded nach und nach entfernt.
+wizard-schedule-title = Wänn «{ $name }» lauft
+wizard-when-intro = Sicherige chönd vo sälber laufe. Isch de Computer denn us oder schlaft, lauft d Sicherig, sobald du zrugg bisch.
+wizard-automatic = Automatisch sichere
+wizard-automatic-description = Lauft im Hintergrund, au wänn Stellarshot zue isch.
+wizard-frequency = Wie oft
+wizard-keep = Alti Momentuufnahme
+wizard-keep-label = Bhalte
+wizard-prune = Platz automatisch freigäh
+wizard-prune-description = Löscht Date, wo kei Momentuufnahm meh bruucht. Lahn das us, wänn en andere Computer an de gliich Ort sicheret.
+wizard-remember-for-schedule = Planti Sicherige laufed nur mit gmerktem Passwort.
+notify-backup-failed = Sicherig «{ $name }» fählgschlage
+notify-cleanup-failed = Ufruume vo «{ $name }» fählgschlage
+notify-check-failed = Prüefig vo «{ $name }» fählgschlage
+notify-open = Öffne

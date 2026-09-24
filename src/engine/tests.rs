@@ -768,3 +768,129 @@ fn restores_into_a_deleted_folder() {
         pseudo_random(64 * 1024, 1)
     );
 }
+
+// ---------------------------------------------------------------------------
+// Retention
+// ---------------------------------------------------------------------------
+
+/// Four snapshots, a day apart, the newest a minute old.
+fn daily_history(fixture: &Fixture) -> Vec<String> {
+    awkward_tree(&fixture.source);
+    let now = jiff::Timestamp::now().as_second();
+    (0..4)
+        .rev()
+        .map(|days_ago| {
+            let request = BackupRequest {
+                time: Some(now - 60 - days_ago * 86_400),
+                ..sources(&fixture.source)
+            };
+            back_up(fixture, &request).snapshot.id
+        })
+        .collect()
+}
+
+fn snapshot_ids(fixture: &Fixture) -> Vec<String> {
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .snapshots()
+        .unwrap()
+        .into_iter()
+        .map(|snapshot| snapshot.id)
+        .collect()
+}
+
+#[test]
+fn forget_applies_the_rules() {
+    let fixture = fixture();
+    let taken = daily_history(&fixture);
+    let rules = KeepRules {
+        daily: Some(2),
+        ..KeepRules::default()
+    };
+
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(&rules, &hostname())
+        .unwrap();
+
+    assert_eq!((report.removed, report.kept), (2, 2));
+    let mut left = snapshot_ids(&fixture);
+    left.sort();
+    let mut newest = taken[2..].to_vec();
+    newest.sort();
+    assert_eq!(left, newest, "the two newest days are kept");
+}
+
+#[test]
+fn forget_leaves_other_computers_alone() {
+    let fixture = fixture();
+    daily_history(&fixture);
+    let rules = KeepRules {
+        last: Some(1),
+        ..KeepRules::default()
+    };
+
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(&rules, "another-computer")
+        .unwrap();
+
+    assert_eq!((report.removed, report.kept), (0, 0));
+    assert_eq!(
+        snapshot_ids(&fixture).len(),
+        4,
+        "every snapshot here was taken by this computer, not that one"
+    );
+}
+
+#[test]
+fn forget_keeps_everything_without_rules() {
+    let fixture = fixture();
+    daily_history(&fixture);
+
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(&KeepRules::default(), &hostname())
+        .unwrap();
+
+    assert_eq!((report.removed, report.kept), (0, 4));
+    assert_eq!(snapshot_ids(&fixture).len(), 4);
+}
+
+#[test]
+fn prune_reclaims_forgotten_data() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    // A big file that exists for one backup only, so its data sits in packs
+    // of its own. (Unused data sharing a pack with data still in use may be
+    // left where it is: rustic limits how much it rewrites per prune.)
+    let big = fixture.source.join("big.bin");
+    fs::write(&big, pseudo_random(512 * 1024, 7)).unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    fs::remove_file(&big).unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let rules = KeepRules {
+        last: Some(1),
+        ..KeepRules::default()
+    };
+    assert_eq!(repo.forget(&rules, &hostname()).unwrap().removed, 2);
+
+    let pruned = repo.prune().unwrap();
+
+    assert!(
+        pruned.bytes >= 512 * 1024,
+        "the forgotten file's data is no longer needed: {pruned:?}"
+    );
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    repo.check().unwrap();
+    let target = fixture.work.join("restored");
+    repo.restore_all("latest", &target, Arc::new(NoProgress))
+        .unwrap();
+    assert_eq!(
+        fs::read(restored(&target, &fixture.source).join("plain.txt")).unwrap(),
+        b"plain",
+        "the kept snapshot is whole"
+    );
+}

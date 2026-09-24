@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! The setup wizard: what to back up, where to, and the password.
+//! The setup wizard: what to back up, where to, when, and the password.
 //!
 //! The same wizard creates a backup, opens an existing one, and edits what an
-//! existing profile covers; each mode shows only the steps it needs. All state
+//! existing profile covers or when it runs; each mode shows only the steps it
+//! needs. All state
 //! lives here and every side effect is returned as an [`Effect`] for the
 //! application to run, so the step logic is testable without a window.
 
@@ -18,7 +19,7 @@ use cosmic::{Apply, Element, theme, widget};
 use crate::app::format;
 use crate::engine::{BackupRequest, EngineError, Probe, Secret, SizeEstimate};
 use crate::fl;
-use crate::profile::{Destination, Profile, default_excludes};
+use crate::profile::{Destination, Profile, Retention, Schedule, default_excludes};
 
 pub mod place;
 
@@ -31,24 +32,45 @@ pub enum Mode {
     Open,
     /// Change what an existing profile backs up.
     Edit { profile_id: String },
+    /// Change when an existing profile runs and what it keeps.
+    Schedule { profile_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
     What,
     Where,
+    When,
     Secure,
 }
 
 impl Mode {
     fn steps(&self) -> &'static [Step] {
         match self {
-            Self::Create => &[Step::What, Step::Where, Step::Secure],
-            Self::Open => &[Step::Where, Step::Secure],
+            Self::Create => &[Step::What, Step::Where, Step::When, Step::Secure],
+            Self::Open => &[Step::Where, Step::When, Step::Secure],
             Self::Edit { .. } => &[Step::What],
+            Self::Schedule { .. } => &[Step::When],
         }
     }
+
+    fn edits(&self) -> bool {
+        matches!(self, Self::Edit { .. } | Self::Schedule { .. })
+    }
 }
+
+/// How often automatic backups run, in the order the list shows them.
+const FREQUENCIES: [Schedule; 3] = [Schedule::Hourly, Schedule::Daily, Schedule::Weekly];
+
+/// What to keep, in the order the list shows them: Déjà Dup's choices, with
+/// Smart first.
+const KEEP_CHOICES: [Retention; 5] = [
+    Retention::Smart,
+    Retention::KeepFor { days: 90 },
+    Retention::KeepFor { days: 182 },
+    Retention::KeepFor { days: 365 },
+    Retention::KeepForever,
+];
 
 /// The size estimate as the wizard shows it.
 #[derive(Debug, Default)]
@@ -81,8 +103,19 @@ pub struct Wizard {
     pub pattern_input: String,
     pub one_file_system: bool,
     pub place: place::Place,
-    /// The unchanged destination of the profile being edited.
-    edit_destination: Option<Destination>,
+    /// The profile being edited. Finishing changes only the fields the
+    /// mode's steps show, so nothing else about it can be lost.
+    base: Option<Profile>,
+    /// Back up automatically. `Manual` when off.
+    pub schedule: Schedule,
+    /// The frequency to use when automatic backups are turned on.
+    frequency: Schedule,
+    pub retention: Retention,
+    /// Free up space automatically; `None` until the user chooses, which
+    /// means the default for the destination.
+    pub prune: Option<bool>,
+    frequency_labels: Vec<String>,
+    keep_labels: Vec<String>,
     pub password: String,
     pub confirm: String,
     pub password_hidden: bool,
@@ -114,6 +147,10 @@ pub enum Message {
     Confirm(String),
     TogglePasswordVisible,
     Remember(bool),
+    Automatic(bool),
+    Frequency(usize),
+    Keep(usize),
+    Prune(bool),
     Back,
     Next,
     Cancel,
@@ -161,7 +198,19 @@ impl Wizard {
             pattern_input: String::new(),
             one_file_system: true,
             place: place::Place::default(),
-            edit_destination: None,
+            base: None,
+            // A new backup runs daily and keeps a smart history, as the
+            // design asks.
+            schedule: Schedule::Daily,
+            frequency: Schedule::Daily,
+            retention: Retention::Smart,
+            prune: None,
+            frequency_labels: vec![
+                fl!("frequency-hourly"),
+                fl!("frequency-daily"),
+                fl!("frequency-weekly"),
+            ],
+            keep_labels: Vec::new(),
             password: String::new(),
             confirm: String::new(),
             password_hidden: true,
@@ -199,6 +248,8 @@ impl Wizard {
         wizard.name = fl!("dejadup-name");
         wizard.sources = import.sources.clone();
         wizard.excludes = import.excludes.clone();
+        wizard.set_schedule(import.schedule);
+        wizard.retention = import.retention;
         let mut effects = wizard.place.enter();
         match &import.place {
             From::Folder(path) => {
@@ -246,18 +297,74 @@ impl Wizard {
         effects.into_iter().map(Effect::Place).collect()
     }
 
-    pub fn edit(profile: &Profile) -> (Self, Vec<Effect>) {
-        let mut wizard = Self::new(Mode::Edit {
-            profile_id: profile.id.clone(),
-        });
+    /// Start from an existing profile, in a mode that edits it.
+    fn editing(mode: Mode, profile: &Profile) -> Self {
+        let mut wizard = Self::new(mode);
         wizard.name = profile.name.clone();
         wizard.sources = profile.sources.clone();
         wizard.excludes = profile.excludes.clone();
         wizard.patterns = profile.exclude_patterns.clone();
         wizard.one_file_system = profile.one_file_system;
-        wizard.edit_destination = Some(profile.destination.clone());
+        wizard.set_schedule(profile.schedule);
+        wizard.retention = profile.retention;
+        wizard.prune = profile.prune;
+        wizard.base = Some(profile.clone());
+        wizard
+    }
+
+    pub fn edit(profile: &Profile) -> (Self, Vec<Effect>) {
+        let mut wizard = Self::editing(
+            Mode::Edit {
+                profile_id: profile.id.clone(),
+            },
+            profile,
+        );
         let effects = wizard.restart_estimate();
         (wizard, effects)
+    }
+
+    /// Change when `profile` runs and what it keeps.
+    pub fn schedule(profile: &Profile) -> (Self, Vec<Effect>) {
+        let mode = Mode::Schedule {
+            profile_id: profile.id.clone(),
+        };
+        let mut wizard = Self::editing(mode, profile);
+        wizard.keep_labels = wizard.keep_labels();
+        (wizard, Vec::new())
+    }
+
+    fn set_schedule(&mut self, schedule: Schedule) {
+        self.schedule = schedule;
+        if schedule != Schedule::Manual {
+            self.frequency = schedule;
+        }
+    }
+
+    /// Where the backup will be, as far as is known yet.
+    fn destination(&self) -> Option<Destination> {
+        self.place
+            .destination()
+            .or_else(|| self.base.as_ref().map(|base| base.destination.clone()))
+    }
+
+    /// Whether freeing space is on: the user's choice, or else the default
+    /// for the destination.
+    pub fn prune_enabled(&self) -> bool {
+        self.prune.unwrap_or_else(|| {
+            self.destination().is_some_and(|destination| {
+                Profile::new(String::new(), destination, Vec::new()).prune_enabled()
+            })
+        })
+    }
+
+    /// The labels for [`KEEP_CHOICES`], plus the current choice if it is a
+    /// period the list does not have (an imported Déjà Dup setting).
+    fn keep_labels(&self) -> Vec<String> {
+        let mut labels: Vec<String> = KEEP_CHOICES.iter().map(|r| retention_label(*r)).collect();
+        if !KEEP_CHOICES.contains(&self.retention) {
+            labels.push(retention_label(self.retention));
+        }
+        labels
     }
 
     fn request(&self) -> BackupRequest {
@@ -266,6 +373,7 @@ impl Wizard {
             excludes: self.excludes.clone(),
             exclude_patterns: self.patterns.clone(),
             one_file_system: self.one_file_system,
+            time: None,
         }
     }
 
@@ -324,6 +432,7 @@ impl Wizard {
                 !self.name.trim().is_empty()
                     && matches!(self.place.probe(), Some(Ok(probe)) if *probe == wanted)
             }
+            Step::When => true,
             Step::Secure => match self.mode {
                 Mode::Create => !self.password.is_empty() && self.password == self.confirm,
                 _ => !self.password.is_empty(),
@@ -332,28 +441,34 @@ impl Wizard {
     }
 
     fn finish(&mut self) -> Vec<Effect> {
-        let Some(destination) = self
-            .place
-            .destination()
-            .or_else(|| self.edit_destination.clone())
-        else {
+        let Some(destination) = self.destination() else {
             return Vec::new();
         };
-        let mut profile = Profile::new(
-            self.name.trim().to_owned(),
-            destination,
-            self.sources.clone(),
-        );
-        profile.excludes = self.excludes.clone();
-        profile.exclude_patterns = self.patterns.clone();
-        profile.one_file_system = self.one_file_system;
-        let secret = match self.mode {
-            Mode::Edit { ref profile_id } => {
-                profile.id = profile_id.clone();
-                None
-            }
-            _ => Some(Secret::new(self.password.clone())),
+        let mut profile = match &self.base {
+            Some(base) => base.clone(),
+            None => Profile::new(
+                self.name.trim().to_owned(),
+                destination,
+                self.sources.clone(),
+            ),
         };
+        let steps = self.mode.steps();
+        // A new profile takes everything the wizard holds, including folders
+        // an import filled in without showing the What step; an edited one
+        // only what its steps showed.
+        let new = self.base.is_none();
+        if new || steps.contains(&Step::What) {
+            profile.sources = self.sources.clone();
+            profile.excludes = self.excludes.clone();
+            profile.exclude_patterns = self.patterns.clone();
+            profile.one_file_system = self.one_file_system;
+        }
+        if new || steps.contains(&Step::When) {
+            profile.schedule = self.schedule;
+            profile.retention = self.retention;
+            profile.prune = self.prune;
+        }
+        let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
         self.busy = true;
         vec![Effect::Finish(Finish {
             mode: self.mode.clone(),
@@ -463,6 +578,26 @@ impl Wizard {
                 self.remember = remember;
                 Vec::new()
             }
+            Message::Automatic(on) => {
+                self.schedule = if on { self.frequency } else { Schedule::Manual };
+                Vec::new()
+            }
+            Message::Frequency(index) => {
+                if let Some(frequency) = FREQUENCIES.get(index) {
+                    self.set_schedule(*frequency);
+                }
+                Vec::new()
+            }
+            Message::Keep(index) => {
+                if let Some(retention) = KEEP_CHOICES.get(index) {
+                    self.retention = *retention;
+                }
+                Vec::new()
+            }
+            Message::Prune(on) => {
+                self.prune = Some(on);
+                Vec::new()
+            }
             Message::Back => {
                 let position = self.position();
                 if position > 0 {
@@ -478,10 +613,14 @@ impl Wizard {
                     return self.finish();
                 }
                 self.step = self.mode.steps()[self.position() + 1];
-                if self.step == Step::Where {
-                    return self.place_effects(self.place.enter());
+                match self.step {
+                    Step::Where => self.place_effects(self.place.enter()),
+                    Step::When => {
+                        self.keep_labels = self.keep_labels();
+                        Vec::new()
+                    }
+                    _ => Vec::new(),
                 }
-                Vec::new()
             }
             Message::Cancel => {
                 self.cancel.store(true, Ordering::Relaxed);
@@ -510,6 +649,7 @@ impl Wizard {
             Mode::Open if self.importing => fl!("dejadup-title"),
             Mode::Open => fl!("wizard-open-title"),
             Mode::Edit { .. } => fl!("wizard-edit-title", name = self.name.clone()),
+            Mode::Schedule { .. } => fl!("wizard-schedule-title", name = self.name.clone()),
         };
         let current = (self.position() + 1) as i64;
         let total = steps.len() as i64;
@@ -518,6 +658,7 @@ impl Wizard {
         let body = match self.step {
             Step::What => self.what_view(),
             Step::Where => self.where_view(),
+            Step::When => self.when_view(),
             Step::Secure => self.secure_view(),
         };
 
@@ -525,7 +666,7 @@ impl Wizard {
             (false, _) => fl!("next"),
             (true, Mode::Create) => fl!("wizard-finish-create"),
             (true, Mode::Open) => fl!("wizard-finish-open"),
-            (true, Mode::Edit { .. }) => fl!("save"),
+            (true, Mode::Edit { .. } | Mode::Schedule { .. }) => fl!("save"),
         };
         let mut footer = widget::row::with_capacity(4)
             .spacing(spacing.space_xs)
@@ -674,6 +815,53 @@ impl Wizard {
             .into()
     }
 
+    fn when_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let automatic = self.schedule != Schedule::Manual;
+        let mut when = widget::settings::section().add(
+            widget::settings::item::builder(fl!("wizard-automatic"))
+                .description(fl!("wizard-automatic-description"))
+                .toggler(automatic, Message::Automatic),
+        );
+        if automatic {
+            let selected = FREQUENCIES.iter().position(|f| *f == self.frequency);
+            when =
+                when.add(
+                    widget::settings::item::builder(fl!("wizard-frequency")).control(
+                        widget::dropdown(&self.frequency_labels, selected, Message::Frequency),
+                    ),
+                );
+        }
+
+        let selected = KEEP_CHOICES
+            .iter()
+            .position(|r| *r == self.retention)
+            .unwrap_or(KEEP_CHOICES.len());
+        let mut keep = widget::settings::section().title(fl!("wizard-keep")).add(
+            widget::settings::item::builder(fl!("wizard-keep-label"))
+                .description(retention_description(self.retention))
+                .control(widget::dropdown(
+                    &self.keep_labels,
+                    Some(selected),
+                    Message::Keep,
+                )),
+        );
+        if self.retention != Retention::KeepForever {
+            keep = keep.add(
+                widget::settings::item::builder(fl!("wizard-prune"))
+                    .description(fl!("wizard-prune-description"))
+                    .toggler(self.prune_enabled(), Message::Prune),
+            );
+        }
+
+        widget::column::with_capacity(3)
+            .spacing(spacing.space_m)
+            .push(widget::text::body(fl!("wizard-when-intro")))
+            .push(when)
+            .push(keep)
+            .into()
+    }
+
     fn secure_view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
         let mut fields = widget::column::with_capacity(3)
@@ -719,6 +907,10 @@ impl Wizard {
                         .toggler(self.remember, Message::Remember),
                 ),
             )
+            .push_maybe(
+                (self.schedule != Schedule::Manual && !self.remember)
+                    .then(|| widget::text::caption(fl!("wizard-remember-for-schedule"))),
+            )
             .push(
                 widget::text::body(fl!("wizard-password-warning"))
                     .apply(widget::container)
@@ -726,6 +918,27 @@ impl Wizard {
                     .class(theme::Container::Card),
             )
             .into()
+    }
+}
+
+/// What a retention choice is called in the list.
+pub fn retention_label(retention: Retention) -> String {
+    match retention {
+        Retention::Smart => fl!("keep-smart"),
+        Retention::KeepForever => fl!("keep-forever"),
+        Retention::KeepFor { days: 90 } => fl!("keep-3-months"),
+        Retention::KeepFor { days: 182 } => fl!("keep-6-months"),
+        Retention::KeepFor { days: 365 } => fl!("keep-1-year"),
+        Retention::KeepFor { days } => fl!("keep-days", days = (days as i64)),
+    }
+}
+
+/// A sentence saying what a retention choice does.
+pub fn retention_description(retention: Retention) -> String {
+    match retention {
+        Retention::Smart => fl!("keep-smart-description"),
+        Retention::KeepForever => fl!("keep-forever-description"),
+        Retention::KeepFor { days } => fl!("keep-for-description", days = (days as i64)),
     }
 }
 
@@ -821,6 +1034,8 @@ mod tests {
         wizard.update(Message::Next);
         place_folder(&mut wizard, "/srv/backups/laptop", Ok(Probe::Empty));
         wizard.update(Message::Next);
+        assert_eq!(wizard.step, Step::When);
+        wizard.update(Message::Next);
         assert_eq!(wizard.step, Step::Secure);
 
         wizard.update(Message::Password("secret".into()));
@@ -902,10 +1117,14 @@ mod tests {
                 label: "Backup".into(),
             },
             other_format: false,
+            schedule: Schedule::Weekly,
+            retention: Retention::KeepFor { days: 182 },
         };
         let (mut wizard, _) = Wizard::import(&import);
         assert_eq!(wizard.mode, Mode::Open);
         assert!(wizard.password.is_empty(), "the password is never imported");
+        assert_eq!(wizard.schedule, Schedule::Weekly, "Déjà Dup's schedule");
+        assert_eq!(wizard.retention, Retention::KeepFor { days: 182 });
 
         // The drive with the recorded UUID is selected once drives are known.
         wizard.update(Message::Place(place::Message::DrivesListed(vec![
@@ -938,9 +1157,13 @@ mod tests {
             Ok(Probe::Repository),
         )));
         wizard.update(Message::Next);
+        assert_eq!(wizard.step, Step::When);
+        wizard.update(Message::Next);
         wizard.update(Message::Password("typed by the user".into()));
         let effects = wizard.update(Message::Next);
         let finish = finish_effect(&effects).expect("finishing");
+        assert_eq!(finish.profile.schedule, Schedule::Weekly);
+        assert_eq!(finish.profile.retention, Retention::KeepFor { days: 182 });
         assert_eq!(
             finish.profile.excludes,
             vec![PathBuf::from("/home/alex/.cache")]
@@ -969,5 +1192,104 @@ mod tests {
         let (wizard, _) = Wizard::create(Some(Path::new("/home/dave")));
         assert!(wizard.exclude_applies(Path::new("/home/dave/.cache")));
         assert!(!wizard.exclude_applies(Path::new("/var/tmp")));
+    }
+
+    fn scheduled_profile() -> Profile {
+        let mut profile = Profile::new(
+            "Home".into(),
+            Destination::Local {
+                path: "/mnt/backup/home".into(),
+            },
+            vec!["/home/alex".into()],
+        );
+        profile.excludes = vec!["/home/alex/.cache".into()];
+        profile.schedule = Schedule::Daily;
+        profile.retention = Retention::Smart;
+        profile.last_success = Some(42);
+        profile
+    }
+
+    #[test]
+    fn a_new_backup_runs_daily_and_keeps_a_smart_history() {
+        let (wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        assert_eq!(wizard.schedule, Schedule::Daily);
+        assert_eq!(wizard.retention, Retention::Smart);
+        assert_eq!(
+            wizard.prune, None,
+            "the destination decides until the user does"
+        );
+    }
+
+    #[test]
+    fn editing_the_schedule_changes_nothing_else() {
+        let profile = scheduled_profile();
+        let (mut wizard, _) = Wizard::schedule(&profile);
+        assert_eq!(wizard.step, Step::When);
+
+        wizard.update(Message::Automatic(false));
+        let forever = KEEP_CHOICES
+            .iter()
+            .position(|r| *r == Retention::KeepForever)
+            .unwrap();
+        wizard.update(Message::Keep(forever));
+        let effects = wizard.update(Message::Next);
+
+        let finish = finish_effect(&effects).expect("saving finishes");
+        assert!(finish.secret.is_none(), "the repository is not touched");
+        let saved = &finish.profile;
+        assert_eq!(saved.schedule, Schedule::Manual);
+        assert_eq!(saved.retention, Retention::KeepForever);
+        assert_eq!(
+            (
+                &saved.id,
+                &saved.name,
+                &saved.sources,
+                &saved.excludes,
+                &saved.destination
+            ),
+            (
+                &profile.id,
+                &profile.name,
+                &profile.sources,
+                &profile.excludes,
+                &profile.destination
+            )
+        );
+        assert_eq!(saved.last_success, Some(42));
+    }
+
+    #[test]
+    fn editing_the_folders_keeps_the_schedule() {
+        let profile = scheduled_profile();
+        let (mut wizard, _) = Wizard::edit(&profile);
+        wizard.update(Message::SourcesChosen(vec!["/srv/projects".into()]));
+        let effects = wizard.update(Message::Next);
+
+        let saved = &finish_effect(&effects).expect("saving finishes").profile;
+        assert_eq!(saved.sources.len(), 2);
+        assert_eq!(saved.schedule, Schedule::Daily);
+        assert_eq!(saved.retention, Retention::Smart);
+    }
+
+    #[test]
+    fn turning_automatic_backups_back_on_restores_the_frequency() {
+        let (mut wizard, _) = Wizard::schedule(&scheduled_profile());
+        wizard.update(Message::Frequency(2));
+        assert_eq!(wizard.schedule, Schedule::Weekly);
+        wizard.update(Message::Automatic(false));
+        assert_eq!(wizard.schedule, Schedule::Manual);
+        wizard.update(Message::Automatic(true));
+        assert_eq!(wizard.schedule, Schedule::Weekly);
+    }
+
+    #[test]
+    fn freeing_space_follows_the_destination_until_chosen() {
+        let (mut wizard, _) = Wizard::schedule(&scheduled_profile());
+        assert!(
+            wizard.prune_enabled(),
+            "a local folder frees space by default"
+        );
+        wizard.update(Message::Prune(false));
+        assert!(!wizard.prune_enabled());
     }
 }

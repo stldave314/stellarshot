@@ -25,7 +25,9 @@ use crate::app::wizard::{Mode, Wizard, place};
 use crate::debug::{CONFIG, ENGINE, UI};
 use crate::engine::{self, EngineError, Secret};
 use crate::profile::Profile;
+use crate::run_state::{self, RunState};
 use crate::runner::{Job, Operation};
+use crate::schedule;
 use crate::{debug_log, error_log, fl};
 
 pub mod child;
@@ -65,6 +67,9 @@ pub struct App {
     now: i64,
     /// Déjà Dup settings were found, so the first screen offers an import.
     dejadup: bool,
+    /// What happened when each backup last ran on its own, by profile ID.
+    /// Written by scheduled runs; re-read on every clock tick.
+    runs: HashMap<String, RunState>,
 }
 
 /// What a sidebar entry leads to.
@@ -97,6 +102,8 @@ pub enum Message {
     Wizard(wizard::Message),
     RestorePage(restore::Message),
     WizardFinished(Result<tasks::Finished, EngineError>),
+    /// Installing or removing a backup's timer failed.
+    ScheduleFailed(String),
     Dialog(DialogMessage),
     Noop,
 }
@@ -163,6 +170,8 @@ pub struct Flags {
     pub config: StellarshotConfig,
     /// Open the setup wizard as soon as the window appears.
     pub start_wizard: bool,
+    /// Select this backup at start: a notification was clicked.
+    pub select: Option<String>,
     /// Open the restore page for the selected backup once it is unlocked.
     pub start_restore: bool,
 }
@@ -241,11 +250,16 @@ impl App {
         self.nav.clear();
         let mut chosen = None;
         for profile in &self.config.profiles {
+            let icon = if self.needs_attention(profile) {
+                "dialog-warning-symbolic"
+            } else {
+                "drive-harddisk-symbolic"
+            };
             let id = self
                 .nav
                 .insert()
                 .text(profile.name.clone())
-                .icon(widget::icon::from_name("drive-harddisk-symbolic"))
+                .icon(widget::icon::from_name(icon))
                 .data(NavItem::Profile(profile.id.clone()))
                 .id();
             if keep.as_deref() == Some(profile.id.as_str()) || chosen.is_none() {
@@ -263,6 +277,50 @@ impl App {
         if let Some(id) = chosen {
             self.nav.activate(id);
         }
+    }
+
+    /// A scheduled run failed, or a check found damage.
+    fn needs_attention(&self, profile: &Profile) -> bool {
+        self.runs
+            .get(&profile.id)
+            .is_some_and(|run| run.damaged || run.current_failure(profile.last_success).is_some())
+    }
+
+    /// Re-read every backup's run state; rebuild the sidebar if a warning
+    /// appeared or went away.
+    fn reload_runs(&mut self) {
+        let runs: HashMap<String, RunState> = self
+            .config
+            .profiles
+            .iter()
+            .map(|profile| (profile.id.clone(), run_state::load(&profile.id)))
+            .collect();
+        if runs != self.runs {
+            self.runs = runs;
+            self.rebuild_nav(None);
+        }
+    }
+
+    /// Change one backup's run state, and show the change.
+    fn record_run(&mut self, id: &str, change: impl FnOnce(&mut RunState)) {
+        if let Err(err) = run_state::update(id, change) {
+            error_log!(CONFIG, "could not record a run of {id}: {err}");
+        }
+        self.reload_runs();
+    }
+
+    /// Install, update or remove `profile`'s timer, off the UI thread.
+    fn apply_schedule(profile: Profile) -> Task<Message> {
+        Task::perform(
+            tasks::blocking(move || {
+                schedule::apply(&profile)
+                    .map_err(|err| EngineError::new(engine::ErrorKind::Internal, err))
+            }),
+            |result| match result {
+                Ok(()) => app(Message::Noop),
+                Err(err) => app(Message::ScheduleFailed(err.detail)),
+            },
+        )
     }
 
     fn save_profiles(&mut self, profiles: Vec<Profile>) {
@@ -299,12 +357,27 @@ impl App {
             .collect();
         self.save_profiles(profiles);
         self.pages.remove(id);
+        self.runs.remove(id);
         self.rebuild_nav(None);
         let id = id.to_owned();
+        let unschedule = {
+            let id = id.clone();
+            Task::perform(
+                tasks::blocking(move || {
+                    let _ = run_state::save(&id, &RunState::default());
+                    schedule::remove(&id)
+                        .map_err(|err| EngineError::new(engine::ErrorKind::Internal, err))
+                }),
+                |result| match result {
+                    Ok(()) => app(Message::Noop),
+                    Err(err) => app(Message::ScheduleFailed(err.detail)),
+                },
+            )
+        };
         let forget = Task::perform(async move { crate::keyring::forget(&id).await }, |_| {
             app(Message::Noop)
         });
-        Task::batch([forget, self.activate_selected()])
+        Task::batch([unschedule, forget, self.activate_selected()])
     }
 
     /// Show the selected profile, looking for its password if needed.
@@ -506,13 +579,8 @@ impl App {
                         }
                     };
                     let job = Job {
-                        repository,
-                        password: secret.clone(),
-                        request: None,
                         restore: Some(request),
-                        snapshot: None,
-                        destination: None,
-                        ids: Vec::new(),
+                        ..Job::new(repository, secret.clone())
                     };
                     Task::run(child::run(Operation::Restore, job), move |event| {
                         to_page(restore::Message::Restore(event))
@@ -630,13 +698,8 @@ impl App {
                         }
                     };
                     let job = Job {
-                        repository,
-                        password: secret,
                         request: Some(profile.backup_request()),
-                        restore: None,
-                        snapshot: None,
-                        destination: None,
-                        ids: Vec::new(),
+                        ..Job::new(repository, secret)
                     };
                     Task::run(child::run(Operation::Backup, job), move |event| {
                         app(Message::Profile(
@@ -654,13 +717,8 @@ impl App {
                         }
                     };
                     let job = Job {
-                        repository,
-                        password: secret,
-                        request: None,
-                        restore: None,
-                        snapshot: None,
-                        destination: None,
                         ids,
+                        ..Job::new(repository, secret)
                     };
                     Task::run(child::run(Operation::DeleteSnapshots, job), move |event| {
                         app(Message::Profile(
@@ -692,6 +750,111 @@ impl App {
                 profile::Effect::Edit => {
                     let (wizard, effects) = Wizard::edit(&profile);
                     self.start_wizard(wizard, effects)
+                }
+                profile::Effect::EditSchedule => {
+                    let (wizard, effects) = Wizard::schedule(&profile);
+                    self.start_wizard(wizard, effects)
+                }
+                profile::Effect::Check(secret) => {
+                    let job = match profile.location() {
+                        Ok(location) => Job::new(location, secret),
+                        Err(err) => {
+                            let ended = profile::Message::Checked(child::ChildEvent::Ended(err));
+                            let effects = self
+                                .pages
+                                .entry(id.clone())
+                                .or_default()
+                                .update(ended, &profile);
+                            tasks.push(self.run_profile_effects(&id, effects));
+                            continue;
+                        }
+                    };
+                    Task::run(child::run(Operation::Check, job), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::Checked(event),
+                        ))
+                    })
+                }
+                profile::Effect::RecordCheck(result) => {
+                    // A check that could not run (an unplugged drive, a
+                    // cancel) says nothing about damage and is not recorded.
+                    let damaged = match &result {
+                        Ok(()) => false,
+                        Err(err) if err.kind == engine::ErrorKind::RepositoryDamaged => true,
+                        Err(err) => {
+                            self.show_error(&fl!("check-failed"), err);
+                            continue;
+                        }
+                    };
+                    let now = format::now();
+                    self.record_run(&id, |run| {
+                        run.last_check = Some(now);
+                        run.damaged = damaged;
+                        if !damaged
+                            && run
+                                .failure
+                                .as_ref()
+                                .is_some_and(|f| f.stage == run_state::Stage::Check)
+                        {
+                            run.failure = None;
+                        }
+                    });
+                    match result {
+                        Ok(()) => {
+                            self.dialog = Some(Dialog::Info(
+                                fl!("check-passed-title"),
+                                fl!("check-passed-body"),
+                            ));
+                        }
+                        Err(err) => self.show_error(&fl!("check-failed"), &err),
+                    }
+                    Task::none()
+                }
+                profile::Effect::CleanUp(secret) => {
+                    let job = match profile.location() {
+                        Ok(location) => Job {
+                            keep: profile.retention.keep_rules(),
+                            prune: !self.runs.get(&id).is_some_and(|run| run.damaged),
+                            ..Job::new(location, secret)
+                        },
+                        Err(err) => {
+                            let ended = profile::Message::CleanedUp(child::ChildEvent::Ended(err));
+                            let effects = self
+                                .pages
+                                .entry(id.clone())
+                                .or_default()
+                                .update(ended, &profile);
+                            tasks.push(self.run_profile_effects(&id, effects));
+                            continue;
+                        }
+                    };
+                    Task::run(child::run(Operation::Maintain, job), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::CleanedUp(event),
+                        ))
+                    })
+                }
+                profile::Effect::CleanedUp { forgotten, freed } => {
+                    self.record_run(&id, |run| {
+                        if run
+                            .failure
+                            .as_ref()
+                            .is_some_and(|f| f.stage == run_state::Stage::Cleanup)
+                        {
+                            run.failure = None;
+                        }
+                    });
+                    self.dialog = Some(Dialog::Info(
+                        fl!("clean-up-done-title"),
+                        fl!(
+                            "clean-up-done-body",
+                            count = (forgotten as i64),
+                            size = format::bytes(freed)
+                        ),
+                    ));
+                    Task::none()
                 }
                 profile::Effect::Remove => {
                     self.dialog = Some(Dialog::Remove {
@@ -736,17 +899,17 @@ impl App {
         };
 
         let mut profile = finished.profile;
-        if let Mode::Edit { .. } = finished.mode {
-            // Editing changes only what is backed up; the rest stays.
+        if let Mode::Edit { .. } | Mode::Schedule { .. } = finished.mode {
+            // The wizard started from the saved profile and changed only its
+            // own fields; a backup may have finished since it opened.
             if let Some(existing) = self.config.profile(&profile.id) {
                 profile.last_success = existing.last_success;
-                profile.destination = existing.destination.clone();
-                profile.name = existing.name.clone();
             }
         }
         let id = profile.id.clone();
         self.upsert_profile(profile.clone());
         self.rebuild_nav(Some(&id));
+        let scheduled = Self::apply_schedule(profile.clone());
 
         let mut effects = Vec::new();
         if let Some(secret) = finished.secret {
@@ -759,7 +922,7 @@ impl App {
                 effects = state.back_up(&profile);
             }
         }
-        Task::batch([close, self.run_profile_effects(&id, effects)])
+        Task::batch([close, scheduled, self.run_profile_effects(&id, effects)])
     }
 
     fn on_dialog(&mut self, message: DialogMessage) -> Task<Message> {
@@ -946,8 +1109,10 @@ impl Application for App {
             modifiers: Modifiers::empty(),
             now: format::now(),
             dejadup: crate::dejadup::find().is_some(),
+            runs: HashMap::new(),
         };
-        app.rebuild_nav(None);
+        app.reload_runs();
+        app.rebuild_nav(flags.select.as_deref());
 
         let title = fl!("stellarshot");
         app.set_header_title(title.clone());
@@ -959,13 +1124,26 @@ impl Application for App {
             app.pages.entry(id).or_default().restore_when_unlocked = true;
         }
         let activate = app.activate_selected();
+        // Timers follow the settings, which may have changed while the
+        // window was closed, or the program may have moved.
+        let profiles = app.config.profiles.clone();
+        let reconcile = Task::perform(
+            tasks::blocking(move || Ok(schedule::reconcile(&profiles))),
+            |errors: Result<Vec<String>, EngineError>| match errors
+                .ok()
+                .and_then(|e| e.into_iter().next())
+            {
+                Some(err) => cosmic::Action::App(Message::ScheduleFailed(err)),
+                None => cosmic::Action::App(Message::Noop),
+            },
+        );
         let wizard = if flags_start_wizard {
             app.update(Message::NewBackup)
         } else {
             Task::none()
         };
         debug_log!(UI, "started with {} profiles", app.config.profiles.len());
-        (app, Task::batch([title_task, activate, wizard]))
+        (app, Task::batch([title_task, activate, reconcile, wizard]))
     }
 
     fn context_drawer(
@@ -1059,9 +1237,10 @@ impl Application for App {
         };
         match (self.config.profile(id), self.pages.get(id)) {
             (Some(profile), Some(state)) => {
+                let run = self.runs.get(id).cloned().unwrap_or_default();
                 let id = id.to_owned();
                 state
-                    .view(profile, self.now)
+                    .view(profile, &run, self.now)
                     .map(move |message| Message::Profile(id.clone(), message))
             }
             _ => widget::space::horizontal().width(Length::Fill).into(),
@@ -1186,7 +1365,16 @@ impl Application for App {
                     return self.run_profile_effects(&id, effects);
                 }
             }
-            Message::Tick => self.now = format::now(),
+            Message::Tick => {
+                self.now = format::now();
+                self.reload_runs();
+            }
+            Message::ScheduleFailed(detail) => {
+                self.dialog = Some(Dialog::Error(errors::describe(
+                    &fl!("schedule-failed"),
+                    &EngineError::new(engine::ErrorKind::Internal, detail),
+                )));
+            }
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
                     self.core.window.show_context = !self.core.window.show_context;

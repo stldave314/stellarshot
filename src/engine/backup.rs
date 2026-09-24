@@ -27,6 +27,10 @@ pub struct BackupRequest {
     pub exclude_patterns: Vec<String>,
     /// Do not descend into other mounted filesystems.
     pub one_file_system: bool,
+    /// When the snapshot says it was taken, in Unix seconds; now if unset.
+    /// Only the tests and the demo repository set it, to build a history.
+    #[serde(default)]
+    pub time: Option<i64>,
 }
 
 impl BackupRequest {
@@ -91,7 +95,13 @@ impl Repo {
         debug_log!(ENGINE, "backup of {} sources", sources.len());
 
         let repo = self.inner.to_indexed_ids()?;
-        let snapshot = SnapshotOptions::default().to_snapshot()?;
+        let mut options = SnapshotOptions::default();
+        if let Some(time) = request.time {
+            let time = jiff::Timestamp::from_second(time)
+                .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
+            options.time = Some(time.to_zoned(jiff::tz::TimeZone::system()));
+        }
+        let snapshot = options.to_snapshot()?;
         let snapshot = repo.backup(&request.options(), &sources, snapshot)?;
         debug_log!(ENGINE, "created snapshot {}", snapshot.id);
         Ok(BackupReport {

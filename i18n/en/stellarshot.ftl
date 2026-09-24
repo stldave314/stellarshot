@@ -278,3 +278,76 @@ browse-failed = Could not read this backup.
 open-copy-failed = Could not open a copy of this file.
 select-scope-folder = Choose a folder to look in
 select-restore-folder = Choose where to restore to
+
+# Automation
+error-password-not-remembered = Scheduled backups need the password remembered in your keyring. Open the backup, enter its password with “Remember password” on, and the next scheduled backup will run.
+change = Change…
+schedule-row = When it runs
+check-row = Check for damage
+check-row-last = Last checked { $when }
+check-row-never = Never checked
+check-now = Check Now
+check-again = Check Again
+check-failed = The check did not finish.
+check-passed-title = No damage found
+check-passed-body = Every snapshot, folder and index entry in this backup is present and consistent.
+clean-up-row = Free up space
+clean-up-row-description = Forgets snapshots the “Keep” setting no longer needs, and deletes data no snapshot uses.
+clean-up-now = Clean Up Now
+clean-up-failed = Cleaning up did not finish.
+clean-up-cannot-stop = Freeing space cannot be stopped once it starts.
+clean-up-done-title = Clean-up finished
+clean-up-done-body = { $count ->
+    [one] Forgot 1 snapshot.
+   *[other] Forgot { $count } snapshots.
+} { $size } no longer needed.
+progress-cleaning-up = Freeing up space…
+damaged-title = A check found damage in this backup
+damaged-body = Automatic freeing of space is paused until a check passes. Snapshots may still be restorable; to be safe, start a new backup somewhere else.
+failed-just-now = just now
+failed-minutes-ago = { $count ->
+    [one] a minute ago
+   *[other] { $count } minutes ago
+}
+failed-hours-ago = { $count ->
+    [one] an hour ago
+   *[other] { $count } hours ago
+}
+failed-days-ago = { $count ->
+    [one] yesterday
+   *[other] { $count } days ago
+}
+scheduled-backup-failed = The automatic backup failed ({ $when })
+scheduled-cleanup-failed = Cleaning up after the automatic backup failed ({ $when })
+scheduled-check-failed = The automatic check failed ({ $when })
+schedule-failed = The schedule could not be set up.
+schedule-manual = Backs up only when you press Back Up Now
+schedule-hourly = Backs up automatically every hour
+schedule-daily = Backs up automatically every day
+schedule-weekly = Backs up automatically every week
+frequency-hourly = Every hour
+frequency-daily = Every day
+frequency-weekly = Every week
+keep-smart = Smart (recommended)
+keep-3-months = At least 3 months
+keep-6-months = At least 6 months
+keep-1-year = At least a year
+keep-days = At least { $days } days
+keep-forever = Forever
+keep-smart-description = One snapshot a day for a week, one a week for a month, and one a month for a year.
+keep-forever-description = Every snapshot is kept. The backup only grows.
+keep-for-description = Every snapshot from the { $days } days before the newest one, and older ones as they fall due.
+wizard-schedule-title = When “{ $name }” runs
+wizard-when-intro = Backups can run on their own. If the computer is off or asleep at the time, the backup runs as soon as you are back.
+wizard-automatic = Back up automatically
+wizard-automatic-description = Runs in the background, even when Stellarshot is closed.
+wizard-frequency = How often
+wizard-keep = Old snapshots
+wizard-keep-label = Keep
+wizard-prune = Free up space automatically
+wizard-prune-description = Delete data no snapshot needs any more. Leave this off if another computer backs up to the same place.
+wizard-remember-for-schedule = Scheduled backups can only run with the password remembered.
+notify-backup-failed = Backup “{ $name }” failed
+notify-cleanup-failed = Cleaning up “{ $name }” failed
+notify-check-failed = Checking “{ $name }” failed
+notify-open = Open

@@ -43,16 +43,11 @@ fn setup(files: usize) -> (TempDir, Job) {
     let location = Location::local(dir.path().join("repo"));
     engine::init(&location, &Secret::new(PASSWORD)).unwrap();
     let job = Job {
-        repository: location,
-        password: Secret::new(PASSWORD),
         request: Some(BackupRequest {
             sources: vec![source],
             ..BackupRequest::default()
         }),
-        restore: None,
-        snapshot: None,
-        destination: None,
-        ids: Vec::new(),
+        ..Job::new(location, Secret::new(PASSWORD))
     };
     (dir, job)
 }

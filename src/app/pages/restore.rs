@@ -1305,6 +1305,8 @@ mod tests {
             Message::Restore(ChildEvent::Event(Event::Done {
                 report: None,
                 restored: Some(RestorePreview::default()),
+                forgotten: None,
+                pruned: None,
             }))
         };
         let second = page.update(done());

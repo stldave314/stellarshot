@@ -22,9 +22,8 @@ snapshot you ever made.
 
 > **Status: early, and not yet something to trust with your only copy.** You
 > can set up backups of folders to a USB drive, another folder, an SSH server
-> or Google Drive, run them in the background, manage their snapshots, and get
-> files back. Scheduled backups are still to come. Keep another backup, and
-> follow the
+> or Google Drive, run them on a schedule, manage their snapshots, and get
+> files back. Keep another backup, and follow the
 > [3-2-1 rule](https://www.backblaze.com/blog/the-3-2-1-backup-strategy/).
 
 **[Roadmap](ROADMAP.md)** · **[Changelog](CHANGELOG.md)** ·
@@ -38,8 +37,8 @@ snapshot you ever made.
 - **Several backups, each with its own settings.** "Home to the USB drive" and
   "Projects to the NAS folder" live side by side in the sidebar, each with its
   own folders, exclusions, destination and password.
-- **A setup wizard.** Three steps: what to back up, where to keep it, and the
-  password. It starts from your home folder with the usual clutter
+- **A setup wizard.** Four steps: what to back up, where to keep it, when it
+  runs, and the password. It starts from your home folder with the usual clutter
   (`~/.cache`, the Trash, `~/Downloads`) already left out.
 - **A size estimate you can trust.** The wizard shows how much will be backed up
   while you choose, with excluded folders **subtracted** from the folders they
@@ -83,6 +82,16 @@ snapshot you ever made.
   both** (the default: your file is not touched and the restored copy gets a
   dated name), **Overwrite** or **Skip**. A dry run counts what will be
   restored, replaced, kept alongside or left alone before anything is written.
+- **Backups that run on their own.** Hourly, daily or weekly, through a
+  systemd timer, whether or not Stellarshot is open. A backup missed while the
+  computer was off runs as soon as you are back. If one fails, a notification
+  says so and a click opens the backup; an unplugged drive is simply tried
+  again at the next slot.
+- **Old snapshots cleaned up for you.** Keep a smart history (a snapshot a day
+  for a week, a week for a month, a month for a year) or everything from the
+  last 3 months, 6 months or year. Space no snapshot needs is freed
+  automatically where that is safe, and the repository is checked for damage
+  every 30 days.
 - **Incremental and deduplicated.** Unchanged files are not stored again, and
   identical data is stored once however many files contain it.
 - **Your language.** English, Bulgarian, German, Swedish and Swiss German,
@@ -90,10 +99,8 @@ snapshot you ever made.
 
 ## What is coming
 
-Next (the detail is in [ROADMAP.md](ROADMAP.md)):
-
-- **Automation**: scheduled backups, retention policies, notifications and
-  periodic integrity checks.
+Next is 1.0: reviewed translations, an accessibility pass, and end-to-end
+restore tests in CI. The detail is in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -179,8 +186,23 @@ right-click menu).
    Press **Check** (folders and drives are checked straight away). A location
    that already holds other files is refused; one that already holds a backup
    is pointed out, so you can open it instead.
-3. **Password.** Choose one and confirm it. **Remember password** keeps it in
-   your keyring.
+3. **When.** **Back up automatically** is on, daily, by default; choose
+   hourly or weekly, or turn it off. **Keep** decides which old snapshots are
+   forgotten:
+
+   | Keep | What stays |
+   | --- | --- |
+   | **Smart** (default) | One snapshot a day for a week, one a week for a month, one a month for a year |
+   | **At least 3 months / 6 months / a year** | Every snapshot from that long before the newest one |
+   | **Forever** | Everything; the backup only grows |
+
+   **Free up space automatically** deletes data no remaining snapshot needs.
+   It is on for folders and drives on this computer and off for servers and
+   cloud storage, which another computer may be backing up to at the same
+   time.
+4. **Password.** Choose one and confirm it. **Remember password** keeps it in
+   your keyring. Automatic backups need it remembered: they run when nobody
+   is there to type it.
 
 **Create and Back Up Now** creates the backup and takes the first snapshot
 straight away.
@@ -269,12 +291,39 @@ snapshot are left alone.
 runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out),
 makes it read-only, and opens it with its usual application.
 
+### Automatic backups
+
+A scheduled backup runs `stellarshot --scheduled <id>` from a systemd user
+timer, in the background and at low priority, whether or not the window is
+open. It backs up, forgets old snapshots under the **Keep** setting, checks
+the repository if the last check was 30 days ago or more, and then frees
+space if that is turned on.
+
+- **Missed runs catch up.** If the computer was off or asleep, the backup runs
+  shortly after you log in.
+- **An unplugged drive or no network** is not an error: the run is skipped and
+  the next slot tries again. The page shows how long ago the last backup was.
+- **A real failure** (a password that is no longer remembered, a full disk)
+  raises a notification. Clicking it opens the backup, which shows what went
+  wrong and a button to try again. The sidebar marks the backup with a
+  warning until it succeeds.
+- **Only this computer's snapshots are ever forgotten.** If another computer
+  backs up to the same place, its snapshots are left to its own settings.
+- **Damage found by a check** pauses freeing space until a check passes, and
+  is shown on the page with **Check Again**.
+
+Only one thing writes to a backup at a time: if you press **Back Up Now**
+while a scheduled backup is running, you are told it is busy.
+
 ### Changing a backup
 
 The **Manage** section at the bottom of each backup's page:
 
 | Action | What happens |
 | --- | --- |
+| **When it runs → Change…** | Automatic backups on or off, how often, what to keep, and whether to free space |
+| **Check for damage → Check Now** | Verifies every snapshot, folder and index entry. It shows when it last ran |
+| **Free up space → Clean Up Now** | Forgets snapshots **Keep** no longer needs and deletes data nothing uses. It cannot be stopped once started |
 | **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
 | **Remove from Stellarshot** | Forgets the backup and its remembered password. The data stays where it is and can be opened again later |
 | **Delete backup and all data** | Permanently deletes every snapshot. You type the backup's name to confirm. Only the repository's own files are removed |
@@ -299,6 +348,8 @@ Individual snapshots are deleted with the bin icon on their row.
 | `stellarshot` | Open the window |
 | `stellarshot --new-backup` | Open the window straight into the setup wizard (the launcher's **New Backup** action) |
 | `stellarshot --restore` | Open the selected backup's restore page as soon as it is unlocked (the launcher's **Restore Files** action) |
+| `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
+| `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
 ### Reading your backups without Stellarshot
@@ -355,6 +406,18 @@ copy them by hand and restart Stellarshot:
 cp -r ~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1 \
       ~/.config/cosmic/io.github.stldave314.Stellarshot/
 ```
+
+**Automatic backups do not run.**
+Check the timer: `systemctl --user list-timers 'stellarshot-*'` should list one
+per scheduled backup, with the next run. If it is missing, open Stellarshot:
+it sets up the timers for every scheduled backup each time it starts. The
+last run's output is in `journalctl --user -u 'stellarshot-backup-*'`. Timers
+run only while you are logged in; a slot missed while logged out runs at the
+next login.
+
+**"Scheduled backups need the password remembered."**
+Open the backup, and enter its password with **Remember password** on. The
+next automatic backup will run.
 
 **The password is asked for every time.**
 **Remember password** was off, or the keyring could not be reached. Check that
@@ -418,16 +481,17 @@ written to stderr too.
 - **Google sign-in uses rclone's shared Google client**, which Google limits in
   how fast it may be used; very large first backups can be slower than with
   your own client ID.
-- **No schedule yet.** Backups run when you press **Back Up Now**.
+- **Timers need systemd.** On a system without a systemd user session,
+  automatic backups cannot be set up; **Back Up Now** still works.
 - **Search, Deleted files and Compare show at most 500 entries.** Narrow the
   search, choose a smaller folder, or compare snapshots closer together.
 - **Opening the restore page reads the whole index first,** which can take a
   while for a large backup on a slow connection.
-- **Old snapshots are kept until you delete them.** Retention policies come
-  with scheduling. Deleting a snapshot does not free its space until the
-  repository is pruned, which also comes with scheduling.
-- **Some translations are machine-assisted.** Strings added recently were
-  translated without review by native speakers. `tests/i18n.rs` proves every
+- **Freed space can take a day to appear.** Data no snapshot needs is first
+  marked, and deleted by a later clean-up at least 23 hours on, so a backup
+  running elsewhere at the same moment cannot lose data it still refers to.
+- **Some translations are unreviewed.** Strings added recently have not yet
+  been reviewed by native speakers. `tests/i18n.rs` proves every
   locale has the same keys and placeholders as English, but not that the
   wording is right. Corrections are welcome.
 
@@ -456,11 +520,13 @@ written to stderr too.
 
   keyring ── Secret Service (GNOME Keyring, KWallet), one item per backup
   rclone  ── SSH servers and cloud storage, with Stellarshot's own rclone.conf
+  timers  ── systemd user timers run `stellarshot --scheduled <id>`, which
+             backs up through the same runner as the window's child process
 ```
 
-Writes (backup, restore, check, deleting snapshots) run in a child process,
-`stellarshot --run <operation>`, because rustic cannot be interrupted once an
-operation starts and a process can. The password reaches the child on stdin,
+Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
+process, `stellarshot --run <operation>`, because rustic cannot be interrupted
+once an operation starts and a process can. The password reaches the child on stdin,
 never in its command line or environment, both of which other programs
 running as you can read.
 
@@ -477,6 +543,11 @@ running as you can read.
 | `drives` | Mounted removable drives, and where a drive with a given ID is mounted now |
 | `dejadup` | Reading Déjà Dup's settings (never its password) and turning them into a backup |
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
+| `engine::maintenance` | Checks, forgetting by retention rules (this computer's snapshots only) and pruning |
+| `schedule` | Writing, enabling and removing each scheduled backup's systemd timer, and keeping them in line with the settings |
+| `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
+| `run_state` | What happened when each backup last ran on its own, in cosmic-config's state store |
+| `notify` | Desktop notifications, and opening the backup when one is clicked |
 | `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
 | `app` | The window: sidebar, menus, dialogs, settings |
 | `app::pages` | The first-launch screen, each backup's page, and the restore page |

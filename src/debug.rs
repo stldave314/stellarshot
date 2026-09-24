@@ -38,6 +38,8 @@ pub const ENGINE: &str = "ENGINE";
 pub const UI: &str = "UI";
 /// Settings load, save and migration.
 pub const CONFIG: &str = "CONFIG";
+/// Scheduled backups: systemd units, the `--scheduled` run, notifications.
+pub const SCHED: &str = "SCHED";
 
 struct Sink {
     file: Option<File>,

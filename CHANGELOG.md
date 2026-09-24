@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Cloud tokens are never written into a readable file.** Stellarshot's
+  rclone configuration was made private only after a sign-in had written the
+  token, and rclone keeps an existing file's mode, so a configuration that had
+  become readable by others (copied, restored from a backup) held the token in
+  the open until then; copying a remote in never tightened it at all. The file
+  is now made owner-only, in an owner-only folder, before anything is written.
 - **Backups run with a per-repository lock.** rustic takes no lock of its own,
   so two backups (or a backup and a delete) could write to one repository at
   once. Every write now holds an exclusive lock, which the kernel releases if
@@ -31,6 +37,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scheduled backups.** Hourly, daily or weekly through a systemd user timer
+  per backup, running `stellarshot --scheduled <id>` in the background at low
+  priority, whether or not the window is open. Timers are persistent, so a
+  run missed while the computer was off happens at the next login. The window
+  keeps the timers in line with the settings every time it starts. New
+  backups run daily by default.
+- **Retention.** Keep a smart history (7 daily, 4 weekly, 12 monthly) or at
+  least 3 months, 6 months or a year before the newest snapshot, or
+  everything. Only this computer's snapshots are forgotten, so another
+  computer sharing the repository keeps its own history.
+- **Freeing space.** After forgetting, data no snapshot needs is pruned: on by
+  default for folders and drives on this computer, off for servers and cloud
+  storage, and paused while a check has found damage. rustic's delay before
+  deleting unused data protects a backup running elsewhere.
+- **Integrity checks every 30 days**, after a scheduled backup, plus **Check
+  Now** and **Clean Up Now** on each backup's page.
+- **Notifications for scheduled runs that fail.** An unreachable drive or
+  server, or a repository already being written to, is skipped quietly and
+  retried at the next slot; anything else is recorded, shown on the page with
+  a way to retry, marked in the sidebar, and raised as a notification whose
+  click opens the backup (`stellarshot --profile <id>`).
+- **A "When" step in the setup wizard**, and **When it runs → Change…** to
+  edit it later. Importing from Déjà Dup carries over its automatic-backup
+  setting and "Keep" period.
 - **Restore inside the app.** A restore page for each backup, with three
   tabs: **Browse** any snapshot as a folder tree with search and every version
   of a file (identical versions marked), **Deleted files** that a backup from

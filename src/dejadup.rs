@@ -19,6 +19,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::profile::{Retention, Schedule};
+
 /// Where the Flatpak build keeps its settings, relative to `$HOME`.
 const FLATPAK_KEYFILE: &str = ".var/app/org.gnome.DejaDup/config/glib-2.0/settings/keyfile";
 
@@ -59,6 +61,10 @@ pub struct Import {
     pub place: Place,
     /// Déjà Dup recorded a format other than restic.
     pub other_format: bool,
+    /// Déjà Dup's automatic backups: off, daily or weekly.
+    pub schedule: Schedule,
+    /// Déjà Dup's "Keep" setting.
+    pub retention: Retention,
 }
 
 /// Find and read Déjà Dup's settings: the Flatpak keyfile first, then dconf.
@@ -170,6 +176,22 @@ fn get<'a>(settings: &'a Settings, section: &str, key: &str) -> Option<&'a str> 
     settings
         .get(&(section.to_owned(), key.to_owned()))
         .map(String::as_str)
+}
+
+/// A whole-number setting, or the schema default.
+fn number(settings: &Settings, section: &str, key: &str, default: i64) -> i64 {
+    get(settings, section, key)
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+/// A true/false setting, or the schema default.
+fn flag(settings: &Settings, section: &str, key: &str, default: bool) -> bool {
+    match get(settings, section, key).map(str::trim) {
+        Some("true") => true,
+        Some("false") => false,
+        _ => default,
+    }
 }
 
 /// A string setting, or the schema default.
@@ -301,11 +323,28 @@ fn import(settings: &Settings, dirs: &UserDirs) -> Import {
         }
         other => Place::Unsupported(other.to_owned()),
     };
+    // Schema defaults: automatic backups off, every 7 days, kept forever.
+    let schedule = match (
+        flag(settings, "", "periodic", false),
+        number(settings, "", "periodic-period", 7),
+    ) {
+        (false, _) => Schedule::Manual,
+        (true, days) if days < 7 => Schedule::Daily,
+        (true, _) => Schedule::Weekly,
+    };
+    let retention = match number(settings, "", "delete-after", 0) {
+        days if days <= 0 => Retention::KeepForever,
+        days => Retention::KeepFor {
+            days: u32::try_from(days).unwrap_or(u32::MAX),
+        },
+    };
     Import {
         sources,
         excludes,
         place,
         other_format: matches!(tool.as_str(), "duplicity" | "borg"),
+        schedule,
+        retention,
     }
 }
 
@@ -399,6 +438,31 @@ name='Backup SSD'
                 .contains(&PathBuf::from("/home/alex/.cargo"))
         );
         assert!(!import.other_format, "an unset tool is decided by probing");
+    }
+
+    #[test]
+    fn schedule_and_keep_come_across() {
+        let defaults = import(&parse(FLATPAK), &dirs());
+        assert_eq!(
+            defaults.schedule,
+            Schedule::Manual,
+            "`periodic` defaults to false in Déjà Dup's schema"
+        );
+        assert_eq!(
+            defaults.retention,
+            Retention::KeepForever,
+            "0 means forever"
+        );
+
+        let daily = import(
+            &parse("[/]\nperiodic=true\nperiodic-period=1\ndelete-after=182\n"),
+            &dirs(),
+        );
+        assert_eq!(daily.schedule, Schedule::Daily);
+        assert_eq!(daily.retention, Retention::KeepFor { days: 182 });
+
+        let weekly = import(&parse("[/]\nperiodic=true\n"), &dirs());
+        assert_eq!(weekly.schedule, Schedule::Weekly, "every 7 days by default");
     }
 
     #[test]

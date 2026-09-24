@@ -86,6 +86,43 @@ snapshots becomes one restore per snapshot, run in turn; Cancel drops the rest;
 a folder missing from another snapshot falls back to the starting folder, then
 the top, then reports an error instead of looping.
 
+### The rclone configuration stays private (`tests/rclone_permissions.rs`, `src/engine/rclone.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `the_configuration_is_private_before_rclone_writes_a_token` | A stand-in `rclone` records the configuration's mode at the moment it runs: a file that started at 0644 is already 0600 when the token goes in. **Proven able to fail:** with the tightening moved after the rclone call, as it used to be, the test fails with "644" |
+| `signing_in_never_writes_into_a_readable_configuration` (`tests/rclone.rs`) | The same through the real rclone: the file ends 0600 with both the old and the new section |
+| `a_new_configuration_is_private_from_the_start` / `a_readable_configuration_is_tightened_before_a_token_goes_in` | A new file is created 0600 in a 0700 folder; copying a remote into a 0644 file tightens it first and loses nothing |
+
+### Retention and pruning (`src/engine/tests.rs`, `src/profile.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `forget_applies_the_rules` | Four snapshots a day apart, "keep 2 daily": the two newest days stay and exactly two are removed |
+| `forget_leaves_other_computers_alone` | Forgetting on behalf of another host name removes nothing, so a shared repository keeps the other computer's history |
+| `forget_keeps_everything_without_rules` | No rules, nothing removed |
+| `prune_reclaims_forgotten_data` | After forgetting the snapshots that held a 512 KiB file, prune reports at least that much unused; the repository then checks clean and the kept snapshot restores. **Cannot pass vacuously:** it first asserts two snapshots were forgotten |
+| `retention_rules`, `prune_defaults_to_on_only_for_this_computer`, `older_settings_load_with_no_prune_choice` | Each "Keep" choice maps to the right rules; freeing space defaults on for local folders and drives only; settings from before M5 load unchanged |
+
+### Scheduling (`src/schedule.rs`, `src/scheduled.rs`, `src/run_state.rs`, `tests/scheduled.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `timer_units_catch_up_missed_runs` | Each frequency's `OnCalendar`, and `Persistent=true` so a missed slot runs at the next login |
+| `the_service_runs_the_scheduled_backup_gently` | The service runs `--scheduled <id>` as a oneshot at `Nice=10` with idle I/O |
+| `exec_paths_are_escaped_for_systemd` / `only_plain_ids_go_into_units` | A path with spaces, `%`, `$` and quotes is escaped; a path with a newline, or an ID that is not letters, digits and dashes, produces no unit at all |
+| `a_check_is_due_every_thirty_days`, `prune_waits_for_a_clean_check`, `keep_forever_forgets_and_prunes_nothing` | What runs after a scheduled backup |
+| `only_unreachable_and_busy_repositories_are_skipped_quietly` | Everything else is reported |
+| `a_failure_shows_until_a_later_success` | The page's warning goes once a backup succeeds, from the timer or the window |
+| `a_scheduled_backup_runs_checks_and_is_recorded` | The real binary, settings from cosmic-config and the password from a real keyring: one snapshot, a check, and the run recorded with no failure |
+| `an_unplugged_destination_is_skipped_quietly` | Exit status 0 and no failure recorded when the repository's drive is not there |
+| `runner_maintains_by_forgetting_then_pruning` (`tests/runner.rs`) | `--run maintain` forgets and prunes, reporting both |
+
+The wizard's tests hold that a new backup runs daily and keeps a smart
+history, that editing the schedule changes nothing else about the backup
+(and editing the folders keeps the schedule), and that a Déjà Dup import keeps
+its folders, schedule and "Keep" period.
+
 ### The `--run` child process (`tests/runner.rs`, `tests/child.rs`)
 
 These run the real `stellarshot` binary, the way the window does.
@@ -278,6 +315,10 @@ Things a test cannot reach yet, and how they were confirmed.
 | Déjà Dup settings are detected on a real install | Stellarshot started with empty settings and the real home folder (Déjà Dup 50.2, Flatpak): the first screen offered "Import from Déjà Dup" | M3 |
 | Déjà Dup's backups are restic | Its cache and log show `--repo=rclone::drive:<folder>`: the repository is directly in the Drive folder Déjà Dup's settings name | M3 |
 | The restore page opens from `--restore` and lists the demo snapshot's folders | `scripts/screenshots.sh restore`, then the image inspected | M4 |
+| Generated units are valid, including an executable path with a space and `%` | `systemd-analyze --user verify` on the service and timer: no errors, and the escaped path resolved to the real file | M5 |
+| A timer installs, runs its service and uninstalls cleanly | Installed for a throwaway ID in the real user session: listed by `list-timers` with the next run, `enabled`, its service started and exited; after removal no unit, no `timers.target.wants` link and no timer remained | M5 |
+| A scheduled run works inside a systemd user service | `systemd-run --user --wait … stellarshot --scheduled <id>` with a demo profile: exit 0, a snapshot, and `last_success` and `last_check` recorded; the keyring was reachable from the service | M5 |
+| Déjà Dup's schedule defaults | Read from the installed Flatpak's `org.gnome.DejaDup.gschema.xml`: `periodic` false, `periodic-period` 7, `delete-after` 0 (forever) | M5 |
 
 ### Not yet verified end to end
 
@@ -289,6 +330,11 @@ Things a test cannot reach yet, and how they were confirmed.
   transport and the remote-string tests.
 - **Importing a real Déjà Dup Google Drive backup**, which needs the sign-in
   above.
+- **A failure notification, and opening the backup by clicking it.** The
+  notification code has not been triggered on a desktop; a scheduled run that
+  fails (for example with its remembered password removed) shows it.
+- **A timer firing on its own at its calendar time.** The timer's schedule and
+  its service were each confirmed, and systemd starts one from the other.
 
 ## Adding a check
 

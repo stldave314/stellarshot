@@ -1,22 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! One backup profile: is it safe, back it up now, and its snapshots.
+//! One backup profile: is it safe, back it up now, its snapshots, and
+//! keeping it healthy.
 
 use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::child::{ChildEvent, ChildHandle};
+use crate::app::errors;
 use crate::app::format::{self, Ago};
-use crate::engine::{EngineError, ErrorKind, Phase, ProgressEvent, Secret, SnapshotSummary};
+use crate::app::wizard::retention_label;
+use crate::engine::{
+    EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SnapshotSummary,
+};
 use crate::fl;
-use crate::profile::Profile;
+use crate::profile::{Profile, Schedule};
+use crate::run_state::{RunState, Stage};
 use crate::runner::Event;
 
 /// How many snapshots the page shows before "Show all".
 const RECENT: usize = 5;
 
-/// A write running in a child process.
+/// What a write in a child process is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Work {
+    Backup,
+    Check,
+    CleanUp,
+}
+
+/// A write running in a child process. Only one runs at a time.
 pub struct Running {
+    work: Work,
     handle: Option<ChildHandle>,
     progress: Option<ProgressEvent>,
 }
@@ -29,7 +44,7 @@ pub struct ProfileState {
     unlock_remember: bool,
     unlocking: bool,
     snapshots: Option<Vec<SnapshotSummary>>,
-    backup: Option<Running>,
+    work: Option<Running>,
     show_all: bool,
     /// Open the restore page as soon as the backup is unlocked: the
     /// desktop entry's "Restore Files" action.
@@ -48,6 +63,11 @@ pub enum Message {
     BackUpNow,
     Backup(ChildEvent),
     CancelBackup,
+    CheckNow,
+    Checked(ChildEvent),
+    CleanUpNow,
+    CleanedUp(ChildEvent),
+    EditSchedule,
     DeleteSnapshot(String),
     SnapshotsDeleted(ChildEvent),
     ShowAll,
@@ -71,8 +91,21 @@ pub enum Effect {
     ShowError(String, EngineError),
     /// A backup finished at this Unix time.
     RecordSuccess(i64),
+    /// Check the repository for damage.
+    Check(Secret),
+    /// A check finished: `Ok` if sound, the error if it found damage or
+    /// could not run.
+    RecordCheck(Result<(), EngineError>),
+    /// Forget by the retention policy and prune.
+    CleanUp(Secret),
+    /// A clean-up finished: snapshots forgotten and space freed.
+    CleanedUp {
+        forgotten: u64,
+        freed: u64,
+    },
     OpenRestore(Secret),
     Edit,
+    EditSchedule,
     Remove,
     DeleteAll,
 }
@@ -88,7 +121,7 @@ impl Default for ProfileState {
             unlock_remember: true,
             unlocking: false,
             snapshots: None,
-            backup: None,
+            work: None,
             show_all: false,
             restore_when_unlocked: false,
         }
@@ -100,8 +133,21 @@ impl ProfileState {
         Self::default()
     }
 
-    pub fn is_backing_up(&self) -> bool {
-        self.backup.is_some()
+    /// A backup, check or clean-up is running.
+    pub fn is_busy(&self) -> bool {
+        self.work.is_some()
+    }
+
+    /// Start `work` in a child process, if nothing else is running and the
+    /// backup is unlocked.
+    fn start(&mut self, work: Work) -> Option<Secret> {
+        let secret = self.secret.clone().filter(|_| self.work.is_none())?;
+        self.work = Some(Running {
+            work,
+            handle: None,
+            progress: None,
+        });
+        Some(secret)
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -123,16 +169,13 @@ impl ProfileState {
 
     /// Start a backup, if one can start.
     pub fn back_up(&mut self, profile: &Profile) -> Vec<Effect> {
-        match &self.secret {
-            Some(secret) if self.backup.is_none() && !profile.sources.is_empty() => {
-                self.backup = Some(Running {
-                    handle: None,
-                    progress: None,
-                });
-                vec![Effect::BackUp(secret.clone())]
-            }
-            _ => Vec::new(),
+        if profile.sources.is_empty() {
+            return Vec::new();
         }
+        self.start(Work::Backup)
+            .map(Effect::BackUp)
+            .into_iter()
+            .collect()
     }
 
     pub fn update(&mut self, message: Message, profile: &Profile) -> Vec<Effect> {
@@ -193,13 +236,45 @@ impl ProfileState {
             Message::BackUpNow => self.back_up(profile),
             Message::Backup(event) => self.on_backup(event),
             Message::CancelBackup => {
-                if let Some(handle) = self.backup.as_ref().and_then(|b| b.handle.as_ref()) {
+                // Pruning deletes data as it goes and is not stopped halfway.
+                if let Some(running) = self.work.as_ref().filter(|w| w.work != Work::CleanUp)
+                    && let Some(handle) = &running.handle
+                {
                     handle.cancel();
                 }
                 Vec::new()
             }
+            Message::CheckNow => self
+                .start(Work::Check)
+                .map(Effect::Check)
+                .into_iter()
+                .collect(),
+            Message::Checked(event) => self.on_work(event, |outcome| match outcome {
+                Ok(_) => vec![Effect::RecordCheck(Ok(()))],
+                Err(error) => vec![Effect::RecordCheck(Err(error))],
+            }),
+            Message::CleanUpNow => self
+                .start(Work::CleanUp)
+                .map(Effect::CleanUp)
+                .into_iter()
+                .collect(),
+            Message::CleanedUp(event) => {
+                let mut effects = self.on_work(event, |outcome| match outcome {
+                    Ok(Event::Done {
+                        forgotten, pruned, ..
+                    }) => vec![Effect::CleanedUp {
+                        forgotten: forgotten.map_or(0, |report| report.removed),
+                        freed: pruned.map_or(0, |PruneReport { bytes }| bytes),
+                    }],
+                    Ok(_) => Vec::new(),
+                    Err(error) => vec![Effect::ShowError(fl!("clean-up-failed"), error)],
+                });
+                effects.extend(self.fetch());
+                effects
+            }
+            Message::EditSchedule => vec![Effect::EditSchedule],
             Message::DeleteSnapshot(id) => match &self.secret {
-                Some(secret) if self.backup.is_none() => {
+                Some(secret) if self.work.is_none() => {
                     vec![Effect::DeleteSnapshots(secret.clone(), vec![id])]
                 }
                 _ => Vec::new(),
@@ -218,7 +293,7 @@ impl ProfileState {
                 Vec::new()
             }
             Message::Restore => match &self.secret {
-                Some(secret) if self.has_snapshots() && self.backup.is_none() => {
+                Some(secret) if self.has_snapshots() && self.work.is_none() => {
                     vec![Effect::OpenRestore(secret.clone())]
                 }
                 _ => Vec::new(),
@@ -233,36 +308,59 @@ impl ProfileState {
         self.secret.clone().map(Effect::Fetch).into_iter().collect()
     }
 
-    fn on_backup(&mut self, event: ChildEvent) -> Vec<Effect> {
+    /// Follow a running child: record its handle and progress, and when it
+    /// ends, clear the work and let `finished` decide what follows from the
+    /// final `Done` event or the error.
+    fn on_work(
+        &mut self,
+        event: ChildEvent,
+        finished: impl FnOnce(Result<Event, EngineError>) -> Vec<Effect>,
+    ) -> Vec<Effect> {
         match event {
             ChildEvent::Started(handle) => {
-                if let Some(running) = self.backup.as_mut() {
+                if let Some(running) = self.work.as_mut() {
                     running.handle = Some(handle);
                 }
                 Vec::new()
             }
             ChildEvent::Event(Event::Progress { progress }) => {
-                if let Some(running) = self.backup.as_mut() {
+                if let Some(running) = self.work.as_mut() {
                     running.progress = Some(progress);
                 }
                 Vec::new()
             }
-            ChildEvent::Event(Event::Done { report, .. }) => {
-                self.backup = None;
-                let mut effects = self.fetch();
+            ChildEvent::Event(done @ Event::Done { .. }) => {
+                self.work = None;
+                finished(Ok(done))
+            }
+            ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
+                self.work = None;
+                finished(Err(error))
+            }
+        }
+    }
+
+    fn on_backup(&mut self, event: ChildEvent) -> Vec<Effect> {
+        let fetch = self.fetch();
+        self.on_work(event, |outcome| match outcome {
+            Ok(Event::Done { report, .. }) => {
+                let mut effects = fetch;
                 if let Some(report) = report {
                     effects.push(Effect::RecordSuccess(report.snapshot.time));
                 }
                 effects
             }
-            ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
-                self.backup = None;
-                vec![Effect::ShowError(fl!("snapshot-failed"), error)]
-            }
-        }
+            Ok(_) => Vec::new(),
+            Err(error) => vec![Effect::ShowError(fl!("snapshot-failed"), error)],
+        })
     }
 
-    pub fn view<'a>(&'a self, profile: &'a Profile, now: i64) -> Element<'a, Message> {
+    pub fn view<'a>(
+        &'a self,
+        profile: &'a Profile,
+        run: &RunState,
+        now: i64,
+    ) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
         let mut page = widget::column::with_capacity(6)
             .spacing(spacing.space_m)
@@ -282,6 +380,9 @@ impl ProfileState {
             ));
         }
 
+        if let Some(banner) = trouble(profile, run, now, self.can_work()) {
+            page = page.push(banner);
+        }
         page = page.push(self.status_card(profile, now));
 
         if !self.is_unlocked() {
@@ -290,39 +391,77 @@ impl ProfileState {
             page = page.push(self.snapshot_list(snapshots));
         }
 
-        page =
-            page.push(
-                widget::settings::section()
-                    .title(fl!("manage"))
-                    .add(
-                        widget::settings::item::builder(fl!("edit-backup"))
-                            .description(fl!("edit-backup-description"))
-                            .control(widget::button::standard(fl!("edit")).on_press(Message::Edit)),
-                    )
-                    .add(
-                        widget::settings::item::builder(fl!("remove-backup"))
-                            .description(fl!("remove-backup-description"))
-                            .control(widget::button::standard(fl!("remove")).on_press_maybe(
-                                (!self.is_backing_up()).then_some(Message::Remove),
-                            )),
-                    )
-                    .add(
-                        widget::settings::item::builder(fl!("delete-backup"))
-                            .description(fl!("delete-backup-description"))
-                            .control(widget::button::destructive(fl!("delete")).on_press_maybe(
-                                (!self.is_backing_up()).then_some(Message::DeleteAll),
-                            )),
-                    ),
-            );
+        page = page.push(
+            widget::settings::section()
+                .title(fl!("manage"))
+                .add(
+                    widget::settings::item::builder(fl!("schedule-row"))
+                        .description(format!(
+                            "{} · {}",
+                            schedule_summary(profile.schedule),
+                            retention_label(profile.retention)
+                        ))
+                        .control(
+                            widget::button::standard(fl!("change")).on_press(Message::EditSchedule),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("check-row"))
+                        .description(match run.last_check {
+                            Some(time) => {
+                                fl!("check-row-last", when = format::local_time(time))
+                            }
+                            None => fl!("check-row-never"),
+                        })
+                        .control(
+                            widget::button::standard(fl!("check-now"))
+                                .on_press_maybe(self.can_work().then_some(Message::CheckNow)),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("clean-up-row"))
+                        .description(fl!("clean-up-row-description"))
+                        .control(
+                            widget::button::standard(fl!("clean-up-now"))
+                                .on_press_maybe(self.can_work().then_some(Message::CleanUpNow)),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("edit-backup"))
+                        .description(fl!("edit-backup-description"))
+                        .control(widget::button::standard(fl!("edit")).on_press(Message::Edit)),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("remove-backup"))
+                        .description(fl!("remove-backup-description"))
+                        .control(
+                            widget::button::standard(fl!("remove"))
+                                .on_press_maybe((!self.is_busy()).then_some(Message::Remove)),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("delete-backup"))
+                        .description(fl!("delete-backup-description"))
+                        .control(
+                            widget::button::destructive(fl!("delete"))
+                                .on_press_maybe((!self.is_busy()).then_some(Message::DeleteAll)),
+                        ),
+                ),
+        );
 
         widget::scrollable(page.apply(widget::container).max_width(900))
             .height(Length::Fill)
             .into()
     }
 
+    /// Unlocked, and nothing else running.
+    fn can_work(&self) -> bool {
+        self.is_unlocked() && self.work.is_none()
+    }
+
     fn status_card<'a>(&'a self, profile: &'a Profile, now: i64) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
-        if let Some(running) = &self.backup {
+        if let Some(running) = &self.work {
             return card(progress(running));
         }
 
@@ -354,10 +493,11 @@ impl ProfileState {
         let can_back_up = self.is_unlocked() && !profile.sources.is_empty();
 
         card(
-            widget::column::with_capacity(3)
+            widget::column::with_capacity(4)
                 .spacing(spacing.space_xs)
                 .push(widget::text::title4(headline))
                 .push(widget::text::caption(detail))
+                .push(widget::text::caption(schedule_summary(profile.schedule)))
                 .push(
                     widget::row::with_capacity(2)
                         .spacing(spacing.space_xs)
@@ -413,7 +553,7 @@ impl ProfileState {
             let delete = widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                 .padding(spacing.space_xxs)
                 .on_press_maybe(
-                    (!self.is_backing_up()).then(|| Message::DeleteSnapshot(snapshot.id.clone())),
+                    (!self.is_busy()).then(|| Message::DeleteSnapshot(snapshot.id.clone())),
                 );
             section = section.add(
                 widget::settings::item::builder(format::local_time(snapshot.time))
@@ -440,17 +580,80 @@ impl ProfileState {
     }
 }
 
-/// A backup in progress, with a way to stop it.
+/// How often a backup runs, as a sentence.
+pub fn schedule_summary(schedule: Schedule) -> String {
+    match schedule {
+        Schedule::Manual => fl!("schedule-manual"),
+        Schedule::Hourly => fl!("schedule-hourly"),
+        Schedule::Daily => fl!("schedule-daily"),
+        Schedule::Weekly => fl!("schedule-weekly"),
+    }
+}
+
+/// A card about a scheduled run that failed, or damage a check found.
+fn trouble<'a>(
+    profile: &Profile,
+    run: &RunState,
+    now: i64,
+    can_work: bool,
+) -> Option<Element<'a, Message>> {
+    let spacing = theme::active().cosmic().spacing;
+    let (title, body, action) = if run.damaged {
+        (
+            fl!("damaged-title"),
+            fl!("damaged-body"),
+            Some((fl!("check-again"), Message::CheckNow)),
+        )
+    } else {
+        let failure = run.current_failure(profile.last_success)?;
+        let when = match format::ago(now, failure.time) {
+            Ago::JustNow => fl!("failed-just-now"),
+            Ago::Minutes(count) => fl!("failed-minutes-ago", count = count),
+            Ago::Hours(count) => fl!("failed-hours-ago", count = count),
+            Ago::Days(count) => fl!("failed-days-ago", count = count),
+        };
+        let title = match failure.stage {
+            Stage::Backup => fl!("scheduled-backup-failed", when = when),
+            Stage::Cleanup => fl!("scheduled-cleanup-failed", when = when),
+            Stage::Check => fl!("scheduled-check-failed", when = when),
+        };
+        let action = match failure.stage {
+            Stage::Backup => (fl!("back-up-now"), Message::BackUpNow),
+            Stage::Cleanup => (fl!("clean-up-now"), Message::CleanUpNow),
+            Stage::Check => (fl!("check-now"), Message::CheckNow),
+        };
+        (title, errors::explain(&failure.error()), Some(action))
+    };
+    let mut column = widget::column::with_capacity(3)
+        .spacing(spacing.space_xs)
+        .push(
+            widget::row::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .align_y(Alignment::Center)
+                .push(widget::icon::from_name("dialog-warning-symbolic").size(20))
+                .push(widget::text::title4(title)),
+        )
+        .push(widget::text::body(body));
+    if let Some((label, message)) = action {
+        column = column
+            .push(widget::button::standard(label).on_press_maybe(can_work.then_some(message)));
+    }
+    Some(card(column))
+}
+
+/// A backup, check or clean-up in progress, with a way to stop it where
+/// stopping is safe.
 fn progress(running: &Running) -> Element<'_, Message> {
     let spacing = theme::active().cosmic().spacing;
     let (label, fraction, detail) = match &running.progress {
         None => (fl!("progress-starting"), 0.0, String::new()),
         Some(progress) => {
-            let label = match progress.phase {
-                Phase::Preparing => fl!("progress-preparing"),
-                Phase::BackingUp => fl!("progress-backing-up"),
-                Phase::Restoring => fl!("progress-restoring"),
-                Phase::Checking => fl!("progress-checking"),
+            let label = match (running.work, progress.phase) {
+                (Work::CleanUp, _) => fl!("progress-cleaning-up"),
+                (Work::Check, _) | (_, Phase::Checking) => fl!("progress-checking"),
+                (_, Phase::Preparing) => fl!("progress-preparing"),
+                (_, Phase::BackingUp) => fl!("progress-backing-up"),
+                (_, Phase::Restoring) => fl!("progress-restoring"),
             };
             let fraction = progress
                 .total
@@ -474,10 +677,15 @@ fn progress(running: &Running) -> Element<'_, Message> {
         .push(widget::text::title4(label))
         .push(widget::progress_bar::determinate_linear(fraction))
         .push(widget::text::caption(detail))
-        .push(
-            widget::button::standard(fl!("cancel"))
-                .on_press_maybe(running.handle.as_ref().map(|_| Message::CancelBackup)),
-        )
+        .push(if running.work == Work::CleanUp {
+            // Pruning deletes data as it goes; it is left to finish.
+            widget::text::caption(fl!("clean-up-cannot-stop")).into()
+        } else {
+            Element::from(
+                widget::button::standard(fl!("cancel"))
+                    .on_press_maybe(running.handle.as_ref().map(|_| Message::CancelBackup)),
+            )
+        })
         .into()
 }
 
@@ -612,11 +820,13 @@ mod tests {
                     snapshot: summary(99),
                 }),
                 restored: None,
+                forgotten: None,
+                pruned: None,
             })),
             &profile(),
         );
 
-        assert!(!state.is_backing_up());
+        assert!(!state.is_busy());
         assert!(effects.iter().any(|e| matches!(e, Effect::Fetch(_))));
         assert!(
             effects
@@ -638,7 +848,7 @@ mod tests {
             &profile(),
         );
 
-        assert!(!state.is_backing_up());
+        assert!(!state.is_busy());
         assert!(
             matches!(effects.as_slice(), [Effect::ShowError(_, err)] if err.kind == ErrorKind::Cancelled)
         );

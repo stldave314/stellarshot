@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 use stellarshot::engine::{
-    self, BackupRequest, ConflictPolicy, ErrorKind, Location, Phase, RestoreRequest, Secret,
-    Target, lock,
+    self, BackupRequest, ConflictPolicy, ErrorKind, KeepRules, Location, Phase, RestoreRequest,
+    Secret, Target, lock,
 };
 use stellarshot::runner::{Event, Job};
 use tempfile::TempDir;
@@ -45,16 +45,11 @@ impl Fixture {
 
     fn backup_job(&self, password: &str) -> Job {
         Job {
-            repository: self.location.clone(),
-            password: Secret::new(password),
             request: Some(BackupRequest {
                 sources: vec![self.source.clone()],
                 ..BackupRequest::default()
             }),
-            restore: None,
-            snapshot: None,
-            destination: None,
-            ids: Vec::new(),
+            ..Job::new(self.location.clone(), Secret::new(password))
         }
     }
 
@@ -294,4 +289,35 @@ fn runner_restores_a_selection_keeping_both() {
         std::fs::read(fixture.source.join(&copies[0])).unwrap(),
         b"hello"
     );
+}
+
+#[test]
+fn runner_maintains_by_forgetting_then_pruning() {
+    let fixture = Fixture::new();
+    for _ in 0..3 {
+        let (_, status) = fixture.run("backup", &fixture.backup_job(PASSWORD));
+        assert!(status.success());
+    }
+
+    let job = Job {
+        request: None,
+        keep: Some(KeepRules {
+            last: Some(1),
+            ..KeepRules::default()
+        }),
+        prune: true,
+        ..fixture.backup_job(PASSWORD)
+    };
+    let (events, status) = fixture.run("maintain", &job);
+
+    assert!(status.success(), "events: {events:?}");
+    match events.last() {
+        Some(Event::Done {
+            forgotten: Some(forgotten),
+            pruned: Some(_),
+            ..
+        }) => assert_eq!((forgotten.removed, forgotten.kept), (2, 1)),
+        other => panic!("expected a done event with both reports, got {other:?}"),
+    }
+    assert_eq!(fixture.snapshot_count(), 1);
 }

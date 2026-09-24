@@ -47,7 +47,8 @@ note in the [README](README.md).
   directory; see the [changelog](CHANGELOG.md).
 - **Cloud sign-ins stay in Stellarshot's own file.** Signing in to Google Drive
   stores rclone's access token in `~/.config/stellarshot/rclone.conf`, readable
-  only by you. Your own `~/.config/rclone/rclone.conf` is never written; a
+  only by you. The file is made private before a token is written into it,
+  even if it had somehow become readable by others. Your own `~/.config/rclone/rclone.conf` is never written; a
   remote you pick from it is copied, so removing a Stellarshot backup cannot
   break a remote you use for something else.
 - **SSH servers must be known.** SFTP backups check the server's host key
@@ -64,6 +65,16 @@ note in the [README](README.md).
   folder only you can open (mode 0700) in your session's runtime directory
   (`$XDG_RUNTIME_DIR`, which a desktop login keeps in memory and clears at
   logout), and makes the copy read-only.
+- **Scheduled backups add nothing to trust.** A timer runs Stellarshot as you,
+  with the password it reads from your keyring at run time; nothing is
+  stored in the systemd unit files, which contain only the program's path and
+  the backup's ID (letters, digits and dashes, checked before anything is
+  written). A backup scheduled without a remembered password does not run,
+  and says so.
+- **Retention never reaches other computers' snapshots**, and space is freed
+  automatically only where the repository is unlikely to be shared, with
+  rustic's delay before unused data is deleted protecting a backup running
+  elsewhere. Freeing space is paused while a check has found damage.
 - **One writer per repository.** Every backup, restore, check and deletion
   holds an exclusive lock on the repository, so two of them can never write
   to it at once. The lock lives in your private runtime directory and is

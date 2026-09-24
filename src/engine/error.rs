@@ -38,6 +38,9 @@ pub enum ErrorKind {
     RcloneMissing,
     /// Signing in to a cloud account did not complete.
     AuthFailed,
+    /// A scheduled backup found no remembered password to open the
+    /// repository with.
+    PasswordNotRemembered,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }

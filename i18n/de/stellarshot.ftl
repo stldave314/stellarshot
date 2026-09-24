@@ -278,3 +278,76 @@ browse-failed = Diese Sicherung konnte nicht gelesen werden.
 open-copy-failed = Es konnte keine Kopie dieser Datei geöffnet werden.
 select-scope-folder = Wähle einen Ordner zum Durchsuchen
 select-restore-folder = Wähle, wohin wiederhergestellt werden soll
+
+# Automation
+error-password-not-remembered = Geplante Sicherungen benötigen das im Schlüsselbund gespeicherte Passwort. Öffne die Sicherung, gib ihr Passwort mit „Passwort merken“ ein, dann läuft die nächste geplante Sicherung.
+change = Ändern …
+schedule-row = Wann sie läuft
+check-row = Auf Schäden prüfen
+check-row-last = Zuletzt geprüft { $when }
+check-row-never = Noch nie geprüft
+check-now = Jetzt prüfen
+check-again = Erneut prüfen
+check-failed = Die Prüfung wurde nicht abgeschlossen.
+check-passed-title = Keine Schäden gefunden
+check-passed-body = Jede Momentaufnahme, jeder Ordner und jeder Indexeintrag dieser Sicherung ist vorhanden und stimmig.
+clean-up-row = Speicher freigeben
+clean-up-row-description = Vergisst Momentaufnahmen, die die Einstellung „Behalten“ nicht mehr braucht, und löscht Daten, die keine Momentaufnahme nutzt.
+clean-up-now = Jetzt aufräumen
+clean-up-failed = Das Aufräumen wurde nicht abgeschlossen.
+clean-up-cannot-stop = Das Freigeben von Speicher kann nach dem Start nicht angehalten werden.
+clean-up-done-title = Aufräumen abgeschlossen
+clean-up-done-body = { $count ->
+    [one] 1 Momentaufnahme vergessen.
+   *[other] { $count } Momentaufnahmen vergessen.
+} { $size } werden nicht mehr benötigt.
+progress-cleaning-up = Speicher wird freigegeben …
+damaged-title = Eine Prüfung hat Schäden in dieser Sicherung gefunden
+damaged-body = Das automatische Freigeben von Speicher ist angehalten, bis eine Prüfung besteht. Momentaufnahmen lassen sich eventuell noch wiederherstellen; sicherheitshalber beginne eine neue Sicherung an einem anderen Ort.
+failed-just-now = gerade eben
+failed-minutes-ago = { $count ->
+    [one] vor einer Minute
+   *[other] vor { $count } Minuten
+}
+failed-hours-ago = { $count ->
+    [one] vor einer Stunde
+   *[other] vor { $count } Stunden
+}
+failed-days-ago = { $count ->
+    [one] gestern
+   *[other] vor { $count } Tagen
+}
+scheduled-backup-failed = Die automatische Sicherung ist fehlgeschlagen ({ $when })
+scheduled-cleanup-failed = Das Aufräumen nach der automatischen Sicherung ist fehlgeschlagen ({ $when })
+scheduled-check-failed = Die automatische Prüfung ist fehlgeschlagen ({ $when })
+schedule-failed = Der Zeitplan konnte nicht eingerichtet werden.
+schedule-manual = Sichert nur, wenn du „Jetzt sichern“ drückst
+schedule-hourly = Sichert automatisch jede Stunde
+schedule-daily = Sichert automatisch jeden Tag
+schedule-weekly = Sichert automatisch jede Woche
+frequency-hourly = Jede Stunde
+frequency-daily = Jeden Tag
+frequency-weekly = Jede Woche
+keep-smart = Intelligent (empfohlen)
+keep-3-months = Mindestens 3 Monate
+keep-6-months = Mindestens 6 Monate
+keep-1-year = Mindestens ein Jahr
+keep-days = Mindestens { $days } Tage
+keep-forever = Für immer
+keep-smart-description = Eine Momentaufnahme pro Tag für eine Woche, eine pro Woche für einen Monat und eine pro Monat für ein Jahr.
+keep-forever-description = Jede Momentaufnahme wird behalten. Die Sicherung wächst nur.
+keep-for-description = Jede Momentaufnahme aus den { $days } Tagen vor der neuesten, ältere werden nach und nach entfernt.
+wizard-schedule-title = Wann „{ $name }“ läuft
+wizard-when-intro = Sicherungen können von selbst laufen. Ist der Computer zu der Zeit aus oder im Ruhezustand, läuft die Sicherung, sobald du zurück bist.
+wizard-automatic = Automatisch sichern
+wizard-automatic-description = Läuft im Hintergrund, auch wenn Stellarshot geschlossen ist.
+wizard-frequency = Wie oft
+wizard-keep = Alte Momentaufnahmen
+wizard-keep-label = Behalten
+wizard-prune = Speicher automatisch freigeben
+wizard-prune-description = Löscht Daten, die keine Momentaufnahme mehr braucht. Lass das aus, wenn ein anderer Computer an denselben Ort sichert.
+wizard-remember-for-schedule = Geplante Sicherungen laufen nur mit gemerktem Passwort.
+notify-backup-failed = Sicherung „{ $name }“ fehlgeschlagen
+notify-cleanup-failed = Aufräumen von „{ $name }“ fehlgeschlagen
+notify-check-failed = Prüfung von „{ $name }“ fehlgeschlagen
+notify-open = Öffnen

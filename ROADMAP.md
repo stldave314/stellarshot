@@ -49,11 +49,11 @@ A new backup engine behind one module, on the current rustic release.
 ## M2 — Backup profiles and the main screen (done)
 
 - [x] Backup profiles: name, destination, folders to include and exclude
-      (schedule and retention settings arrive with M5)
-- [x] Status-first main screen: last backup, **Back Up Now**, **Restore…**
-      (next backup arrives with M5)
+      (schedule and retention settings added in M5)
+- [x] Status-first main screen: last backup, how often it runs, **Back Up
+      Now**, **Restore…**
 - [x] A **Create a Backup…** button on the empty main screen
-- [x] Setup wizard: what, where, password ("when" arrives with M5)
+- [x] Setup wizard: what, where, password ("when" added in M5)
 - [x] Live estimate of the backup size that subtracts excluded folders inside
       included ones, computed from the same file list the backup will read
 - [x] Passwords in the Secret Service keyring, "Remember" on by default
@@ -85,12 +85,21 @@ A new backup engine behind one module, on the current rustic release.
 - [x] Open one version of a file read-only without restoring it
 - [x] A "Restore Files" launcher action
 
-## M5 — Automation
+## M5 — Automation (done)
 
-- [ ] Scheduled backups through systemd user timers
-- [ ] Retention: keep forever, smart (7 daily, 4 weekly, 12 monthly), or custom
-- [ ] Desktop notifications for scheduled runs that fail
-- [ ] Periodic integrity checks
+- [x] Scheduled backups through systemd user timers, catching up on missed
+      runs
+- [x] Retention: smart (7 daily, 4 weekly, 12 monthly), at least 3 months,
+      6 months or a year, or forever; only this computer's snapshots are
+      forgotten
+- [x] Freeing space automatically where it is safe (folders and drives on
+      this computer), paused while a check has found damage
+- [x] Desktop notifications for scheduled runs that fail; clicking opens the
+      backup
+- [x] Periodic integrity checks (every 30 days), and **Check Now** and
+      **Clean Up Now** on the page
+- [x] Déjà Dup's schedule and "Keep" setting come across on import
+- [ ] The time of the next scheduled run on the status card
 
 ## 1.0 — Hardening
 

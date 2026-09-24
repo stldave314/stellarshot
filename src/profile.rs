@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{BackupRequest, EngineError, ErrorKind, Location, rclone};
+use crate::engine::{BackupRequest, EngineError, ErrorKind, KeepRules, Location, rclone};
 
 /// Folders under the home directory that are rarely worth backing up and are
 /// excluded from a new profile by default, as Déjà Dup does.
@@ -113,8 +113,7 @@ impl Destination {
     }
 }
 
-/// When backups run on their own. Only `Manual` is offered until scheduling
-/// exists, so a profile never claims a schedule nothing honours.
+/// When backups run on their own, through a systemd user timer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Schedule {
     #[default]
@@ -124,14 +123,37 @@ pub enum Schedule {
     Weekly,
 }
 
-/// How long snapshots are kept. Only `KeepForever` is in effect until
-/// retention exists.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// How long snapshots are kept. Only this computer's snapshots are ever
+/// forgotten; see [`crate::engine::Repo::forget`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Retention {
     #[default]
     KeepForever,
     /// 7 daily, 4 weekly and 12 monthly snapshots.
     Smart,
+    /// Every snapshot from the `days` before the newest one: Déjà Dup's "Keep
+    /// at least…". Measured from the newest snapshot, not from today, so a
+    /// backup that has not run for a while keeps its history.
+    KeepFor { days: u32 },
+}
+
+impl Retention {
+    /// The rules to forget by; `None` keeps everything.
+    pub fn keep_rules(self) -> Option<KeepRules> {
+        match self {
+            Self::KeepForever => None,
+            Self::Smart => Some(KeepRules {
+                daily: Some(7),
+                weekly: Some(4),
+                monthly: Some(12),
+                ..KeepRules::default()
+            }),
+            Self::KeepFor { days } => Some(KeepRules {
+                within_days: Some(days),
+                ..KeepRules::default()
+            }),
+        }
+    }
 }
 
 /// One backup the user has set up.
@@ -157,6 +179,10 @@ pub struct Profile {
     pub schedule: Schedule,
     #[serde(default)]
     pub retention: Retention,
+    /// Delete data no snapshot needs any more after forgetting. `None` means
+    /// the default for the destination: see [`Profile::prune_enabled`].
+    #[serde(default)]
+    pub prune: Option<bool>,
     /// When the last backup finished, in Unix seconds. A cache for the main
     /// screen: the repository's own snapshot list is the truth.
     #[serde(default)]
@@ -180,8 +206,23 @@ impl Profile {
             one_file_system: true,
             schedule: Schedule::Manual,
             retention: Retention::KeepForever,
+            prune: None,
             last_success: None,
         }
+    }
+
+    /// Whether unused data is deleted automatically after forgetting.
+    ///
+    /// rustic takes no lock of its own, so pruning while another computer
+    /// backs up to the same place could delete data that backup is about to
+    /// reference. Folders and drives on this computer are rarely shared and
+    /// prune by default; servers and cloud storage often are, and do not
+    /// unless the user turns it on.
+    pub fn prune_enabled(&self) -> bool {
+        self.prune.unwrap_or(match self.destination {
+            Destination::Local { .. } | Destination::Removable { .. } => true,
+            Destination::Sftp { .. } | Destination::Rclone { .. } => false,
+        })
     }
 
     /// Where the engine finds this profile's repository right now.
@@ -211,6 +252,7 @@ impl Profile {
             excludes,
             exclude_patterns: self.exclude_patterns.clone(),
             one_file_system: self.one_file_system,
+            time: None,
         }
     }
 }
@@ -252,6 +294,52 @@ pub fn profiles_from_v1(ron_text: &str) -> Vec<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_defaults_to_on_only_for_this_computer() {
+        let mut profile = Profile::new("Home".into(), local("/mnt/backup"), Vec::new());
+        assert!(profile.prune_enabled());
+        profile.destination = Destination::Sftp {
+            host: "nas".into(),
+            user: "alex".into(),
+            port: 22,
+            path: "backups".into(),
+        };
+        assert!(!profile.prune_enabled(), "a server may be shared");
+        profile.prune = Some(true);
+        assert!(profile.prune_enabled(), "unless the user says otherwise");
+    }
+
+    #[test]
+    fn retention_rules() {
+        assert_eq!(Retention::KeepForever.keep_rules(), None);
+        let smart = Retention::Smart.keep_rules().unwrap();
+        assert_eq!(
+            (smart.daily, smart.weekly, smart.monthly),
+            (Some(7), Some(4), Some(12))
+        );
+        assert_eq!(
+            Retention::KeepFor { days: 180 }
+                .keep_rules()
+                .unwrap()
+                .within_days,
+            Some(180)
+        );
+    }
+
+    #[test]
+    fn older_settings_load_with_no_prune_choice() {
+        let text = r#"(
+            id: "a",
+            name: "Home",
+            destination: Local(path: "/mnt/backup"),
+            sources: ["/home/alex"],
+        )"#;
+        let profile: Profile = ron::from_str(text).unwrap();
+        assert_eq!(profile.prune, None);
+        assert_eq!(profile.retention, Retention::KeepForever);
+        assert_eq!(profile.schedule, Schedule::Manual);
+    }
 
     fn local(path: &str) -> Destination {
         Destination::Local {

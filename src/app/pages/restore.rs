@@ -682,6 +682,8 @@ impl RestorePage {
             .align_y(Alignment::Center)
             .push(
                 widget::button::icon(widget::icon::from_name("go-previous-symbolic"))
+                    .tooltip(fl!("back"))
+                    .name(fl!("back"))
                     .on_press_maybe((!self.is_restoring()).then_some(Message::Close)),
             )
             .push(widget::text::title3(fl!(
@@ -773,6 +775,8 @@ impl RestorePage {
                     .align_y(Alignment::Center)
                     .push(
                         widget::button::icon(widget::icon::from_name("go-up-symbolic"))
+                            .tooltip(fl!("folder-up"))
+                            .name(fl!("folder-up"))
                             .on_press_maybe((self.dir != Path::new("/")).then_some(Message::Up)),
                     )
                     .push(widget::text::body(format::path(&self.dir)));

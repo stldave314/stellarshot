@@ -81,6 +81,9 @@ still to come.
   and creates the file mode `0600`, rather than the previous plain
   create-and-truncate, which another user on a shared machine could have
   pointed at any file this one could write to.
+- **Every icon-only button now has a name a screen reader can read**, not
+  only a visual tooltip: pin, delete a snapshot, remove a folder or exclude
+  pattern, back, and up a folder.
 
 ## [0.2.0] - 2026-09-24
 

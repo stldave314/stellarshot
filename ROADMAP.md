@@ -448,12 +448,41 @@ A new backup engine behind one module, on the current rustic release.
 
 ## 1.0 — Hardening
 
-- [ ] Every locale complete and reviewed
-- [ ] Accessibility pass
-- [ ] Screenshots of every screen
-- [ ] End-to-end "restore actually works" tests in CI
-- [ ] Every dependency at its newest version (also a standing step before
-      every release)
+- [x] **Every locale complete**, mechanically enforced rather than assumed:
+      `tests/i18n.rs` fails if any locale is missing a key, has one the
+      fallback does not, or loses a `{ $placeholder }` somewhere along the
+      way. Not independently reviewed by a native speaker of each language;
+      each string was translated as it was added, kept consistent with the
+      vocabulary already established in that file, but that is not the same
+      guarantee
+- [ ] **Accessibility pass.** One real, verified gap found and fixed:
+      seven icon-only buttons (pin, delete a snapshot, remove a folder or
+      exclude pattern, back, up a folder) had a visual `.tooltip()` but no
+      `.name()`, traced through libcosmic's and Iced's own source
+      (`widget/button/icon.rs`, `widget/button/widget.rs`) to confirm a
+      tooltip is never exposed to accessibility tools on its own — only
+      `.name()` reaches the AccessKit node a screen reader sees. All seven
+      now set both. Attempted to confirm this live against a running
+      instance's AT-SPI tree; the attempt itself failed on this machine (the
+      accessibility bus could not be reached with the environment a demo
+      instance needs), not yet retried. Not attempted: colour contrast,
+      keyboard tab order through the wizard's own multi-step flow, and a
+      real screen reader read-through
+- [x] **Screenshots**, regenerated for this release (`scripts/screenshots.sh`):
+      first launch, the wizard, an unlocked backup, the restore page, and
+      the profile page in the light theme. Not literally every screen —
+      individual dialogs (change password, password source, delete
+      confirmations) and every wizard step are not separately captured
+- [x] **End-to-end "restore actually works" tests in CI**: `cargo test
+      --all-features`, already a CI step, includes `round_trip_preserves_tree`
+      and its relatives (`src/engine/tests.rs`), each backing up a real tree
+      with awkward names, permissions and symlinks to a real repository,
+      restoring it, and diffing the result byte for byte against the
+      original — not a mock, and not skipped in CI
+- [x] Every dependency at its newest version (also a standing step before
+      every release): `cargo update`, then `cargo outdated --root-deps-only`
+      confirms every direct dependency already tracks its newest compatible
+      major
 
 ---
 

@@ -324,6 +324,8 @@ impl App {
             global_excludes = global_excludes.add(
                 widget::settings::item::builder(pattern.clone()).control(
                     widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                        .tooltip(fl!("remove"))
+                        .name(fl!("remove"))
                         .on_press(Message::RemoveGlobalExcludePattern(index)),
                 ),
             );

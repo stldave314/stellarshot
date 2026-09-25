@@ -162,6 +162,29 @@ no test, only a correction.
 | A missing or unreadable exclude-pattern file was silently ignored (`unwrap_or_default`), so a backup would quietly include whatever it was meant to leave out | Fails the backup with an `Io` error naming the file instead | `a_missing_pattern_file_fails_the_backup_rather_than_including_everything` (`src/engine/tests.rs`) |
 | The REST-delete refusal was a hardcoded English sentence bypassing `fl!()`, and doc comments in three files plus two CHANGELOG/ROADMAP entries claimed append-only "cannot be turned off later" and rustic's `config` command "stops working entirely" once set — checked directly against rustic_core's own source (`commands/config.rs`), both are wrong: `config` refuses every change to an append-only repository except turning append-only itself back off, which needs nothing more than the repository's own password | Given its own `ErrorKind::DeleteUnsupported` and a translated message in all five locales; every inaccurate doc comment and changelog/roadmap line corrected to say what is actually true (Stellarshot exposes no way to do it, not that rustic cannot) | `deleting_a_rest_repository_is_refused_rather_than_attempted` (`tests/rest_server.rs`) updated to assert the new `ErrorKind` |
 
+### An accessibility pass, before release
+
+Not a full audit (see ROADMAP.md's 1.0 section for what is not covered), but
+one real gap found and fixed, checked against the actual framework source
+rather than assumed: every icon-only button (`src/app.rs`,
+`src/app/pages/profile.rs`, `src/app/pages/restore.rs`,
+`src/app/wizard/mod.rs`) had a visual `.tooltip()`, and some had neither
+that nor anything else. Reading libcosmic's `widget/button/icon.rs` and
+`widget/button/widget.rs` directly confirmed `.tooltip()` and `.name()` are
+two separate fields: only `.name()` reaches the AccessKit node a screen
+reader sees (`node.set_label`), and Iced's own `Tooltip` widget (checked in
+its source too) has no accessibility implementation of its own — a tooltip
+is genuinely mouse-only. All seven buttons now set `.name()` as well.
+
+Attempted to confirm this against a real, running instance's AT-SPI tree
+(the same demo setup `scripts/screenshots.sh` builds, driven by a small
+Python probe instead of a screenshot) rather than trust the source reading
+alone. The attempt did not get that far: the demo instance could not reach
+the session's accessibility bus at all (`AT-SPI: Unable to open bus
+connection`), a sandboxing issue with the environment a demo instance
+needs rather than anything about Stellarshot's own code. Not yet retried;
+noted honestly in ROADMAP.md rather than claimed as verified live.
+
 ### Scheduling (`src/schedule.rs`, `src/scheduled.rs`, `src/run_state.rs`, `tests/scheduled.rs`)
 
 | Test | What it proves |

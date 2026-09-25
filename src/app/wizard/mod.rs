@@ -915,6 +915,8 @@ impl Wizard {
             advanced = advanced.add(
                 widget::settings::item::builder(pattern.clone()).control(
                     widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                        .tooltip(fl!("remove"))
+                        .name(fl!("remove"))
                         .on_press(Message::RemovePattern(index)),
                 ),
             );
@@ -1164,7 +1166,10 @@ fn path_row(path: &Path, detail: String, remove: Message) -> Element<'_, Message
     widget::settings::item::builder(format::path(path))
         .description(detail)
         .control(
-            widget::button::icon(widget::icon::from_name("edit-delete-symbolic")).on_press(remove),
+            widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                .tooltip(fl!("remove"))
+                .name(fl!("remove"))
+                .on_press(remove),
         )
         .into()
 }

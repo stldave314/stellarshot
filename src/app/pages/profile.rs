@@ -808,10 +808,13 @@ impl ProfileState {
             let pin = widget::button::icon(widget::icon::from_name("pin-symbolic"))
                 .padding(spacing.space_xxs)
                 .selected(pinned)
-                .tooltip(pin_label)
+                .tooltip(pin_label.clone())
+                .name(pin_label)
                 .on_press_maybe(can_modify.then(|| Message::TogglePinned(id.clone(), !pinned)));
             let delete = widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                 .padding(spacing.space_xxs)
+                .tooltip(fl!("delete-snapshot-row"))
+                .name(fl!("delete-snapshot-row"))
                 .on_press_maybe(can_modify.then(|| Message::DeleteSnapshot(id.clone())));
             section = section.add(
                 widget::settings::item::builder(format::local_time(snapshot.time))

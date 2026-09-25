@@ -58,7 +58,8 @@ snapshot you ever made.
   else. Without it, the page asks once per session.
 - **Status at a glance.** "Last backup 2 hours ago", where the backup is, how
   many snapshots it holds, and the most recent snapshots with their size and
-  how much new data each added.
+  how much new data each added. **Pin** a snapshot ("before the upgrade") so
+  cleaning up never removes it, however old it gets.
 - **Two different ways to let go of a backup.** *Remove from Stellarshot*
   forgets it and leaves the data alone. *Delete backup and all data* deletes
   it, and only after you type the backup's name.
@@ -178,9 +179,13 @@ right-click menu).
    folders hold, minus what the exclusions take out, equals the backup. An
    exclusion that is not inside any included folder is marked as
    changing nothing. Under **Advanced** you can leave out names that match a
-   pattern anywhere, such as `*.tmp` or `node_modules`, and choose whether to
+   pattern anywhere, such as `*.tmp` or `node_modules`; choose whether to
    stay on the same drive (on by default, so a network share mounted inside
-   your home folder is not swept up).
+   your home folder is not swept up); leave out any folder tagged as
+   disposable cache data; honour each project's own `.gitignore`; and skip
+   recording a snapshot at all when nothing has changed since the last one.
+   Patterns left out of every backup at once, rather than just this one, are
+   set under [Settings](#settings).
 2. **Where.** Choose where the backup is kept, and give it a name:
 
    | Choice | What you provide |
@@ -300,6 +305,12 @@ Tick the files and folders you want and press **Restore…**. Then choose:
   | **Keep both** (default) | Not touched | Restored next to it as `name (restored 2026-09-23).ext` |
   | **Overwrite** | Replaced | Restored in its place |
   | **Skip** | Not touched | Not restored |
+
+- **Advanced:** verify existing files by content instead of trusting their
+  size and date (slower, but catches a file that changed without its date
+  moving); and whether to restore ownership as it was backed up, as numeric
+  IDs (for restoring onto another machine or user where the names would not
+  mean the same accounts), or not at all.
 
 Before anything is written, a dry run shows how many files will be restored
 and how many existing ones will be kept alongside, replaced or skipped.
@@ -432,6 +443,7 @@ restic -r /path/to/backup restore latest --target ~/restored
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
+| Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in

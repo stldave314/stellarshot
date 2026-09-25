@@ -202,48 +202,85 @@ A new backup engine behind one module, on the current rustic release.
 
 - [ ] **Browse folders with their sizes** to include and exclude, like a disk
       usage tree: sizes on every row, and clear marks for "this folder",
-      "everything inside" and "partly"
-- [ ] **Global exclusions** (`node_modules`, `.cache`, Rust `target`, …)
-      applied to every backup, set once
-- [ ] **Exclusions that maintain themselves**: skip any folder marked as a
+      "everything inside" and "partly". Not started; the wizard's existing
+      estimate already sizes whole folders, but there is no drill-down tree
+- [x] **Global exclusions** (`node_modules`, `.cache`, Rust `target`, …)
+      applied to every backup, set once, under **Settings**
+- [x] **Exclusions that maintain themselves**: skip any folder marked as a
       cache with a `CACHEDIR.TAG` file (`exclude_if_present`), and honour each
-      project's `.gitignore` (`git_ignore`)
-- [ ] **More exclusion rules**: files over a chosen size
-      (`exclude_larger_than`), case-insensitive patterns (`iglobs`), and
-      pattern lists kept in a file (`glob_files`)
-- [ ] **No empty snapshots**: when nothing changed, an hourly backup records
-      nothing (`skip_if_unchanged`)
-- [ ] **Extended attributes** saved and restored (`set_xattrs`), for SELinux
-      labels and applications that keep data there
+      project's `.gitignore` (`git_ignore`, and `no_require_git` so a
+      `.gitignore` works even outside an actual git repository), both as
+      toggles in the wizard's Advanced section
+- [x] **More exclusion rules** in the engine and the profile itself: files
+      over a chosen size (`exclude_larger_than`), case-insensitive patterns
+      (`iglobs`), and pattern lists kept in a file, read by Stellarshot itself
+      rather than handed to rustic's own `glob_files` (whose lines are
+      exclusions only with a leading `!` nothing ever adds). Not yet reachable
+      from the wizard: a profile edited by hand or through settings export can
+      use them today, but there is no field for them in the UI yet
+- [x] **No empty snapshots**: when nothing changed, a backup records nothing
+      (`skip_if_unchanged`), as a wizard toggle
+- [x] **Extended attributes** saved and restored (`set_xattrs`): already
+      rustic's own default behaviour, confirmed with a round-trip test rather
+      than assumed; no Stellarshot code was needed
 - [ ] **Application settings instead of all of `~/.config`**: offer the
       settings of installed applications by name, and game saves (Proton,
       Wine, native) without their multi-gigabyte binaries, using a community
-      manifest such as Ludusavi's
+      manifest such as Ludusavi's. Not started: parsing and shipping that
+      manifest, and mapping it to installed applications, is a sizeable
+      feature of its own
 - [ ] **A dry run before a big first backup**: rustic's backup `dry_run`
-      gives the deduplicated size without writing; add a transfer-time
-      estimate from the measured upload speed
+      gives the deduplicated size without writing, and `BackupRequest` now
+      carries the flag through to it; not yet wired to anything in the
+      window, and no transfer-time estimate from measured upload speed exists
+      yet either
 - [ ] **System state alongside the files**, as an option: installed packages
       (`dpkg --get-selections`), Flatpaks, dconf settings and crontab dumped
-      to a file before each backup, to rebuild a machine quickly
+      to a file before each backup, to rebuild a machine quickly. Not started
 - [ ] **Back up a command's output** (`stdin_command`), such as a database
       dump (`pg_dump`, `mysqldump`), as a file in the snapshot, without
-      writing it to disk first
-- [ ] **Pin a snapshot** ("before the upgrade") so "Keep" never forgets it
-      (`delete_never`), or give one its own expiry date (`delete_after`)
+      writing it to disk first. Not started: rustic's `stdin_command` replaces
+      the whole backup source rather than adding to it, so this needs its own
+      design, likely a second snapshot rather than folding into the main one
+- [x] **Pin a snapshot** ("before the upgrade") so "Keep" never forgets it
+      (`delete_never`), from the profile page's snapshot list. A snapshot's ID
+      is a hash of its own content, so pinning saves it under a new ID and
+      removes the old one, the same two-step rustic itself uses to rewrite a
+      snapshot's metadata; proven with a test that pins the oldest of several
+      snapshots and confirms retention keeps it anyway. Giving a snapshot its
+      own expiry date (`delete_after`) instead is not yet exposed
 - [ ] **Names and notes on snapshots**: tags, a label and a description,
       shown in the list, searchable, and able to protect a snapshot from
-      retention (`keep_tags`)
+      retention (`keep_tags`). Not started; pinning above uses the same
+      underlying rustic mechanism (`SnapshotModification`), so this is mostly
+      UI work now
 - [ ] **Remove something from history**: take an accidentally backed-up
       secret or huge file out of every snapshot (`rewrite_snapshots`), then
-      prune to free the space, with a clear warning that this cannot be undone
+      prune to free the space, with a clear warning that this cannot be
+      undone. Not started on purpose: this destroys data if it goes wrong,
+      and deserved more time than was left in this pass rather than a rushed
+      first version
 - [ ] **Download straight from a snapshot**: a file, or a folder as a zip or
-      tar archive (`dump`), without restoring it
-- [ ] **Restore checks existing files by content**, not only by size and date
-      (`verify_existing`)
-- [ ] **Restore onto another machine or user** without ownership errors
-      (`no_ownership`, `numeric_id`)
+      tar archive (`dump`), without restoring it. rustic's own `dump` only
+      covers a single file; a folder needs Stellarshot to walk it and write
+      an archive itself, which needs a zip or tar crate this project does not
+      currently depend on. Not started, so that dependency choice is not made
+      in passing
+- [x] **Restore checks existing files by content**, not only by size and date
+      (`verify_existing`), as a toggle in the restore sheet's Advanced
+      section; proven with a test that corrupts a file without changing its
+      size or date and confirms only `verify_existing` catches it
+- [x] **Restore onto another machine or user** without ownership errors
+      (`no_ownership`, `numeric_id`), as a choice in the restore sheet.
+      Actually changing an owner needs root, which no automated test may
+      assume; the option is proven wired through without breaking a restore,
+      not proven to change ownership for real (see VALIDATION.md)
 - [ ] **Sparse restores**, so disk images and virtual machine files do not
-      fill the disk (`sparse`)
+      fill the disk (`sparse`). Blocked upstream: `RestoreOptions.sparse` is a
+      public field, but rustic_core 0.13 never re-exports the `SparseRestore`
+      type it takes, so it cannot be named from outside the crate at all.
+      Worth raising with the rustic project itself, per the rule at the top
+      of this page; not attempted here
 
 ## 0.4 — Storage and credentials
 
@@ -277,7 +314,17 @@ A new backup engine behind one module, on the current rustic release.
       client ID is itself a shared fate: if it is ever abused by someone
       else, Google could throttle or suspend it for every Stellarshot user
       at once, which the escape hatch (a user's own credentials) exists to
-      route around
+      route around. A real first backup on 2026-09-24 failed outright partway
+      through, on rclone's shared client and the default four-parallel-upload
+      tuning from 0.1.1: `rustic_core` gave up after retrying an upload five
+      times, each attempt ending the same way (`send failed because receiver
+      is gone` — the local rclone process closing the connection mid-request).
+      Consistent with, though not confirmed as, exactly this shared quota; no
+      diagnostic output from rclone itself survived to say for certain, since
+      `set_logger` did not actually capture it (fixed separately, see
+      CHANGELOG.md). If this keeps happening once that fix can capture
+      rclone's own reason, cutting the default parallelism back down is the
+      more conservative fallback to try before assuming it is the quota
 - [ ] **One Google sign-in per account**, shared by every backup that uses
       it, so a restore needs one sign-in per account rather than per backup
 - [ ] **Google sign-in lifetime**: find out when rclone's Google tokens can

@@ -34,6 +34,10 @@ paste = "1"
 rustic_core = "0.13"
 # rustic's storage interface hands file contents over as `Bytes`.
 bytes = "1"
+# Matches rustic_core's own dependency, to build the `ByteSize` its exclusion
+# and restore options take. Not re-exported, so the type only matches when
+# this crate resolves to the same version rustic_core does.
+bytesize = "2"
 # The local backend is always built; rclone carries SFTP and cloud storage.
 rustic_backend = { version = "0.7", default-features = false, features = ["rclone"] }
 serde_json = "1"
@@ -41,6 +45,10 @@ sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "process", "io-util", "rt", "time"] }
 jiff = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Bridges `log` (what rustic_core and rustic_backend, including rclone's own
+# output, actually log through) into the `tracing` subscriber above. Without
+# it, `set_logger`'s own claim to route rustic's output was never true.
+tracing-log = "0.2"
 thiserror = "2"
 oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
 ron = "0.12"
@@ -51,7 +59,7 @@ gethostname = "1"
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
 # Stopping a backup together with the rclone process rustic starts under it.
-rustix = { version = "1", features = ["process"] }
+rustix = { version = "1", features = ["process", "fs"] }
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
@@ -64,6 +72,14 @@ features = ["fluent-system", "desktop-requester"]
 
 [dev-dependencies]
 tempfile = "3"
+# Only to prove the `log`-to-`tracing` bridge in `app::settings::set_logger`
+# actually forwards what rustic_core and rustic_backend log through it.
+log = "0.4"
+# Only to set and read extended attributes in tests; production xattr
+# handling is entirely internal to rustic_core.
+xattr = "1"
+# Only to force a test file's modification time to collide with another's.
+filetime = "0.2"
 
 # Packaging. `install.sh` drives both of these; the `release-build` feature has
 # to be passed to `cargo deb` explicitly because it runs its own build.

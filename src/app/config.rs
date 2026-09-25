@@ -21,6 +21,9 @@ pub const CONFIG_VERSION: u64 = 2;
 pub struct StellarshotConfig {
     pub app_theme: AppTheme,
     pub profiles: Vec<Profile>,
+    /// Glob patterns left out of every backup, such as `node_modules` or
+    /// Rust's `target`, set once instead of on each profile.
+    pub global_exclude_patterns: Vec<String>,
 }
 
 impl StellarshotConfig {

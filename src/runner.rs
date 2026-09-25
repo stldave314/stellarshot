@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use crate::debug::ENGINE;
 use crate::engine::{
     self, BackupReport, BackupRequest, EngineError, ErrorKind, ForgetReport, KeepRules, Location,
-    ProgressEvent, ProgressSink, PruneReport, RestorePreview, RestoreRequest, Secret, lock,
+    ProgressEvent, ProgressSink, PruneReport, RestorePreview, RestoreRequest, Secret,
+    SnapshotSummary, lock,
 };
 use crate::{debug_log, error_log};
 
@@ -33,6 +34,8 @@ pub enum Operation {
     Restore,
     Check,
     DeleteSnapshots,
+    /// Pin or unpin a snapshot: see [`crate::engine::Repo::set_pinned`].
+    SetPinned,
     /// Forget snapshots under the retention rules, then prune if asked.
     Maintain,
 }
@@ -44,6 +47,7 @@ impl Operation {
             Self::Restore => "restore",
             Self::Check => "check",
             Self::DeleteSnapshots => "delete-snapshots",
+            Self::SetPinned => "set-pinned",
             Self::Maintain => "maintain",
         }
     }
@@ -54,6 +58,7 @@ impl Operation {
             Self::Restore,
             Self::Check,
             Self::DeleteSnapshots,
+            Self::SetPinned,
             Self::Maintain,
         ]
         .into_iter()
@@ -79,9 +84,12 @@ pub struct Job {
     /// For `restore`.
     #[serde(default)]
     pub destination: Option<PathBuf>,
-    /// For `delete-snapshots`.
+    /// For `delete-snapshots`, and the one snapshot for `set-pinned`.
     #[serde(default)]
     pub ids: Vec<String>,
+    /// For `set-pinned`: the new pinned state.
+    #[serde(default)]
+    pub pinned: Option<bool>,
     /// For `maintain`: the retention rules to forget by, if any.
     #[serde(default)]
     pub keep: Option<KeepRules>,
@@ -102,6 +110,7 @@ impl Job {
             snapshot: None,
             destination: None,
             ids: Vec::new(),
+            pinned: None,
             keep: None,
             prune: false,
         }
@@ -123,6 +132,12 @@ pub enum Event {
         forgotten: Option<ForgetReport>,
         #[serde(default)]
         pruned: Option<PruneReport>,
+        // Boxed: an unboxed `SnapshotSummary` here, alongside the other
+        // report fields already in this variant, pushes `Event` (and the
+        // `ChildEvent`/`Message` types that wrap it) over clippy's
+        // large-enum-variant threshold.
+        #[serde(default)]
+        pinned: Option<Box<SnapshotSummary>>,
     },
     Error {
         error: EngineError,
@@ -193,6 +208,7 @@ pub struct Outcome {
     pub restored: Option<RestorePreview>,
     pub forgotten: Option<ForgetReport>,
     pub pruned: Option<PruneReport>,
+    pub pinned: Option<SnapshotSummary>,
 }
 
 /// Run `operation` for `job`, holding the repository's write lock throughout.
@@ -230,6 +246,14 @@ pub fn run(
         },
         Operation::Check => repo.check().map(|()| Outcome::default()),
         Operation::DeleteSnapshots => repo.delete_snapshots(&job.ids).map(|()| Outcome::default()),
+        Operation::SetPinned => {
+            let id = job.ids.first().ok_or_else(|| missing("snapshot ID"))?;
+            let pinned = job.pinned.ok_or_else(|| missing("pinned state"))?;
+            repo.set_pinned(id, pinned).map(|summary| Outcome {
+                pinned: Some(summary),
+                ..Outcome::default()
+            })
+        }
         Operation::Maintain => {
             let forgotten = job
                 .keep
@@ -282,6 +306,7 @@ pub fn main(args: &[String]) -> ExitCode {
                 restored: outcome.restored,
                 forgotten: outcome.forgotten,
                 pruned: outcome.pruned,
+                pinned: outcome.pinned.map(Box::new),
             });
             ExitCode::SUCCESS
         }

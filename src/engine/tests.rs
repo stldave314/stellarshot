@@ -207,6 +207,207 @@ fn exclude_pattern_applies_at_any_depth() {
 }
 
 #[test]
+fn a_folder_marked_as_a_cache_is_excluded() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    fs::create_dir_all(fixture.source.join("build-cache")).unwrap();
+    fs::write(
+        fixture.source.join("build-cache/CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .unwrap();
+    fs::write(fixture.source.join("build-cache/object.o"), b"x").unwrap();
+
+    let request = BackupRequest {
+        exclude_caches: true,
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(restored.join("plain.txt").exists());
+    assert!(
+        !restored.join("build-cache").exists(),
+        "a folder tagged as a cache must be left out"
+    );
+}
+
+#[test]
+fn a_projects_own_gitignore_is_honoured_without_needing_a_git_repository() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    fs::write(fixture.source.join(".gitignore"), "*.log\nbuild/\n").unwrap();
+    fs::create_dir_all(fixture.source.join("build")).unwrap();
+    fs::write(fixture.source.join("build/output.bin"), b"x").unwrap();
+    fs::write(fixture.source.join("debug.log"), b"x").unwrap();
+
+    let request = BackupRequest {
+        git_ignore: true,
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(restored.join("plain.txt").exists());
+    assert!(!restored.join("build").exists());
+    assert!(!restored.join("debug.log").exists());
+    // The .gitignore's own rules apply to everything but itself.
+    assert!(restored.join(".gitignore").exists());
+}
+
+#[test]
+fn files_larger_than_the_limit_are_excluded() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("small.bin"), vec![0u8; 100]).unwrap();
+    fs::write(fixture.source.join("big.bin"), vec![0u8; 10_000]).unwrap();
+
+    let request = BackupRequest {
+        exclude_larger_than: Some(1_000),
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(restored.join("small.bin").exists());
+    assert!(!restored.join("big.bin").exists());
+}
+
+#[test]
+fn case_insensitive_patterns_match_either_case() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("Cache.TMP"), b"x").unwrap();
+    fs::write(fixture.source.join("keep.txt"), b"x").unwrap();
+
+    let request = BackupRequest {
+        exclude_patterns_ignoring_case: vec!["*.tmp".into()],
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(restored.join("keep.txt").exists());
+    assert!(
+        !restored.join("Cache.TMP").exists(),
+        "a case-insensitive pattern must match regardless of case"
+    );
+}
+
+#[test]
+fn patterns_kept_in_a_file_are_applied() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("keep.txt"), b"x").unwrap();
+    fs::write(fixture.source.join("scratch.tmp"), b"x").unwrap();
+    let pattern_file = fixture.work.join("patterns.txt");
+    fs::write(&pattern_file, "*.tmp\n").unwrap();
+
+    let request = BackupRequest {
+        exclude_pattern_files: vec![pattern_file],
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(restored.join("keep.txt").exists());
+    assert!(!restored.join("scratch.tmp").exists());
+}
+
+#[test]
+fn an_unchanged_backup_is_skipped_when_asked() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let request = BackupRequest {
+        skip_if_unchanged: true,
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    back_up(&fixture, &request);
+
+    let snapshots = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert_eq!(
+        snapshots.len(),
+        1,
+        "an unchanged backup must not add a second snapshot"
+    );
+
+    fs::write(fixture.source.join("plain.txt"), b"changed").unwrap();
+    back_up(&fixture, &request);
+    let snapshots = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert_eq!(snapshots.len(), 2, "a real change must still be recorded");
+}
+
+#[test]
+fn a_dry_run_reports_size_without_writing_anything() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+
+    let request = BackupRequest {
+        dry_run: true,
+        ..sources(&fixture.source)
+    };
+    let report = back_up(&fixture, &request);
+    assert!(
+        report.snapshot.data_added > 0,
+        "a dry run must still report the size it would add"
+    );
+
+    let snapshots = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert!(snapshots.is_empty(), "a dry run must not write a snapshot");
+
+    // The same backup for real must add just as much data as the dry run
+    // estimated, since nothing was actually written in between.
+    let real = back_up(&fixture, &sources(&fixture.source));
+    assert_eq!(real.snapshot.data_added, report.snapshot.data_added);
+}
+
+#[test]
+fn extended_attributes_are_saved_and_restored() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    let file = fixture.source.join("tagged.txt");
+    fs::write(&file, b"x").unwrap();
+    xattr::set(&file, "user.stellarshot.test", b"hello").unwrap();
+
+    back_up(&fixture, &sources(&fixture.source));
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored_file = restored(&destination, &fixture.source).join("tagged.txt");
+    let value = xattr::get(&restored_file, "user.stellarshot.test").unwrap();
+    assert_eq!(value, Some(b"hello".to_vec()));
+}
+
+#[test]
 fn wrong_password_is_reported_as_such() {
     let fixture = fixture();
 
@@ -534,6 +735,7 @@ fn restore_request(paths: Vec<PathBuf>, target: Target, policy: ConflictPolicy) 
         paths,
         target,
         policy,
+        ..RestoreRequest::default()
     }
 }
 
@@ -567,6 +769,79 @@ fn kept_copy(path: &Path) -> PathBuf {
             name.starts_with(&format!("{stem} (restored "))
         })
         .unwrap_or_else(|| panic!("no kept copy next to {}", path.display()))
+}
+
+#[test]
+fn verify_existing_catches_content_that_looks_unchanged() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    let file = fixture.source.join("data.bin");
+    fs::write(&file, b"original content").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    let destination = fixture.work.join("restore");
+    let target_file = restored(&destination, &fixture.source).join("data.bin");
+    fs::create_dir_all(target_file.parent().unwrap()).unwrap();
+    // Same length as "original content", so a size-and-date check alone
+    // cannot tell the two apart.
+    fs::write(&target_file, b"corrupted-------").unwrap();
+    let original_mtime = fs::metadata(&file).unwrap().modified().unwrap();
+    filetime::set_file_mtime(
+        &target_file,
+        filetime::FileTime::from_system_time(original_mtime),
+    )
+    .unwrap();
+
+    let request = restore_request(
+        vec![PathBuf::from("/")],
+        Target::Folder(destination.clone()),
+        ConflictPolicy::Overwrite,
+    );
+    run_restore(&fixture, &request);
+    assert_eq!(
+        fs::read(&target_file).unwrap(),
+        b"corrupted-------",
+        "trusting size and date must leave the file untouched"
+    );
+
+    let request = RestoreRequest {
+        verify_existing: true,
+        ..request
+    };
+    run_restore(&fixture, &request);
+    assert_eq!(
+        fs::read(&target_file).unwrap(),
+        b"original content",
+        "verifying by content must catch the mismatch and rewrite it"
+    );
+}
+
+#[test]
+fn restoring_with_numeric_or_no_ownership_does_not_fail() {
+    // Actually changing an owner needs root, which tests must not assume;
+    // this only proves the option is wired through without breaking a
+    // restore for everyone else. See VALIDATION.md for how ownership itself
+    // was checked.
+    for ownership in [Ownership::Numeric, Ownership::None, Ownership::Preserve] {
+        let fixture = fixture();
+        awkward_tree(&fixture.source);
+        back_up(&fixture, &sources(&fixture.source));
+        let destination = fixture.work.join(format!("restore-{ownership:?}"));
+        let request = RestoreRequest {
+            ownership,
+            ..restore_request(
+                vec![PathBuf::from("/")],
+                Target::Folder(destination.clone()),
+                ConflictPolicy::Overwrite,
+            )
+        };
+        run_restore(&fixture, &request);
+        assert!(
+            restored(&destination, &fixture.source)
+                .join("plain.txt")
+                .exists()
+        );
+    }
 }
 
 #[test]
@@ -819,6 +1094,57 @@ fn forget_applies_the_rules() {
     let mut newest = taken[2..].to_vec();
     newest.sort();
     assert_eq!(left, newest, "the two newest days are kept");
+}
+
+#[test]
+fn a_pinned_snapshot_survives_forget_that_would_otherwise_remove_it() {
+    let fixture = fixture();
+    let taken = daily_history(&fixture);
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let pinned = repo.set_pinned(&taken[0], true).unwrap();
+    assert!(pinned.pinned);
+
+    let rules = KeepRules {
+        daily: Some(2),
+        ..KeepRules::default()
+    };
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(&rules, &hostname())
+        .unwrap();
+
+    let left = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert!(
+        left.iter().any(|s| s.id == pinned.id),
+        "the pinned snapshot must survive under its new ID"
+    );
+    // Without the pin, only the two newest days would remain (see
+    // `forget_applies_the_rules`); the pin keeps one extra.
+    assert_eq!(left.len(), 3);
+    assert_eq!(report.kept, 3);
+
+    let unpinned = open(&fixture.repo, &secret())
+        .unwrap()
+        .set_pinned(&pinned.id, false)
+        .unwrap();
+    assert!(!unpinned.pinned);
+}
+
+#[test]
+fn pinning_an_already_pinned_snapshot_is_a_harmless_no_op() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let taken = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let first = repo.set_pinned(&taken, true).unwrap();
+    let second = open(&fixture.repo, &secret())
+        .unwrap()
+        .set_pinned(&first.id, true)
+        .unwrap();
+    assert_eq!(
+        first.id, second.id,
+        "pinning twice must not change the ID again"
+    );
 }
 
 #[test]

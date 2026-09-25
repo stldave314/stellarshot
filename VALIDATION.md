@@ -109,6 +109,21 @@ the top, then reports an error instead of looping.
 | `prune_reclaims_forgotten_data` | After forgetting the snapshots that held a 512 KiB file, prune reports at least that much unused; the repository then checks clean and the kept snapshot restores. **Cannot pass vacuously:** it first asserts two snapshots were forgotten |
 | `retention_rules`, `prune_defaults_to_on_only_for_this_computer`, `older_settings_load_with_no_prune_choice` | Each "Keep" choice maps to the right rules; freeing space defaults on for local folders and drives only; settings from before M5 load unchanged |
 
+### Exclusions, snapshot pinning and restore options (`src/engine/tests.rs`, 0.3)
+
+| Test | What it proves |
+| --- | --- |
+| `a_folder_marked_as_a_cache_is_excluded` | A folder holding a `CACHEDIR.TAG` file is left out whole |
+| `a_projects_own_gitignore_is_honoured_without_needing_a_git_repository` | A plain `.gitignore`, with no `.git` folder at all, still excludes what it lists; the `.gitignore` file itself is still backed up |
+| `files_larger_than_the_limit_are_excluded`, `case_insensitive_patterns_match_either_case`, `patterns_kept_in_a_file_are_applied` | The three extra exclusion rules each work; the case-insensitive and file-based ones needed a leading `!` added by Stellarshot itself, caught by a first version of the test failing because the unmodified pattern restricted the backup to only the excluded files instead of leaving them out |
+| `an_unchanged_backup_is_skipped_when_asked` | Backing up twice with nothing changed adds no second snapshot; a real change afterward still is recorded |
+| `a_dry_run_reports_size_without_writing_anything` | A dry run reports the size it would add and leaves the repository with no snapshot; a real backup right after adds exactly that much |
+| `extended_attributes_are_saved_and_restored` | A user extended attribute set on a file survives a backup and restore. This needed no production code: rustic saves and restores them by default |
+| `a_pinned_snapshot_survives_forget_that_would_otherwise_remove_it`, `pinning_an_already_pinned_snapshot_is_a_harmless_no_op` | Pinning the oldest of several daily snapshots keeps it through a `forget` that would otherwise remove it; pinning twice does not change its ID again. **Caught by the test:** pinning changes a snapshot's ID (it is a hash of the snapshot's own content), so the first version of `set_pinned` returned the old, now-deleted ID; fixed by finding the new one from the snapshot list before and after |
+| `verify_existing_catches_content_that_looks_unchanged` | A restored file corrupted to the same size and modification time as the backup is left alone by default and only rewritten with `verify_existing` on |
+| `restoring_with_numeric_or_no_ownership_does_not_fail` | Each ownership choice completes a restore without error. Actually changing an owner needs root; see "Not yet verified end to end" |
+| `runner_pins_a_snapshot_and_protects_it_from_maintain` (`tests/runner.rs`) | The same pin, through `--run set-pinned` and then `--run maintain`, the way the window actually calls it |
+
 ### Scheduling (`src/schedule.rs`, `src/scheduled.rs`, `src/run_state.rs`, `tests/scheduled.rs`)
 
 | Test | What it proves |
@@ -249,6 +264,24 @@ State and effects are tested without rendering:
   repository; open takes its folders from the latest snapshot; open with the
   wrong password fails as `WrongPassword`.
 
+### rustic's and rclone's diagnostics reach a log (`src/app/settings.rs`, `src/debug.rs`)
+
+`rustic_backend_output_reaches_the_log_file` sets up the real logger against a
+private path, logs through the `log` crate under `rustic_backend`'s own
+target the way rclone's own output does, and reads that path back. **Proven
+able to fail:** before the fix, `set_logger` built a `tracing` subscriber but
+never called `tracing_log::LogTracer::init`, so nothing from `log` (all of
+rustic_core, rustic_backend and rclone) ever reached it; this test would have
+found an empty file.
+
+Both this log and the developer debug log sit at a fixed, predictable path
+under `/tmp`, so `debug::open_private_log_file` — the one place either is
+opened — refuses to follow a symlink already there and creates the file mode
+`0600`. `a_symlink_already_at_the_path_is_not_followed` plants a symlink to a
+throwaway file first and checks both that opening it is refused and that the
+symlink's target is untouched; `the_log_file_is_private` checks the mode bits
+of a freshly opened one.
+
 ### Language selection (`src/core/localization.rs`)
 
 `a_requested_language_is_actually_used` selects German and reads back
@@ -365,6 +398,11 @@ Things a test cannot reach yet, and how they were confirmed.
   may call `notify::failure` again — see `tests/scheduled.rs`'s doc comment.
 - **A timer firing on its own at its calendar time.** The timer's schedule and
   its service were each confirmed, and systemd starts one from the other.
+- **Restoring with numeric or no ownership actually changing a file's owner**
+  (0.3, `Ownership::Numeric` / `Ownership::None`). Changing an owner needs
+  root, which no automated test may assume; `restoring_with_numeric_or_no_ownership_does_not_fail`
+  proves the option is wired through and does not break a normal restore, not
+  that ownership itself changes.
 
 ## Adding a check
 

@@ -221,7 +221,7 @@ mod tests {
             excludes: vec![home.join(".cache")],
             exclude_patterns: vec!["node_modules".into()],
             one_file_system: true,
-            time: None,
+            ..BackupRequest::default()
         }
     }
 

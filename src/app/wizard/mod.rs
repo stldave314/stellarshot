@@ -109,6 +109,12 @@ pub struct Wizard {
     pub patterns: Vec<String>,
     pub pattern_input: String,
     pub one_file_system: bool,
+    /// Leave out any folder containing a `CACHEDIR.TAG` file.
+    pub exclude_caches: bool,
+    /// Honour each project's own `.gitignore`.
+    pub git_ignore: bool,
+    /// Write no snapshot when nothing changed since the last one.
+    pub skip_if_unchanged: bool,
     pub place: place::Place,
     /// The profile being edited. Finishing changes only the fields the
     /// mode's steps show, so nothing else about it can be lost.
@@ -150,6 +156,9 @@ pub enum Message {
     AddPattern,
     RemovePattern(usize),
     OneFileSystem(bool),
+    ExcludeCaches(bool),
+    GitIgnore(bool),
+    SkipIfUnchanged(bool),
     Estimate(u64, EstimateEvent),
     Name(String),
     Place(place::Message),
@@ -213,6 +222,9 @@ impl Wizard {
             patterns: Vec::new(),
             pattern_input: String::new(),
             one_file_system: true,
+            exclude_caches: false,
+            git_ignore: false,
+            skip_if_unchanged: false,
             place: place::Place::default(),
             base: None,
             // A new backup runs daily and keeps a smart history, as the
@@ -324,6 +336,9 @@ impl Wizard {
         wizard.excludes = profile.excludes.clone();
         wizard.patterns = profile.exclude_patterns.clone();
         wizard.one_file_system = profile.one_file_system;
+        wizard.exclude_caches = profile.exclude_caches;
+        wizard.git_ignore = profile.git_ignore;
+        wizard.skip_if_unchanged = profile.skip_if_unchanged;
         wizard.set_schedule(profile.schedule);
         wizard.retention = profile.retention;
         wizard.prune = profile.prune;
@@ -391,8 +406,10 @@ impl Wizard {
             sources: self.sources.clone(),
             excludes: self.excludes.clone(),
             exclude_patterns: self.patterns.clone(),
+            exclude_caches: self.exclude_caches,
+            git_ignore: self.git_ignore,
             one_file_system: self.one_file_system,
-            time: None,
+            ..BackupRequest::default()
         }
     }
 
@@ -532,6 +549,9 @@ impl Wizard {
             profile.excludes = self.excludes.clone();
             profile.exclude_patterns = self.patterns.clone();
             profile.one_file_system = self.one_file_system;
+            profile.exclude_caches = self.exclude_caches;
+            profile.git_ignore = self.git_ignore;
+            profile.skip_if_unchanged = self.skip_if_unchanged;
         }
         if new || steps.contains(&Step::When) {
             profile.schedule = self.schedule;
@@ -602,6 +622,18 @@ impl Wizard {
             Message::OneFileSystem(on) => {
                 self.one_file_system = on;
                 self.restart_estimate()
+            }
+            Message::ExcludeCaches(on) => {
+                self.exclude_caches = on;
+                Vec::new()
+            }
+            Message::GitIgnore(on) => {
+                self.git_ignore = on;
+                Vec::new()
+            }
+            Message::SkipIfUnchanged(on) => {
+                self.skip_if_unchanged = on;
+                Vec::new()
             }
             Message::Estimate(generation, event) => {
                 if generation == self.estimate.generation {
@@ -878,6 +910,21 @@ impl Wizard {
                 widget::settings::item::builder(fl!("wizard-one-file-system"))
                     .description(fl!("wizard-one-file-system-description"))
                     .toggler(self.one_file_system, Message::OneFileSystem),
+            )
+            .add(
+                widget::settings::item::builder(fl!("wizard-exclude-caches"))
+                    .description(fl!("wizard-exclude-caches-description"))
+                    .toggler(self.exclude_caches, Message::ExcludeCaches),
+            )
+            .add(
+                widget::settings::item::builder(fl!("wizard-git-ignore"))
+                    .description(fl!("wizard-git-ignore-description"))
+                    .toggler(self.git_ignore, Message::GitIgnore),
+            )
+            .add(
+                widget::settings::item::builder(fl!("wizard-skip-if-unchanged"))
+                    .description(fl!("wizard-skip-if-unchanged-description"))
+                    .toggler(self.skip_if_unchanged, Message::SkipIfUnchanged),
             );
 
         widget::column::with_capacity(5)

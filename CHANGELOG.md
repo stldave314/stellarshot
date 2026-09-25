@@ -5,6 +5,43 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A first slice of what is backed up, its history, and getting it back — see
+ROADMAP.md's 0.3 section for what is still to come.
+
+### Added
+
+- **Global exclusions**, under **Settings**: glob patterns such as
+  `node_modules` or `target`, left out of every backup at once instead of
+  added to each one.
+- **Leave out cache folders and honour `.gitignore`**, as two toggles in the
+  wizard's Advanced section.
+- **Skip empty backups**: a toggle so a backup records no snapshot when
+  nothing has changed since the last one.
+- **Pin a snapshot** from its own backup's page, so cleaning up never removes
+  it, however old it gets.
+- **Restore options**: verify existing files by content instead of trusting
+  their size and date, and choose how ownership is restored (as backed up,
+  numeric IDs, or not at all) — both in the restore sheet's Advanced section.
+
+### Fixed
+
+- **rustic's and rclone's own diagnostics now actually reach a log**, at
+  `/tmp/stellarshot-backend.log` as well as stderr. `set_logger` set up a
+  `tracing` subscriber for them, but rustic_core and rustic_backend (and the
+  rclone process they run) only ever log through the separate `log` crate,
+  and nothing bridged the two — every line they logged, including the one
+  rclone itself prints when a backup to it fails, went nowhere. Found this
+  way: a real first backup to Google Drive failed with "Backoff failed,
+  please check the logs for more information", and there were none to check.
+- **The debug log and the new one above can no longer be tricked into
+  overwriting an arbitrary file.** Both sit at a fixed, predictable path
+  under `/tmp`; opening either now refuses to follow a symlink already there
+  and creates the file mode `0600`, rather than the previous plain
+  create-and-truncate, which another user on a shared machine could have
+  pointed at any file this one could write to.
+
 ## [0.2.0] - 2026-09-24
 
 Seeing what is going on: status, history, and repository statistics.

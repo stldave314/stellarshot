@@ -29,7 +29,7 @@ pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdo
 pub use maintenance::{ForgetReport, KeepRules, PruneReport, hostname};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
 pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, open, probe};
-pub use restore::{ConflictPolicy, RestorePreview, RestoreRequest, Target};
+pub use restore::{ConflictPolicy, Ownership, RestorePreview, RestoreRequest, Target};
 pub use snapshots::SnapshotSummary;
 pub use statistics::Statistics;
 

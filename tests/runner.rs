@@ -258,6 +258,7 @@ fn runner_restores_a_selection_keeping_both() {
             paths: vec![file.clone()],
             target: Target::Original,
             policy: ConflictPolicy::KeepBoth,
+            ..RestoreRequest::default()
         }),
         ..fixture.backup_job(PASSWORD)
     };
@@ -320,4 +321,55 @@ fn runner_maintains_by_forgetting_then_pruning() {
         other => panic!("expected a done event with both reports, got {other:?}"),
     }
     assert_eq!(fixture.snapshot_count(), 1);
+}
+
+#[test]
+fn runner_pins_a_snapshot_and_protects_it_from_maintain() {
+    let fixture = Fixture::new();
+    let (events, status) = fixture.run("backup", &fixture.backup_job(PASSWORD));
+    assert!(status.success());
+    let id = match events.last() {
+        Some(Event::Done {
+            report: Some(report),
+            ..
+        }) => report.snapshot.id.clone(),
+        other => panic!("expected a done event with a report, got {other:?}"),
+    };
+    for _ in 0..2 {
+        let (_, status) = fixture.run("backup", &fixture.backup_job(PASSWORD));
+        assert!(status.success());
+    }
+    assert_eq!(fixture.snapshot_count(), 3);
+
+    let job = Job {
+        request: None,
+        ids: vec![id],
+        pinned: Some(true),
+        ..fixture.backup_job(PASSWORD)
+    };
+    let (events, status) = fixture.run("set-pinned", &job);
+    assert!(status.success(), "events: {events:?}");
+    match events.last() {
+        Some(Event::Done {
+            pinned: Some(summary),
+            ..
+        }) => assert!(summary.pinned),
+        other => panic!("expected a done event with the pinned snapshot, got {other:?}"),
+    }
+
+    let job = Job {
+        request: None,
+        keep: Some(KeepRules {
+            last: Some(1),
+            ..KeepRules::default()
+        }),
+        prune: true,
+        ..fixture.backup_job(PASSWORD)
+    };
+    let (_, status) = fixture.run("maintain", &job);
+    assert!(status.success());
+
+    // The pin protects the oldest snapshot beyond what `last: 1` alone would
+    // keep, so 2 remain: the newest and the pinned one.
+    assert_eq!(fixture.snapshot_count(), 2);
 }

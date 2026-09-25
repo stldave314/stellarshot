@@ -116,6 +116,8 @@ pub enum Message {
     EditSchedule,
     DeleteSnapshot(String),
     SnapshotsDeleted(ChildEvent),
+    TogglePinned(String, bool),
+    Pinned(ChildEvent),
     ShowAll,
     Restore,
     Edit,
@@ -139,6 +141,7 @@ pub enum Effect {
     Fetch(Secret),
     BackUp(Secret),
     DeleteSnapshots(Secret, Vec<String>),
+    SetPinned(Secret, String, bool),
     ShowError(String, EngineError),
     /// A backup finished at this Unix time.
     RecordSuccess(i64),
@@ -404,6 +407,21 @@ impl ProfileState {
                 ChildEvent::Event(Event::Done { .. }) => self.fetch(),
                 ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
                     let mut effects = vec![Effect::ShowError(fl!("delete-snapshot-failed"), error)];
+                    effects.extend(self.fetch());
+                    effects
+                }
+                ChildEvent::Started(_) | ChildEvent::Event(Event::Progress { .. }) => Vec::new(),
+            },
+            Message::TogglePinned(id, pinned) => match &self.secret {
+                Some(secret) if self.work.is_none() => {
+                    vec![Effect::SetPinned(secret.clone(), id, pinned)]
+                }
+                _ => Vec::new(),
+            },
+            Message::Pinned(event) => match event {
+                ChildEvent::Event(Event::Done { .. }) => self.fetch(),
+                ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
+                    let mut effects = vec![Effect::ShowError(fl!("pin-snapshot-failed"), error)];
                     effects.extend(self.fetch());
                     effects
                 }
@@ -719,11 +737,23 @@ impl ProfileState {
         };
         let mut section = widget::settings::section().title(fl!("recent-snapshots"));
         for snapshot in &snapshots[..shown] {
+            let pin_label = if snapshot.pinned {
+                fl!("unpin-snapshot")
+            } else {
+                fl!("pin-snapshot")
+            };
+            let pinned = snapshot.pinned;
+            let id = snapshot.id.clone();
+            let pin = widget::button::icon(widget::icon::from_name("pin-symbolic"))
+                .padding(spacing.space_xxs)
+                .selected(pinned)
+                .tooltip(pin_label)
+                .on_press_maybe(
+                    (!self.is_busy()).then(|| Message::TogglePinned(id.clone(), !pinned)),
+                );
             let delete = widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                 .padding(spacing.space_xxs)
-                .on_press_maybe(
-                    (!self.is_busy()).then(|| Message::DeleteSnapshot(snapshot.id.clone())),
-                );
+                .on_press_maybe((!self.is_busy()).then(|| Message::DeleteSnapshot(id.clone())));
             section = section.add(
                 widget::settings::item::builder(format::local_time(snapshot.time))
                     .description(fl!(
@@ -732,7 +762,12 @@ impl ProfileState {
                         size = format::bytes(snapshot.total_bytes),
                         added = format::bytes(snapshot.data_added)
                     ))
-                    .control(delete),
+                    .control(
+                        widget::row::with_capacity(2)
+                            .spacing(spacing.space_xxs)
+                            .push(pin)
+                            .push(delete),
+                    ),
             );
         }
         let mut column = widget::column::with_capacity(2)
@@ -1058,6 +1093,7 @@ mod tests {
             files_unmodified: 0,
             data_added: 5,
             total_bytes: 5,
+            pinned: false,
         }
     }
 
@@ -1218,6 +1254,7 @@ mod tests {
                 restored: None,
                 forgotten: None,
                 pruned: None,
+                pinned: None,
             })),
             &profile(),
         );
@@ -1287,6 +1324,27 @@ mod tests {
         assert!(
             state
                 .update(Message::DeleteSnapshot("abc".into()), &profile())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn toggling_pinned_asks_the_application_to_set_it() {
+        let mut state = unlocked();
+        let effects = state.update(Message::TogglePinned("abc".into(), true), &profile());
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SetPinned(_, id, true)] if id == "abc"
+        ));
+    }
+
+    #[test]
+    fn toggling_pinned_waits_for_a_running_backup() {
+        let mut state = unlocked();
+        state.back_up(&profile());
+        assert!(
+            state
+                .update(Message::TogglePinned("abc".into(), true), &profile())
                 .is_empty()
         );
     }

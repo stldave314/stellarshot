@@ -210,6 +210,24 @@ pub struct Profile {
     /// Stay on the filesystems the sources are on.
     #[serde(default = "default_true")]
     pub one_file_system: bool,
+    /// Leave out any folder containing a `CACHEDIR.TAG` file.
+    #[serde(default)]
+    pub exclude_caches: bool,
+    /// Honour each project's own `.gitignore`.
+    #[serde(default)]
+    pub git_ignore: bool,
+    /// Write no snapshot when nothing changed since the last one.
+    #[serde(default)]
+    pub skip_if_unchanged: bool,
+    /// Leave out files larger than this many bytes.
+    #[serde(default)]
+    pub exclude_larger_than: Option<u64>,
+    /// Same as `exclude_patterns`, but case-insensitive.
+    #[serde(default)]
+    pub exclude_patterns_ignoring_case: Vec<String>,
+    /// Files with glob patterns to exclude, one per line.
+    #[serde(default)]
+    pub exclude_pattern_files: Vec<PathBuf>,
     #[serde(default)]
     pub schedule: Schedule,
     #[serde(default)]
@@ -239,6 +257,12 @@ impl Profile {
             excludes: Vec::new(),
             exclude_patterns: Vec::new(),
             one_file_system: true,
+            exclude_caches: false,
+            git_ignore: false,
+            skip_if_unchanged: false,
+            exclude_larger_than: None,
+            exclude_patterns_ignoring_case: Vec::new(),
+            exclude_pattern_files: Vec::new(),
             schedule: Schedule::Manual,
             retention: Retention::KeepForever,
             prune: None,
@@ -270,7 +294,12 @@ impl Profile {
     /// A repository inside one of the sources — `~` backed up to
     /// `~/Backups/home` — is always excluded, or every backup would copy the
     /// repository into itself and grow without bound.
-    pub fn backup_request(&self) -> BackupRequest {
+    ///
+    /// `global_exclude_patterns` come from settings shared by every backup
+    /// (`node_modules`, `.cache`, …); they are merged in here rather than
+    /// stored on the profile, so changing the shared list does not have to
+    /// rewrite every profile that uses it.
+    pub fn backup_request(&self, global_exclude_patterns: &[String]) -> BackupRequest {
         let mut excludes = self.excludes.clone();
         if let Some(path) = self
             .location()
@@ -282,11 +311,24 @@ impl Profile {
                 excludes.push(path);
             }
         }
+        let mut exclude_patterns = self.exclude_patterns.clone();
+        for pattern in global_exclude_patterns {
+            if !exclude_patterns.contains(pattern) {
+                exclude_patterns.push(pattern.clone());
+            }
+        }
         BackupRequest {
             sources: self.sources.clone(),
             excludes,
-            exclude_patterns: self.exclude_patterns.clone(),
+            exclude_patterns,
+            exclude_patterns_ignoring_case: self.exclude_patterns_ignoring_case.clone(),
+            exclude_pattern_files: self.exclude_pattern_files.clone(),
+            exclude_larger_than: self.exclude_larger_than,
+            exclude_caches: self.exclude_caches,
+            git_ignore: self.git_ignore,
             one_file_system: self.one_file_system,
+            skip_if_unchanged: self.skip_if_unchanged,
+            dry_run: false,
             time: None,
         }
     }
@@ -390,7 +432,7 @@ mod tests {
             vec![PathBuf::from("/home/dave")],
         );
 
-        let request = profile.backup_request();
+        let request = profile.backup_request(&[]);
 
         assert!(
             request
@@ -407,7 +449,24 @@ mod tests {
             vec![PathBuf::from("/home/dave")],
         );
 
-        assert!(profile.backup_request().excludes.is_empty());
+        assert!(profile.backup_request(&[]).excludes.is_empty());
+    }
+
+    #[test]
+    fn global_exclude_patterns_are_merged_in_without_duplicating_a_profiles_own() {
+        let mut profile = Profile::new(
+            "Home".into(),
+            local("/media/usb/backup"),
+            vec![PathBuf::from("/home/dave")],
+        );
+        profile.exclude_patterns = vec!["node_modules".into()];
+
+        let request = profile.backup_request(&["node_modules".into(), "target".into()]);
+
+        assert_eq!(
+            request.exclude_patterns,
+            vec!["node_modules".to_string(), "target".to_string()]
+        );
     }
 
     #[test]
@@ -419,7 +478,7 @@ mod tests {
             vec![PathBuf::from("/home/dave")],
         );
 
-        assert!(profile.backup_request().excludes.is_empty());
+        assert!(profile.backup_request(&[]).excludes.is_empty());
     }
 
     #[test]

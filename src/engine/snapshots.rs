@@ -2,10 +2,11 @@
 
 //! Listing and deleting snapshots.
 
-use rustic_core::repofile::SnapshotFile;
+use rustic_core::RewriteOptions;
+use rustic_core::repofile::{DeleteOption, SnapshotFile, SnapshotModification};
 use serde::{Deserialize, Serialize};
 
-use super::error::EngineError;
+use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
 use crate::debug::ENGINE;
 use crate::debug_log;
@@ -31,6 +32,8 @@ pub struct SnapshotSummary {
     pub data_added: u64,
     /// Total size of the files the snapshot covers.
     pub total_bytes: u64,
+    /// Kept forever: "Keep" never forgets it, however old it gets.
+    pub pinned: bool,
 }
 
 impl SnapshotSummary {
@@ -53,6 +56,7 @@ impl From<&SnapshotFile> for SnapshotSummary {
             files_unmodified: summary.map_or(0, |s| s.files_unmodified),
             data_added: summary.map_or(0, |s| s.data_added),
             total_bytes: summary.map_or(0, |s| s.total_bytes_processed),
+            pinned: snap.delete == DeleteOption::Never,
         }
     }
 }
@@ -79,5 +83,56 @@ impl Repo {
         debug_log!(ENGINE, "deleting {} snapshots", ids.len());
         self.inner.delete_snapshots(&ids)?;
         Ok(())
+    }
+
+    /// Pin a snapshot so [`Repo::forget`] never removes it, or release it
+    /// back to the usual retention rules. Returns the snapshot under its new
+    /// ID.
+    ///
+    /// A snapshot's ID is a hash of its own content, so changing anything
+    /// about it, even just this flag, makes a new one: the old snapshot is
+    /// saved under a new ID and the original is then removed, the same
+    /// two-step rustic itself uses to rewrite a snapshot's metadata.
+    pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<SnapshotSummary, EngineError> {
+        let snapshots = self.inner.get_snapshots(&[id])?;
+        let Some(current) = snapshots.first().cloned() else {
+            return Err(EngineError::new(
+                ErrorKind::Internal,
+                "no snapshot with that ID",
+            ));
+        };
+        let wanted = if pinned {
+            DeleteOption::Never
+        } else {
+            DeleteOption::NotSet
+        };
+        if current.delete == wanted {
+            return Ok(SnapshotSummary::from(&current));
+        }
+        let before: Vec<_> = self
+            .inner
+            .get_all_snapshots()?
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        let modification = if pinned {
+            SnapshotModification::default().set_delete_never(true)
+        } else {
+            SnapshotModification::default().remove_delete(true)
+        };
+        let opts = RewriteOptions::default()
+            .modification(modification)
+            .forget(true);
+        self.inner.rewrite_snapshots(snapshots, &opts)?;
+        // `rewrite_snapshots` returns the rewritten snapshots under their old
+        // ID, not the new one a changed snapshot is actually saved under: the
+        // new one is found by comparing the snapshot list before and after.
+        let after = self.inner.get_all_snapshots()?;
+        let snapshot = after
+            .iter()
+            .find(|s| !before.contains(&s.id))
+            .unwrap_or(&current);
+        debug_log!(ENGINE, "{id} pinned: {pinned}");
+        Ok(SnapshotSummary::from(snapshot))
     }
 }

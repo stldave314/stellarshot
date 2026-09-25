@@ -15,10 +15,12 @@
 //! diagnostics, not a replacement for real error reporting.
 
 use std::fmt::Arguments;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+
+use rustix::fs::{Mode, OFlags, open};
 
 /// Master switch. Set to `true` to turn debug logging on for a dev build.
 const DEVELOPER_LOGGING: bool = false;
@@ -41,6 +43,23 @@ pub const CONFIG: &str = "CONFIG";
 /// Scheduled backups: systemd units, the `--scheduled` run, notifications.
 pub const SCHED: &str = "SCHED";
 
+/// Opens (or creates) `path` as a private log file: `0600`, truncated, and
+/// refusing to follow a symlink already at that name.
+///
+/// These paths are fixed and predictable (`/tmp/stellarshot-*.log`), so
+/// without this, another user on a shared machine could plant a symlink
+/// there first and have Stellarshot truncate or write into a file it does
+/// not otherwise have reason to touch, or read a log meant to be private.
+pub(crate) fn open_private_log_file(path: &str) -> Option<File> {
+    open(
+        path,
+        OFlags::CREATE | OFlags::WRONLY | OFlags::TRUNC | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR,
+    )
+    .ok()
+    .map(File::from)
+}
+
 struct Sink {
     file: Option<File>,
     start: Instant,
@@ -51,12 +70,7 @@ static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
 fn sink() -> &'static Mutex<Sink> {
     SINK.get_or_init(|| {
         // Truncate once per process launch.
-        let file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(PATH)
-            .ok();
+        let file = open_private_log_file(PATH);
         Mutex::new(Sink {
             file,
             start: Instant::now(),
@@ -108,4 +122,45 @@ macro_rules! error_log {
     ($category:expr, $($arg:tt)*) => {
         $crate::debug::error($category, format_args!($($arg)*))
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn a_symlink_already_at_the_path_is_not_followed() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("target");
+        std::fs::write(&target, b"do not touch").unwrap();
+        let link = dir.path().join("log");
+        symlink(&target, &link).unwrap();
+
+        let opened = open_private_log_file(link.to_str().unwrap());
+
+        assert!(
+            opened.is_none(),
+            "a symlink at the log path must be refused, not followed"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"do not touch",
+            "the symlink's target must be untouched"
+        );
+    }
+
+    #[test]
+    fn the_log_file_is_private() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("log");
+
+        let file = open_private_log_file(path.to_str().unwrap()).unwrap();
+
+        let mode = file.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the log file must be readable by no one else");
+    }
 }

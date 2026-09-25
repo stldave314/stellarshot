@@ -18,7 +18,7 @@ use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
 use crate::engine::{
     Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, MissingEntry,
-    ProgressEvent, RestorePreview, RestoreRequest, SnapshotSummary, Target, TreeEntry,
+    Ownership, ProgressEvent, RestorePreview, RestoreRequest, SnapshotSummary, Target, TreeEntry,
 };
 use crate::fl;
 use crate::runner::Event;
@@ -49,13 +49,17 @@ pub struct Sheet {
     requests: Vec<RestoreRequest>,
     target: TargetChoice,
     policy: ConflictPolicy,
+    /// Read and verify a file that already looks unchanged, rather than
+    /// trusting its size and modification time.
+    verify_existing: bool,
+    ownership: Ownership,
     preview: Option<Result<RestorePreview, EngineError>>,
     previewing: bool,
 }
 
 impl Sheet {
-    /// The requests with the chosen target and policy applied, if a target
-    /// folder has been chosen where one is needed.
+    /// The requests with the chosen target, policy and options applied, if a
+    /// target folder has been chosen where one is needed.
     fn finished_requests(&self) -> Option<Vec<RestoreRequest>> {
         let target = match &self.target {
             TargetChoice::Original => Target::Original,
@@ -68,6 +72,8 @@ impl Sheet {
                 .map(|request| RestoreRequest {
                     target: target.clone(),
                     policy: self.policy,
+                    verify_existing: self.verify_existing,
+                    ownership: self.ownership,
                     ..request.clone()
                 })
                 .collect(),
@@ -147,6 +153,8 @@ pub enum Message {
     TargetFolder,
     TargetChosen(PathBuf),
     Policy(ConflictPolicy),
+    VerifyExisting(bool),
+    Ownership(Ownership),
     /// A dry run's answer, with the requests it was worked out for.
     Previewed(Vec<RestoreRequest>, Result<RestorePreview, EngineError>),
     CancelSheet,
@@ -255,6 +263,8 @@ impl RestorePage {
             requests,
             target: TargetChoice::Original,
             policy: ConflictPolicy::KeepBoth,
+            verify_existing: false,
+            ownership: Ownership::Preserve,
             preview: None,
             previewing: false,
         });
@@ -282,6 +292,7 @@ impl RestorePage {
             paths,
             target: Target::Original,
             policy: ConflictPolicy::KeepBoth,
+            ..RestoreRequest::default()
         };
         match self.tab {
             Tab::Browse => self
@@ -535,6 +546,7 @@ impl RestorePage {
                 paths: vec![path],
                 target: Target::Original,
                 policy: ConflictPolicy::KeepBoth,
+                ..RestoreRequest::default()
             }]),
             Message::OpenCopy(snapshot, path) => vec![Effect::OpenCopy { snapshot, path }],
             Message::TargetOriginal => {
@@ -559,6 +571,18 @@ impl RestorePage {
             Message::Policy(policy) => {
                 if let Some(sheet) = self.sheet.as_mut() {
                     sheet.policy = policy;
+                }
+                self.refresh_preview()
+            }
+            Message::VerifyExisting(on) => {
+                if let Some(sheet) = self.sheet.as_mut() {
+                    sheet.verify_existing = on;
+                }
+                self.refresh_preview()
+            }
+            Message::Ownership(ownership) => {
+                if let Some(sheet) = self.sheet.as_mut() {
+                    sheet.ownership = ownership;
                 }
                 self.refresh_preview()
             }
@@ -1023,6 +1047,32 @@ impl RestorePage {
                 fl!("policy-skip-description"),
                 ConflictPolicy::Skip,
             ));
+        let ownership_item = |title: String, ownership: Ownership| {
+            widget::settings::item::builder(title).radio(
+                ownership,
+                Some(sheet.ownership),
+                Message::Ownership,
+            )
+        };
+        let advanced = widget::settings::section()
+            .title(fl!("restore-advanced"))
+            .add(
+                widget::settings::item::builder(fl!("restore-verify-existing"))
+                    .description(fl!("restore-verify-existing-description"))
+                    .toggler(sheet.verify_existing, Message::VerifyExisting),
+            )
+            .add(ownership_item(
+                fl!("restore-ownership-preserve"),
+                Ownership::Preserve,
+            ))
+            .add(ownership_item(
+                fl!("restore-ownership-numeric"),
+                Ownership::Numeric,
+            ))
+            .add(ownership_item(
+                fl!("restore-ownership-none"),
+                Ownership::None,
+            ));
 
         let summary: Element<'a, Message> = match (&sheet.preview, sheet.previewing) {
             (_, true) => widget::text::body(fl!("restore-previewing")).into(),
@@ -1059,7 +1109,7 @@ impl RestorePage {
             }
         };
         let ready = matches!(sheet.preview, Some(Ok(_))) && !sheet.previewing;
-        widget::column::with_capacity(5)
+        widget::column::with_capacity(6)
             .spacing(spacing.space_m)
             .push(widget::text::title4(fl!(
                 "restore-sheet-title",
@@ -1067,6 +1117,7 @@ impl RestorePage {
             )))
             .push(target)
             .push(policy)
+            .push(advanced)
             .push(
                 widget::container(summary)
                     .padding(spacing.space_s)
@@ -1153,6 +1204,7 @@ mod tests {
             files_unmodified: 0,
             data_added: 0,
             total_bytes: 0,
+            pinned: false,
         }
     }
 
@@ -1284,16 +1336,20 @@ mod tests {
                     paths: vec!["/a".into()],
                     target: Target::Original,
                     policy: ConflictPolicy::KeepBoth,
+                    ..RestoreRequest::default()
                 },
                 RestoreRequest {
                     snapshot: "bbbbbbbb".into(),
                     paths: vec!["/b".into()],
                     target: Target::Original,
                     policy: ConflictPolicy::KeepBoth,
+                    ..RestoreRequest::default()
                 },
             ],
             target: TargetChoice::Original,
             policy: ConflictPolicy::KeepBoth,
+            verify_existing: false,
+            ownership: Ownership::Preserve,
             preview: Some(Ok(RestorePreview::default())),
             previewing: false,
         });
@@ -1307,6 +1363,7 @@ mod tests {
                 restored: Some(RestorePreview::default()),
                 forgotten: None,
                 pruned: None,
+                pinned: None,
             }))
         };
         let second = page.update(done());
@@ -1329,6 +1386,7 @@ mod tests {
                 paths: vec!["/b".into()],
                 target: Target::Original,
                 policy: ConflictPolicy::Skip,
+                ..RestoreRequest::default()
             }]),
         });
 

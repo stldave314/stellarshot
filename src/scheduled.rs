@@ -120,12 +120,17 @@ fn operation(operation: Operation, job: Job) -> Result<runner::Outcome, EngineEr
 }
 
 /// Back up, then forget, check and prune as the plan says.
-fn run(profile: &Profile, location: Location, secret: Secret) -> Result<(), Failed> {
+fn run(
+    profile: &Profile,
+    global_exclude_patterns: &[String],
+    location: Location,
+    secret: Secret,
+) -> Result<(), Failed> {
     let job = || Job::new(location.clone(), secret.clone());
     operation(
         Operation::Backup,
         Job {
-            request: Some(profile.backup_request()),
+            request: Some(profile.backup_request(global_exclude_patterns)),
             ..job()
         },
     )
@@ -207,7 +212,8 @@ pub fn main(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
     crate::core::localization::init();
-    let Some(profile) = StellarshotConfig::config().profile(id).cloned() else {
+    let config = StellarshotConfig::config();
+    let Some(profile) = config.profile(id).cloned() else {
         error_log!(SCHED, "--scheduled: no backup with the ID {id}");
         return ExitCode::from(2);
     };
@@ -240,7 +246,7 @@ pub fn main(args: &[String]) -> ExitCode {
                         EngineError::new(ErrorKind::PasswordNotRemembered, ""),
                     )
                 })?;
-            run(&profile, location, secret)
+            run(&profile, &config.global_exclude_patterns, location, secret)
         });
     let Err(Failed(stage, error)) = result else {
         return ExitCode::SUCCESS;

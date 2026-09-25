@@ -33,7 +33,7 @@ fn main() {
         excludes: vec![source.join(".cache"), source.join("Downloads")],
         exclude_patterns: vec!["node_modules".into()],
         one_file_system: true,
-        time: None,
+        ..BackupRequest::default()
     };
     let now = jiff::Timestamp::now().as_second();
     for round in 0..count {

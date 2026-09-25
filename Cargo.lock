@@ -6049,12 +6049,15 @@ name = "stellarshot"
 version = "0.2.0"
 dependencies = [
  "bytes",
+ "bytesize",
+ "filetime",
  "futures-util",
  "gethostname",
  "i18n-embed",
  "i18n-embed-fl",
  "jiff",
  "libcosmic",
+ "log",
  "oo7",
  "open",
  "paste",
@@ -6069,9 +6072,11 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tracing-log",
  "tracing-subscriber",
  "url",
  "uuid",
+ "xattr",
  "zbus",
 ]
 

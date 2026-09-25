@@ -24,18 +24,20 @@ use crate::debug::ENGINE;
 use crate::debug_log;
 
 /// Where restored files go.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Target {
     /// Back where they were when backed up.
+    #[default]
     Original,
     /// Into this folder, each selected item under its own name.
     Folder(PathBuf),
 }
 
 /// What to do when a file being restored already exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConflictPolicy {
     /// Replace it with the backed-up copy.
+    #[default]
     Overwrite,
     /// Leave it, and restore the backed-up copy next to it under a new name.
     KeepBoth,
@@ -43,8 +45,22 @@ pub enum ConflictPolicy {
     Skip,
 }
 
+/// Whose user and group IDs a restored file gets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Ownership {
+    /// The backed-up user and group names, as on the original machine.
+    #[default]
+    Preserve,
+    /// The backed-up numeric IDs, unresolved: for restoring onto another
+    /// machine or user where the names would not mean the same accounts.
+    Numeric,
+    /// Whatever restoring the files themselves leaves them with; no attempt
+    /// to set an owner or group at all.
+    None,
+}
+
 /// What to restore.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreRequest {
     /// A snapshot ID, a unique prefix, or `latest`.
     pub snapshot: String,
@@ -52,6 +68,12 @@ pub struct RestoreRequest {
     pub paths: Vec<PathBuf>,
     pub target: Target,
     pub policy: ConflictPolicy,
+    /// Read and verify a file that already looks unchanged by its size and
+    /// modification time, rather than trusting them.
+    #[serde(default)]
+    pub verify_existing: bool,
+    #[serde(default)]
+    pub ownership: Ownership,
 }
 
 /// What a restore will do, or did.
@@ -140,6 +162,7 @@ impl Repo {
             paths: vec![PathBuf::from("/")],
             target: Target::Folder(destination.to_path_buf()),
             policy: ConflictPolicy::Overwrite,
+            ..RestoreRequest::default()
         };
         run(self, &request, Some(progress)).map(drop)
     }
@@ -258,7 +281,15 @@ fn restore_one(
     })?;
     // A dry run must not create anything, so its destination is not created.
     let dest = LocalDestination::new(destination_text, !dry_run, !node.is_dir())?;
-    let options = RestoreOptions::default();
+    // `RestoreOptions` is `#[non_exhaustive]`: built from its own default and
+    // then adjusted, not as a struct literal.
+    let mut options = RestoreOptions::default();
+    options.verify_existing = request.verify_existing;
+    match request.ownership {
+        Ownership::Preserve => {}
+        Ownership::Numeric => options.numeric_id = true,
+        Ownership::None => options.no_ownership = true,
+    }
     let plan = repo.prepare_restore(&options, shaped.iter().cloned().map(Ok), &dest, dry_run)?;
     let files = &plan.stats.files;
     let preview = RestorePreview {

@@ -72,6 +72,8 @@ pub struct App {
     /// What happened when each backup last ran on its own, by profile ID.
     /// Written by scheduled runs; re-read on every clock tick.
     runs: HashMap<String, RunState>,
+    /// The Settings page's pattern field, for a global exclusion not yet added.
+    global_exclude_pattern_input: String,
 }
 
 /// What a sidebar entry leads to.
@@ -125,6 +127,9 @@ pub enum Message {
     ImportRead(Result<settings_export::Export, String>),
     /// The home screen's own way to switch to one backup's page.
     SelectProfile(String),
+    GlobalExcludePatternInput(String),
+    AddGlobalExcludePattern,
+    RemoveGlobalExcludePattern(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -244,11 +249,42 @@ impl App {
     }
 
     fn settings_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
         let selected = match self.config.app_theme {
             AppTheme::Dark => 1,
             AppTheme::Light => 2,
             AppTheme::System => 0,
         };
+        let mut global_excludes = widget::settings::section()
+            .title(fl!("settings-global-excludes-title"))
+            .add(widget::text::body(fl!(
+                "settings-global-excludes-description"
+            )));
+        for (index, pattern) in self.config.global_exclude_patterns.iter().enumerate() {
+            global_excludes = global_excludes.add(
+                widget::settings::item::builder(pattern.clone()).control(
+                    widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                        .on_press(Message::RemoveGlobalExcludePattern(index)),
+                ),
+            );
+        }
+        global_excludes = global_excludes.add(
+            widget::row::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .align_y(Alignment::Center)
+                .push(
+                    widget::text_input(
+                        fl!("wizard-pattern-placeholder"),
+                        &self.global_exclude_pattern_input,
+                    )
+                    .on_input(Message::GlobalExcludePatternInput)
+                    .on_submit(|_| Message::AddGlobalExcludePattern)
+                    .width(Length::Fill),
+                )
+                .push(
+                    widget::button::standard(fl!("add")).on_press(Message::AddGlobalExcludePattern),
+                ),
+        );
         widget::settings::view_column(vec![
             widget::settings::section()
                 .title(fl!("appearance"))
@@ -279,6 +315,7 @@ impl App {
                         ),
                 )
                 .into(),
+            global_excludes.into(),
         ])
         .into()
     }
@@ -904,7 +941,7 @@ impl App {
                         }
                     };
                     let job = Job {
-                        request: Some(profile.backup_request()),
+                        request: Some(profile.backup_request(&self.config.global_exclude_patterns)),
                         ..Job::new(repository, secret)
                     };
                     Task::run(child::run(Operation::Backup, job), move |event| {
@@ -930,6 +967,26 @@ impl App {
                         app(Message::Profile(
                             id.clone(),
                             profile::Message::SnapshotsDeleted(event),
+                        ))
+                    })
+                }
+                profile::Effect::SetPinned(secret, snapshot_id, pinned) => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        Err(err) => {
+                            self.show_error(&fl!("pin-snapshot-failed"), &err);
+                            continue;
+                        }
+                    };
+                    let job = Job {
+                        ids: vec![snapshot_id],
+                        pinned: Some(pinned),
+                        ..Job::new(repository, secret)
+                    };
+                    Task::run(child::run(Operation::SetPinned, job), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::Pinned(event),
                         ))
                     })
                 }
@@ -1299,6 +1356,7 @@ fn open_copy(
         paths: vec![path.to_path_buf()],
         target: engine::Target::Folder(folder.clone()),
         policy: engine::ConflictPolicy::Overwrite,
+        ..engine::RestoreRequest::default()
     };
     engine::open(&profile.location()?, secret)?
         .restore(&request, std::sync::Arc::new(engine::NoProgress))?;
@@ -1384,6 +1442,7 @@ impl Application for App {
             now: format::now(),
             dejadup: crate::dejadup::find().is_some(),
             runs: HashMap::new(),
+            global_exclude_pattern_input: String::new(),
         };
         app.reload_runs();
         app.rebuild_nav(flags.select.as_deref());
@@ -1773,6 +1832,33 @@ impl Application for App {
                 if let Some(entity) = entity {
                     self.nav.activate(entity);
                     return self.activate_selected();
+                }
+            }
+            Message::GlobalExcludePatternInput(text) => {
+                self.global_exclude_pattern_input = text;
+            }
+            Message::AddGlobalExcludePattern => {
+                let pattern = self.global_exclude_pattern_input.trim().to_owned();
+                if !pattern.is_empty() && !self.config.global_exclude_patterns.contains(&pattern) {
+                    let mut patterns = self.config.global_exclude_patterns.clone();
+                    patterns.push(pattern);
+                    if let Some(handler) = &self.config_handler
+                        && let Err(err) = self.config.set_global_exclude_patterns(handler, patterns)
+                    {
+                        error_log!(CONFIG, "failed to save the global exclusions: {err}");
+                    }
+                }
+                self.global_exclude_pattern_input.clear();
+            }
+            Message::RemoveGlobalExcludePattern(index) => {
+                let mut patterns = self.config.global_exclude_patterns.clone();
+                if index < patterns.len() {
+                    patterns.remove(index);
+                    if let Some(handler) = &self.config_handler
+                        && let Err(err) = self.config.set_global_exclude_patterns(handler, patterns)
+                    {
+                        error_log!(CONFIG, "failed to save the global exclusions: {err}");
+                    }
                 }
             }
             Message::ToggleContextPage(context_page) => {

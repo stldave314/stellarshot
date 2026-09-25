@@ -191,7 +191,7 @@ pub enum Effect {
         exclude_folders: Vec<PathBuf>,
         cancel: Arc<AtomicBool>,
     },
-    Finish(Finish),
+    Finish(Box<Finish>),
     Close,
     /// Cancel was pressed: ask the application to offer "finish later" or
     /// "discard", rather than deciding here. Nothing is stopped yet — a
@@ -533,11 +533,15 @@ impl Wizard {
         };
         let mut profile = match &self.base {
             Some(base) => base.clone(),
-            None => Profile::new(
-                self.name.trim().to_owned(),
-                destination,
-                self.sources.clone(),
-            ),
+            None => {
+                let mut profile = Profile::new(
+                    self.name.trim().to_owned(),
+                    destination,
+                    self.sources.clone(),
+                );
+                profile.bandwidth_limit = self.place.bandwidth_limit.trim().to_owned();
+                profile
+            }
         };
         let steps = self.mode.steps();
         // A new profile takes everything the wizard holds, including folders
@@ -560,12 +564,12 @@ impl Wizard {
         }
         let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
         self.busy_since = Some(Instant::now());
-        vec![Effect::Finish(Finish {
+        vec![Effect::Finish(Box::new(Finish {
             mode: self.mode.clone(),
             profile,
             secret,
             remember: self.remember,
-        })]
+        }))]
     }
 
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
@@ -1143,7 +1147,7 @@ mod tests {
 
     fn finish_effect(effects: &[Effect]) -> Option<&Finish> {
         effects.iter().find_map(|effect| match effect {
-            Effect::Finish(finish) => Some(finish),
+            Effect::Finish(finish) => Some(finish.as_ref()),
             _ => None,
         })
     }

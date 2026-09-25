@@ -168,6 +168,8 @@ pub enum Dialog {
     /// Cancel was pressed in the wizard: keep the draft to finish later, or
     /// discard it.
     WizardCancel,
+    /// Editing a backup's `password_command`: `text` is the field as typed.
+    PasswordCommand { id: String, text: String },
 }
 
 impl Dialog {
@@ -893,16 +895,13 @@ impl App {
             let id = id.to_owned();
             let task = match effect {
                 profile::Effect::LoadKeyring => {
-                    let key = id.clone();
-                    Task::perform(
-                        async move { crate::keyring::load(&key).await },
-                        move |secret| {
-                            app(Message::Profile(
-                                id.clone(),
-                                profile::Message::KeyringLoaded(secret),
-                            ))
-                        },
-                    )
+                    let profile = profile.clone();
+                    Task::perform(async move { profile.password().await }, move |secret| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::KeyringLoaded(secret),
+                        ))
+                    })
                 }
                 profile::Effect::Open { secret, remember } => {
                     let used = secret.clone();
@@ -1030,6 +1029,13 @@ impl App {
                         self.select_wizard();
                         Task::none()
                     }
+                }
+                profile::Effect::EditPasswordCommand => {
+                    self.dialog = Some(Dialog::PasswordCommand {
+                        id: id.clone(),
+                        text: profile.password_command.clone(),
+                    });
+                    Task::none()
                 }
                 profile::Effect::LogEvent(kind) => {
                     event_log::record(&id, format::now(), kind);
@@ -1251,8 +1257,10 @@ impl App {
                 Task::none()
             }
             DialogMessage::Typed(text) => {
-                if let Some(Dialog::DeleteAll { typed, .. }) = &mut self.dialog {
-                    *typed = text;
+                match &mut self.dialog {
+                    Some(Dialog::DeleteAll { typed, .. }) => *typed = text,
+                    Some(Dialog::PasswordCommand { text: field, .. }) => *field = text,
+                    _ => {}
                 }
                 Task::none()
             }
@@ -1297,6 +1305,14 @@ impl App {
                     // reaches it. Dismiss rather than do nothing silently.
                     Dialog::WizardCancel => {
                         self.dialog = None;
+                        Task::none()
+                    }
+                    Dialog::PasswordCommand { id, text } => {
+                        self.dialog = None;
+                        if let Some(mut profile) = self.config.profile(&id).cloned() {
+                            profile.password_command = text.trim().to_owned();
+                            self.upsert_profile(profile);
+                        }
                         Task::none()
                     }
                 }
@@ -1553,6 +1569,15 @@ impl Application for App {
                     widget::button::destructive(fl!("wizard-discard"))
                         .on_press(Message::Dialog(DialogMessage::DiscardWizard)),
                 ),
+            Dialog::PasswordCommand { text, .. } => widget::dialog()
+                .title(fl!("password-source-title"))
+                .body(fl!("password-source-body"))
+                .control(
+                    widget::text_input(fl!("password-source-placeholder"), text.as_str())
+                        .on_input(|text| Message::Dialog(DialogMessage::Typed(text))),
+                )
+                .primary_action(widget::button::suggested(fl!("save")).on_press_maybe(confirm))
+                .secondary_action(cancel),
         };
         Some(built.into())
     }

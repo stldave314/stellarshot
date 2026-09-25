@@ -56,6 +56,10 @@ pub enum Location {
         remote: String,
         path: String,
         config: PathBuf,
+        /// rclone's `--bwlimit` syntax (`"1M"`, `"8M:2M"` for up:down, or
+        /// empty for no limit).
+        #[serde(default)]
+        bandwidth_limit: String,
     },
 }
 
@@ -72,7 +76,21 @@ impl Location {
             remote: remote.into(),
             path: path.into(),
             config: super::rclone::config_path(),
+            bandwidth_limit: String::new(),
         }
+    }
+
+    /// The same location, with a bandwidth limit applied if this is an
+    /// rclone location; a no-op for a local one, which has no transfer to
+    /// limit.
+    pub fn with_bandwidth_limit(mut self, limit: &str) -> Self {
+        if let Self::Rclone {
+            bandwidth_limit, ..
+        } = &mut self
+        {
+            *bandwidth_limit = limit.to_owned();
+        }
+        self
     }
 
     /// The folder, for a local repository.
@@ -121,6 +139,7 @@ impl Location {
                 remote,
                 path,
                 config,
+                bandwidth_limit,
             } => {
                 if !super::rclone::available() {
                     return Err(EngineError::new(ErrorKind::RcloneMissing, "rclone"));
@@ -128,11 +147,16 @@ impl Location {
                 // rustic starts `rclone serve restic` itself; this is how it
                 // is told to use Stellarshot's configuration and nothing else,
                 // and how rclone is tuned for backups (see `RCLONE_SERVE_FLAGS`).
-                let command = format!(
+                let mut command = format!(
                     "rclone serve restic --addr localhost:0 --config '{}' {}",
                     config.display(),
                     RCLONE_SERVE_FLAGS.join(" ")
                 );
+                if !bandwidth_limit.is_empty() {
+                    // Single-quoted like `--config` above: rclone's own
+                    // syntax (`1M`, `8M:2M`) never contains a quote itself.
+                    command.push_str(&format!(" --bwlimit '{bandwidth_limit}'"));
+                }
                 let mut options = BTreeMap::new();
                 options.insert("rclone-command".to_owned(), command);
                 Ok(BackendOptions::default()
@@ -185,6 +209,7 @@ pub fn probe(location: &Location) -> Result<Probe, EngineError> {
             remote,
             path,
             config,
+            ..
         } => super::rclone::probe(config, remote, path),
     }
 }
@@ -201,6 +226,7 @@ pub fn delete_repository(location: &Location) -> Result<(), EngineError> {
             remote,
             path,
             config,
+            ..
         } => super::rclone::delete_repository(config, remote, path),
     }
 }
@@ -293,4 +319,45 @@ pub fn open(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
         bars,
         inner,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rclone_location(bandwidth_limit: &str) -> Location {
+        Location::rclone(":local", "/tmp/somewhere").with_bandwidth_limit(bandwidth_limit)
+    }
+
+    #[test]
+    fn a_bandwidth_limit_is_passed_to_rclone() {
+        if !super::super::rclone::available() {
+            return;
+        }
+        let options = rclone_location("1M").backend_options().unwrap();
+        let command = options.options.get("rclone-command").unwrap();
+        assert!(
+            command.contains("--bwlimit '1M'"),
+            "the command must carry the limit: {command}"
+        );
+    }
+
+    #[test]
+    fn no_bandwidth_limit_adds_no_flag() {
+        if !super::super::rclone::available() {
+            return;
+        }
+        let options = rclone_location("").backend_options().unwrap();
+        let command = options.options.get("rclone-command").unwrap();
+        assert!(
+            !command.contains("--bwlimit"),
+            "an empty limit must not add the flag: {command}"
+        );
+    }
+
+    #[test]
+    fn a_local_location_ignores_a_bandwidth_limit() {
+        let location = Location::local("/tmp/somewhere").with_bandwidth_limit("1M");
+        assert_eq!(location, Location::local("/tmp/somewhere"));
+    }
 }

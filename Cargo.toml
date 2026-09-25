@@ -49,6 +49,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # output, actually log through) into the `tracing` subscriber above. Without
 # it, `set_logger`'s own claim to route rustic's output was never true.
 tracing-log = "0.2"
+# Splits a password command the same way rustic_core splits its own
+# stdin-command and rclone-command strings: into an argument list without
+# invoking a real shell.
+shell-words = "1"
 thiserror = "2"
 oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_crypto"] }
 ron = "0.12"

@@ -114,6 +114,7 @@ pub enum Message {
     CleanUpNow,
     CleanedUp(ChildEvent),
     EditSchedule,
+    EditPasswordCommand,
     DeleteSnapshot(String),
     SnapshotsDeleted(ChildEvent),
     TogglePinned(String, bool),
@@ -160,6 +161,7 @@ pub enum Effect {
     OpenRestore(Secret),
     Edit,
     EditSchedule,
+    EditPasswordCommand,
     Remove,
     DeleteAll,
     /// Ask systemd when this backup's timer will next run.
@@ -397,6 +399,7 @@ impl ProfileState {
                 effects
             }
             Message::EditSchedule => vec![Effect::EditSchedule],
+            Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
             Message::DeleteSnapshot(id) => match &self.secret {
                 Some(secret) if self.work.is_none() => {
                     vec![Effect::DeleteSnapshots(secret.clone(), vec![id])]
@@ -614,6 +617,18 @@ impl ProfileState {
                     widget::settings::item::builder(fl!("edit-backup"))
                         .description(fl!("edit-backup-description"))
                         .control(widget::button::standard(fl!("edit")).on_press(Message::Edit)),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("password-source-row"))
+                        .description(if profile.password_command.is_empty() {
+                            fl!("password-source-keyring")
+                        } else {
+                            fl!("password-source-command")
+                        })
+                        .control(
+                            widget::button::standard(fl!("change"))
+                                .on_press(Message::EditPasswordCommand),
+                        ),
                 )
                 .add(
                     widget::settings::item::builder(fl!("remove-backup"))

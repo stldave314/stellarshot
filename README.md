@@ -196,6 +196,10 @@ right-click menu).
    | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive. **Use my own Google API credentials…** lets you sign in with a Google Cloud client of your own instead of the one rclone shares with everyone who has not set one up |
    | **One of your rclone remotes** | Pick a remote you set up with `rclone config` (OneDrive, Dropbox, S3, …) and a folder on it |
 
+   A server, Google Drive or rclone remote also gets an **Advanced** section
+   with a bandwidth limit, in rclone's own syntax (`1M`, or `8M:2M` for
+   upload:download), left empty for no limit.
+
    **Next** checks the location and moves on as soon as the check passes; the
    button counts the seconds while it waits (folders and drives are checked
    straight away, and **Check** checks without moving on). A check that gets
@@ -399,10 +403,12 @@ The **Manage** section at the bottom of each backup's page:
 | **Check for damage → Check Now** | Verifies every snapshot, folder and index entry. It shows when it last ran |
 | **Free up space → Clean Up Now** | Forgets snapshots **Keep** no longer needs and deletes data nothing uses. It cannot be stopped once started |
 | **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
+| **How the password is provided → Change…** | The keyring (default), or a command that prints the password on its standard output, run fresh every time one is needed — for a password manager with a command-line client, such as the Bitwarden CLI |
 | **Remove from Stellarshot** | Forgets the backup and its remembered password. The data stays where it is and can be opened again later |
 | **Delete backup and all data** | Permanently deletes every snapshot. You type the backup's name to confirm. Only the repository's own files are removed |
 
-Individual snapshots are deleted with the bin icon on their row.
+Individual snapshots are deleted with the bin icon on their row; the pin icon
+next to it keeps one however old it gets, until unpinned.
 
 ### Keyboard shortcuts
 

@@ -330,11 +330,17 @@ A new backup engine behind one module, on the current rustic release.
 - [ ] **Google sign-in lifetime**: find out when rclone's Google tokens can
       expire, show it, and ask for a renewal before a scheduled backup
       would fail
-- [ ] **Passwords from a command** instead of the keyring, run only when a
-      job needs one (for example the Bitwarden CLI and Vaultwarden)
-- [ ] **Bandwidth limits** for cloud and server destinations (rclone's
-      `--bwlimit`), and I/O priority for manual backups as well as
-      scheduled ones
+- [x] **Passwords from a command** instead of the keyring, run only when a
+      job needs one (for example the Bitwarden CLI and Vaultwarden), set from
+      the profile page's own **Manage** section. The command is split into
+      an argument list the way rustic's own `stdin_command` is, without a
+      real shell, so pipes are not supported directly — a small wrapper
+      script covers that if it is ever needed
+- [x] **Bandwidth limits** for cloud and server destinations (rclone's
+      `--bwlimit`), set per backup in the wizard's Where step. I/O priority
+      for manual backups as well as scheduled ones is not done — `Nice=10`
+      already applies to scheduled runs (see `src/schedule.rs`), a manual
+      **Back Up Now** does not yet get the same treatment
 - [ ] **Append-only destinations**: a rest-server or rustic-server in
       append-only mode, or storage with object lock, so a compromised
       account cannot delete old snapshots. rustic's own append-only setting

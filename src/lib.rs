@@ -16,6 +16,7 @@ pub mod engine;
 pub mod event_log;
 pub mod keyring;
 pub mod notify;
+pub mod password_command;
 pub mod profile;
 pub mod run_state;
 pub mod runner;

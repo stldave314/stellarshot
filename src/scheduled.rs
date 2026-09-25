@@ -25,7 +25,7 @@ use crate::event_log;
 use crate::profile::{Profile, Schedule};
 use crate::run_state::{self, Failure, RunState, Stage};
 use crate::runner::{self, Job, Operation, Output};
-use crate::{debug_log, error_log, fl, keyring, notify};
+use crate::{debug_log, error_log, fl, notify};
 
 /// What runs after a successful backup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,14 +238,12 @@ pub fn main(args: &[String]) -> ExitCode {
         .location()
         .map_err(|err| Failed(Stage::Backup, err))
         .and_then(|location| {
-            let secret = runtime
-                .block_on(keyring::load(&profile.id))
-                .ok_or_else(|| {
-                    Failed(
-                        Stage::Backup,
-                        EngineError::new(ErrorKind::PasswordNotRemembered, ""),
-                    )
-                })?;
+            let secret = runtime.block_on(profile.password()).ok_or_else(|| {
+                Failed(
+                    Stage::Backup,
+                    EngineError::new(ErrorKind::PasswordNotRemembered, ""),
+                )
+            })?;
             run(&profile, &config.global_exclude_patterns, location, secret)
         });
     let Err(Failed(stage, error)) = result else {

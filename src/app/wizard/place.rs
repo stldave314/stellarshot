@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use cosmic::iced::Length;
 use cosmic::{Element, theme, widget};
 
 use crate::app::format;
@@ -83,6 +84,9 @@ pub struct Place {
     pub preferred_drive: Option<String>,
     /// Pick the user remote with this name once remotes are listed (an import).
     pub preferred_remote: Option<String>,
+    /// rclone's `--bwlimit` syntax (`1M`, `8M:2M`), or empty for no limit.
+    /// Only meaningful when [`Self::needs_rclone`].
+    pub bandwidth_limit: String,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +114,7 @@ pub enum Message {
     RcloneChecked(bool),
     Check,
     Probed(Destination, Result<Probe, EngineError>),
+    BandwidthLimit(String),
 }
 
 pub enum Effect {
@@ -166,6 +171,7 @@ impl Default for Place {
             problem: None,
             preferred_drive: None,
             preferred_remote: None,
+            bandwidth_limit: String::new(),
         }
     }
 }
@@ -432,6 +438,10 @@ impl Place {
                 }
                 Vec::new()
             }
+            Message::BandwidthLimit(limit) => {
+                self.bandwidth_limit = limit;
+                Vec::new()
+            }
         }
     }
 
@@ -480,6 +490,25 @@ impl Place {
             return column.into();
         }
         column = column.push(self.form());
+
+        if self.needs_rclone() {
+            column = column.push(
+                widget::settings::section()
+                    .title(fl!("place-advanced"))
+                    .add(
+                        widget::settings::item::builder(fl!("place-bandwidth-limit"))
+                            .description(fl!("place-bandwidth-limit-description"))
+                            .control(
+                                widget::text_input(
+                                    fl!("place-bandwidth-limit-placeholder"),
+                                    &self.bandwidth_limit,
+                                )
+                                .on_input(Message::BandwidthLimit)
+                                .width(Length::Fixed(120.0)),
+                            ),
+                    ),
+            );
+        }
 
         let verdict: Option<String> = match self.probe() {
             None => self.checking_since().map(|since| {

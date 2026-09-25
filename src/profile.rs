@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{BackupRequest, EngineError, ErrorKind, KeepRules, Location, rclone};
+use crate::engine::{BackupRequest, EngineError, ErrorKind, KeepRules, Location, Secret, rclone};
+use crate::{keyring, password_command};
 
 /// Folders under the home directory that are rarely worth backing up and are
 /// excluded from a new profile by default, as Déjà Dup does.
@@ -228,6 +229,14 @@ pub struct Profile {
     /// Files with glob patterns to exclude, one per line.
     #[serde(default)]
     pub exclude_pattern_files: Vec<PathBuf>,
+    /// rclone's `--bwlimit` syntax (`"1M"`, `"8M:2M"` for up:down), or empty
+    /// for no limit. Only applies to a destination reached through rclone.
+    #[serde(default)]
+    pub bandwidth_limit: String,
+    /// A command that prints the password on its standard output, run fresh
+    /// every time one is needed, instead of the keyring. Empty for none.
+    #[serde(default)]
+    pub password_command: String,
     #[serde(default)]
     pub schedule: Schedule,
     #[serde(default)]
@@ -263,6 +272,8 @@ impl Profile {
             exclude_larger_than: None,
             exclude_patterns_ignoring_case: Vec::new(),
             exclude_pattern_files: Vec::new(),
+            bandwidth_limit: String::new(),
+            password_command: String::new(),
             schedule: Schedule::Manual,
             retention: Retention::KeepForever,
             prune: None,
@@ -284,9 +295,25 @@ impl Profile {
         })
     }
 
+    /// The password to open this backup's repository with, right now: from
+    /// `password_command` if one is set, the keyring otherwise. `None` means
+    /// neither had one — the same as an unremembered password today, so a
+    /// caller with an existing "ask for it" fallback needs no change.
+    pub async fn password(&self) -> Option<Secret> {
+        let command = self.password_command.trim();
+        if command.is_empty() {
+            keyring::load(&self.id).await
+        } else {
+            password_command::run(command).await.ok()
+        }
+    }
+
     /// Where the engine finds this profile's repository right now.
     pub fn location(&self) -> Result<Location, EngineError> {
-        self.destination.location()
+        Ok(self
+            .destination
+            .location()?
+            .with_bandwidth_limit(&self.bandwidth_limit))
     }
 
     /// What the engine should back up.
@@ -371,6 +398,16 @@ pub fn profiles_from_v1(ron_text: &str) -> Vec<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_password_command_is_used_instead_of_the_keyring() {
+        let mut profile = Profile::new("Home".into(), local("/mnt/backup"), Vec::new());
+        profile.password_command = "printf hunter2".into();
+
+        let secret = profile.password().await.unwrap();
+
+        assert_eq!(secret.expose(), "hunter2");
+    }
 
     #[test]
     fn prune_defaults_to_on_only_for_this_computer() {
@@ -508,6 +545,28 @@ mod tests {
         let err = drive.location().unwrap_err();
         assert_eq!(err.kind, ErrorKind::DestinationUnavailable);
         assert_eq!(err.detail, "Backup SSD");
+    }
+
+    #[test]
+    fn a_profiles_bandwidth_limit_reaches_its_rclone_location() {
+        let mut profile = Profile::new(
+            "Backup".into(),
+            Destination::Sftp {
+                host: "nas.local".into(),
+                user: "alex".into(),
+                port: 22,
+                path: "backups".into(),
+            },
+            vec![PathBuf::from("/home/dave")],
+        );
+        profile.bandwidth_limit = "1M".into();
+
+        match profile.location().unwrap() {
+            Location::Rclone {
+                bandwidth_limit, ..
+            } => assert_eq!(bandwidth_limit, "1M"),
+            other => panic!("expected an rclone location, got {other:?}"),
+        }
     }
 
     #[test]

@@ -30,6 +30,7 @@ fn through_rclone(scratch: &Path, dir: &Path) -> Location {
         remote: ":local".to_owned(),
         path: dir.display().to_string(),
         config: scratch.join("rclone.conf"),
+        bandwidth_limit: String::new(),
     }
 }
 
@@ -131,6 +132,7 @@ fn an_unreachable_remote_is_unavailable() {
         remote: "no-such-remote".to_owned(),
         path: "backups".to_owned(),
         config: scratch.path().join("rclone.conf"),
+        bandwidth_limit: String::new(),
     };
 
     let err = engine::probe(&location).unwrap_err();

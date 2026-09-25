@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-A first slice of what is backed up, its history, and getting it back — see
-ROADMAP.md's 0.3 section for what is still to come.
+A first slice of what is backed up, its history, and getting it back, and of
+storage and credentials — see ROADMAP.md's 0.3 and 0.4 sections for what is
+still to come.
 
 ### Added
 
@@ -24,6 +25,11 @@ ROADMAP.md's 0.3 section for what is still to come.
 - **Restore options**: verify existing files by content instead of trusting
   their size and date, and choose how ownership is restored (as backed up,
   numeric IDs, or not at all) — both in the restore sheet's Advanced section.
+- **A bandwidth limit** per backup, in rclone's own syntax, set in the
+  wizard's Where step for a destination reached through rclone.
+- **A password from a command**, instead of the keyring, for a password
+  manager with a command-line client — set from the profile page's own
+  **Manage** section.
 
 ### Fixed
 

@@ -11,11 +11,11 @@ use std::{env, process};
 
 use cosmic::app::{Core, Task};
 use cosmic::iced::keyboard::{Event as KeyEvent, Key, Modifiers};
-use cosmic::iced::{Event, Length, Subscription, event, window};
+use cosmic::iced::{Alignment, Event, Length, Subscription, event, window};
 use cosmic::widget::about::About;
 use cosmic::widget::menu::{action::MenuAction, key_bind::KeyBind};
 use cosmic::widget::{self, nav_bar};
-use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme};
+use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme, theme};
 
 use crate::app::config::{AppTheme, CONFIG_VERSION, StellarshotConfig};
 use crate::app::key_bind::key_binds;
@@ -24,10 +24,12 @@ use crate::app::pages::restore::{self, RestorePage};
 use crate::app::wizard::{Mode, Wizard, place};
 use crate::debug::{CONFIG, ENGINE, UI};
 use crate::engine::{self, EngineError, Secret};
+use crate::event_log;
 use crate::profile::Profile;
 use crate::run_state::{self, RunState};
 use crate::runner::{Job, Operation};
 use crate::schedule;
+use crate::settings_export;
 use crate::{debug_log, error_log, fl};
 
 pub mod child;
@@ -75,8 +77,13 @@ pub struct App {
 /// What a sidebar entry leads to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NavItem {
+    /// Every backup at a glance: status, folders and storage locations.
+    Home,
     Profile(String),
+    /// Opens a fresh wizard. Replaced by `Wizard` once one is in progress.
     New,
+    /// A wizard is in progress; selecting this shows it again.
+    Wizard,
 }
 
 #[derive(Debug, Clone)]
@@ -108,12 +115,23 @@ pub enum Message {
     ScheduleFailed(String),
     Dialog(DialogMessage),
     Noop,
+    ExportSettings,
+    /// Chose where to save, or cancelled.
+    ExportChosen(Option<PathBuf>),
+    ExportSaved(Result<(), String>),
+    ImportSettings,
+    /// Chose a file to import, or cancelled.
+    ImportChosen(Option<PathBuf>),
+    ImportRead(Result<settings_export::Export, String>),
+    /// The home screen's own way to switch to one backup's page.
+    SelectProfile(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContextPage {
     About,
     Settings,
+    Help,
 }
 
 impl ContextPage {
@@ -121,6 +139,7 @@ impl ContextPage {
         match self {
             Self::About => fl!("about"),
             Self::Settings => fl!("settings"),
+            Self::Help => fl!("help"),
         }
     }
 }
@@ -141,6 +160,9 @@ pub enum Dialog {
         typed: String,
         busy: bool,
     },
+    /// Cancel was pressed in the wizard: keep the draft to finish later, or
+    /// discard it.
+    WizardCancel,
 }
 
 impl Dialog {
@@ -164,6 +186,11 @@ pub enum DialogMessage {
     Deleted(String, Result<(), EngineError>),
     /// Show an error from a background task.
     Failed(String, EngineError),
+    /// Keep the wizard's draft, only hide it: `Dialog::WizardCancel`'s own
+    /// two actions, kept apart from `Confirm`/`Close` since neither means
+    /// "just dismiss" here.
+    FinishWizardLater,
+    DiscardWizard,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +212,7 @@ pub enum Action {
     BackUpNow,
     ImportDejaDup,
     Settings,
+    Help,
     WindowClose,
     WindowNew,
 }
@@ -194,6 +222,7 @@ impl MenuAction for Action {
     fn message(&self) -> Self::Message {
         match self {
             Action::About => Message::ToggleContextPage(ContextPage::About),
+            Action::Help => Message::ToggleContextPage(ContextPage::Help),
             Action::NewBackup => Message::NewBackup,
             Action::BackUpNow => Message::BackUpSelected,
             Action::ImportDejaDup => Message::ImportDejaDup,
@@ -231,8 +260,60 @@ impl App {
                     )),
                 )
                 .into(),
+            widget::settings::section()
+                .title(fl!("settings-backup-title"))
+                .add(
+                    widget::settings::item::builder(fl!("settings-export"))
+                        .description(fl!("settings-export-description"))
+                        .control(
+                            widget::button::standard(fl!("settings-export-button"))
+                                .on_press(Message::ExportSettings),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("settings-import"))
+                        .description(fl!("settings-import-description"))
+                        .control(
+                            widget::button::standard(fl!("settings-import-button"))
+                                .on_press(Message::ImportSettings),
+                        ),
+                )
+                .into(),
         ])
         .into()
+    }
+
+    /// What the sidebar's icons mean, and the terms a newcomer may not know.
+    fn help_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let mut icons = widget::settings::section().title(fl!("help-icons-title"));
+        for status in run_state::BackupStatus::legend() {
+            icons = icons.add(
+                widget::row::with_capacity(2)
+                    .spacing(spacing.space_xs)
+                    .align_y(Alignment::Center)
+                    .padding([spacing.space_xxs, spacing.space_none])
+                    .push(widget::icon::from_name(status.icon()).size(16))
+                    .push(widget::text::body(status.label())),
+            );
+        }
+        let mut terms = widget::settings::section().title(fl!("help-terms-title"));
+        for (term, description) in [
+            (fl!("term-repository"), fl!("term-repository-description")),
+            (fl!("term-snapshot"), fl!("term-snapshot-description")),
+            (fl!("term-rclone"), fl!("term-rclone-description")),
+            (fl!("term-prune"), fl!("term-prune-description")),
+            (fl!("term-keep"), fl!("term-keep-description")),
+        ] {
+            terms = terms.add(
+                widget::column::with_capacity(2)
+                    .spacing(spacing.space_xxxs)
+                    .padding([spacing.space_xxs, spacing.space_none])
+                    .push(widget::text::body(term))
+                    .push(widget::text::caption(description)),
+            );
+        }
+        widget::settings::view_column(vec![icons.into(), terms.into()]).into()
     }
 
     /// The profile the sidebar has selected.
@@ -243,49 +324,150 @@ impl App {
         }
     }
 
+    /// The home screen, rather than a particular backup, is showing.
+    fn showing_home(&self) -> bool {
+        matches!(self.nav.active_data::<NavItem>(), Some(NavItem::Home))
+    }
+
+    /// The wizard, rather than the home screen or a particular backup, is
+    /// showing. A wizard can exist (`self.wizard.is_some()`) without this
+    /// being true: "finish later" leaves it running but out of view.
+    fn showing_wizard(&self) -> bool {
+        matches!(self.nav.active_data::<NavItem>(), Some(NavItem::Wizard))
+    }
+
+    /// Show the wizard: rebuilds the sidebar (so its entry exists) and
+    /// selects it. Called whenever a wizard is created or resumed.
+    fn select_wizard(&mut self) {
+        self.rebuild_nav(None);
+        let entity = self
+            .nav
+            .iter()
+            .find(|&entity| matches!(self.nav.data::<NavItem>(entity), Some(NavItem::Wizard)));
+        if let Some(entity) = entity {
+            self.nav.activate(entity);
+        }
+    }
+
+    /// Leave the wizard running but move the window away from it: "finish
+    /// later". Always goes to the home screen, a predictable place to
+    /// return from regardless of where the wizard was opened.
+    fn go_home(&mut self) {
+        let entity = self
+            .nav
+            .iter()
+            .find(|&entity| matches!(self.nav.data::<NavItem>(entity), Some(NavItem::Home)));
+        if let Some(entity) = entity {
+            self.nav.activate(entity);
+        }
+    }
+
+    /// Stop the wizard's own background work and forget it entirely:
+    /// "discard".
+    fn discard_wizard(&mut self) {
+        if let Some(wizard) = &self.wizard {
+            wizard.discard();
+        }
+        self.wizard = None;
+        self.rebuild_nav(None);
+    }
+
     /// Rebuild the sidebar from the settings, keeping the selection when the
     /// selected profile still exists.
     fn rebuild_nav(&mut self, select: Option<&str>) {
         let keep = select
             .map(str::to_owned)
             .or_else(|| self.selected().map(str::to_owned));
+        // Only when nothing more specific was asked for: a rebuild while the
+        // home screen or the wizard is showing (a backup finished, its
+        // schedule changed) must not silently jump the window to the first
+        // backup instead.
+        let keep_home = select.is_none() && self.showing_home();
+        let keep_wizard = select.is_none() && self.showing_wizard();
         self.nav.clear();
-        let mut chosen = None;
+        let home = self
+            .nav
+            .insert()
+            .text(fl!("home"))
+            .icon(widget::icon::from_name("go-home-symbolic"))
+            .data(NavItem::Home)
+            .id();
+        let mut chosen = keep_home.then_some(home);
         for profile in &self.config.profiles {
-            let icon = if self.needs_attention(profile) {
-                "dialog-warning-symbolic"
-            } else {
-                "drive-harddisk-symbolic"
-            };
+            let status = self.backup_status(profile);
+            let text = self.nav_row_text(profile, status);
             let id = self
                 .nav
                 .insert()
-                .text(profile.name.clone())
-                .icon(widget::icon::from_name(icon))
+                .text(text)
+                .icon(widget::icon::from_name(status.icon()))
                 .data(NavItem::Profile(profile.id.clone()))
                 .id();
-            if keep.as_deref() == Some(profile.id.as_str()) || chosen.is_none() {
+            if keep.as_deref() == Some(profile.id.as_str())
+                || (chosen.is_none() && !keep_home && !keep_wizard)
+            {
                 chosen = Some(id);
             }
         }
         if !self.config.profiles.is_empty() {
-            self.nav
+            // A wizard already in progress is never replaced by a fresh
+            // "New backup": there is only ever one at a time, and starting
+            // another would silently lose it.
+            let (text, icon, item) = if self.wizard.is_some() {
+                (
+                    fl!("wizard-resume"),
+                    "document-edit-symbolic",
+                    NavItem::Wizard,
+                )
+            } else {
+                (fl!("new-backup"), "list-add-symbolic", NavItem::New)
+            };
+            let id = self
+                .nav
                 .insert()
-                .text(fl!("new-backup"))
-                .icon(widget::icon::from_name("list-add-symbolic"))
-                .data(NavItem::New)
-                .divider_above(true);
+                .text(text)
+                .icon(widget::icon::from_name(icon))
+                .data(item)
+                .divider_above(true)
+                .id();
+            if keep_wizard {
+                chosen = Some(id);
+            }
         }
         if let Some(id) = chosen {
             self.nav.activate(id);
         }
     }
 
-    /// A scheduled run failed, or a check found damage.
-    fn needs_attention(&self, profile: &Profile) -> bool {
-        self.runs
+    /// `profile`'s state for the sidebar: its run facts, and whether the
+    /// window has work running for it right now.
+    fn backup_status(&self, profile: &Profile) -> run_state::BackupStatus {
+        let run = self.runs.get(&profile.id).cloned().unwrap_or_default();
+        let running = self
+            .pages
             .get(&profile.id)
-            .is_some_and(|run| run.damaged || run.current_failure(profile.last_success).is_some())
+            .is_some_and(profile::ProfileState::is_busy);
+        run_state::status(profile, &run, running)
+    }
+
+    /// The sidebar row's text: just the name, unless a backup is running
+    /// right now, when the nav row's only way to show progress is its text.
+    fn nav_row_text(&self, profile: &Profile, status: run_state::BackupStatus) -> String {
+        if status != run_state::BackupStatus::Running {
+            return profile.name.clone();
+        }
+        match self
+            .pages
+            .get(&profile.id)
+            .and_then(profile::ProfileState::progress_fraction)
+        {
+            Some(fraction) => fl!(
+                "nav-running-percent",
+                name = profile.name.clone(),
+                percent = ((fraction * 100.0).round() as i64)
+            ),
+            None => fl!("nav-running", name = profile.name.clone()),
+        }
     }
 
     /// Re-read every backup's run state; rebuild the sidebar if a warning
@@ -387,7 +569,10 @@ impl App {
         let Some(id) = self.selected().map(str::to_owned) else {
             return Task::none();
         };
-        let effects = self.pages.entry(id.clone()).or_default().activate();
+        let Some(profile) = self.config.profile(&id).cloned() else {
+            return Task::none();
+        };
+        let effects = self.pages.entry(id.clone()).or_default().activate(&profile);
         self.run_profile_effects(&id, effects)
     }
 
@@ -403,6 +588,7 @@ impl App {
 
     fn start_wizard(&mut self, wizard: Wizard, effects: Vec<wizard::Effect>) -> Task<Message> {
         self.wizard = Some(wizard);
+        self.select_wizard();
         self.run_wizard_effects(effects)
     }
 
@@ -446,6 +632,10 @@ impl App {
                     self.wizard = None;
                     Task::none()
                 }
+                wizard::Effect::ConfirmCancel => {
+                    self.dialog = Some(Dialog::WizardCancel);
+                    Task::none()
+                }
             });
         }
         Task::batch(tasks)
@@ -476,11 +666,19 @@ impl App {
                 tasks::blocking(engine::rclone::user_remotes),
                 move |remotes| to_wizard(place::Message::RemotesListed(remotes)),
             ),
-            place::Effect::SignIn { name } => Task::perform(
+            place::Effect::SignIn { name, credentials } => Task::perform(
                 tasks::blocking(move || {
                     let config = engine::rclone::config_path();
-                    engine::rclone::sign_in(&config, &name, "drive", &["scope=drive"])
-                        .map(|()| name)
+                    let mut params = vec!["scope=drive".to_owned()];
+                    if let Some((id, secret)) = &credentials {
+                        // rclone accepts these as plain `key=value` config
+                        // parameters, the same way `scope=drive` is passed;
+                        // there is no separate API for them.
+                        params.push(format!("client_id={id}"));
+                        params.push(format!("client_secret={secret}"));
+                    }
+                    let params: Vec<&str> = params.iter().map(String::as_str).collect();
+                    engine::rclone::sign_in(&config, &name, "drive", &params).map(|()| name)
                 }),
                 move |result| to_wizard(place::Message::SignedIn(result)),
             ),
@@ -756,12 +954,57 @@ impl App {
                     self.run_restore_effects(effects)
                 }
                 profile::Effect::Edit => {
-                    let (wizard, effects) = Wizard::edit(&profile);
-                    self.start_wizard(wizard, effects)
+                    if self.wizard.is_none() {
+                        let (wizard, effects) = Wizard::edit(&profile);
+                        self.start_wizard(wizard, effects)
+                    } else {
+                        // A different wizard is already in progress
+                        // ("finish later" from elsewhere): resume that one
+                        // rather than losing it to this edit.
+                        self.select_wizard();
+                        Task::none()
+                    }
                 }
                 profile::Effect::EditSchedule => {
-                    let (wizard, effects) = Wizard::schedule(&profile);
-                    self.start_wizard(wizard, effects)
+                    if self.wizard.is_none() {
+                        let (wizard, effects) = Wizard::schedule(&profile);
+                        self.start_wizard(wizard, effects)
+                    } else {
+                        self.select_wizard();
+                        Task::none()
+                    }
+                }
+                profile::Effect::LogEvent(kind) => {
+                    event_log::record(&id, format::now(), kind);
+                    Task::none()
+                }
+                profile::Effect::FetchHistory => {
+                    Task::perform(tasks::history(id.clone()), move |history| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::HistoryLoaded(history),
+                        ))
+                    })
+                }
+                profile::Effect::FetchStatistics(secret) => {
+                    Task::perform(tasks::statistics(profile.clone(), secret), move |result| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::StatisticsLoaded(result),
+                        ))
+                    })
+                }
+                profile::Effect::FetchNextRun => {
+                    let profile_id = id.clone();
+                    Task::perform(
+                        async move { schedule::next_run(&profile_id).await },
+                        move |next_run| {
+                            app(Message::Profile(
+                                id.clone(),
+                                profile::Message::NextRunLoaded(next_run),
+                            ))
+                        },
+                    )
                 }
                 profile::Effect::Check(secret) => {
                     let job = match profile.location() {
@@ -853,6 +1096,7 @@ impl App {
                         {
                             run.failure = None;
                         }
+                        run.total_freed += freed;
                     });
                     self.dialog = Some(Dialog::Info(
                         fl!("clean-up-done-title"),
@@ -939,6 +1183,16 @@ impl App {
                 self.dialog = None;
                 Task::none()
             }
+            DialogMessage::FinishWizardLater => {
+                self.dialog = None;
+                self.go_home();
+                Task::none()
+            }
+            DialogMessage::DiscardWizard => {
+                self.dialog = None;
+                self.discard_wizard();
+                Task::none()
+            }
             DialogMessage::Typed(text) => {
                 if let Some(Dialog::DeleteAll { typed, .. }) = &mut self.dialog {
                     *typed = text;
@@ -980,6 +1234,13 @@ impl App {
                                 app(Message::Dialog(DialogMessage::Deleted(id.clone(), result)))
                             },
                         )
+                    }
+                    // Its own two buttons send `FinishWizardLater` and
+                    // `DiscardWizard` directly; `Confirm` never legitimately
+                    // reaches it. Dismiss rather than do nothing silently.
+                    Dialog::WizardCancel => {
+                        self.dialog = None;
+                        Task::none()
                     }
                 }
             }
@@ -1074,10 +1335,12 @@ impl Application for App {
     }
 
     fn nav_model(&self) -> Option<&nav_bar::Model> {
-        // No sidebar until there is something to put in it: the empty state
-        // and the wizard fill the window instead.
-        (!self.config.profiles.is_empty() && self.wizard.is_none() && self.restore.is_none())
-            .then_some(&self.nav)
+        // No sidebar until there is a list for the wizard to sit beside: the
+        // empty state (setting up the very first backup) and the restore
+        // page fill the window instead. Once at least one backup exists,
+        // the wizard shows beside the list rather than over it, and stays
+        // running if the user looks at something else.
+        (!self.config.profiles.is_empty() && self.restore.is_none()).then_some(&self.nav)
     }
 
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
@@ -1176,6 +1439,11 @@ impl Application for App {
                 Message::CloseContextDrawer,
             )
             .title(title),
+            ContextPage::Help => cosmic::app::context_drawer::context_drawer(
+                self.help_view(),
+                Message::CloseContextDrawer,
+            )
+            .title(title),
         })
     }
 
@@ -1215,6 +1483,17 @@ impl Application for App {
                 )
                 .primary_action(widget::button::destructive(fl!("delete")).on_press_maybe(confirm))
                 .secondary_action(cancel),
+            Dialog::WizardCancel => widget::dialog()
+                .title(fl!("wizard-cancel-title"))
+                .body(fl!("wizard-cancel-body"))
+                .primary_action(
+                    widget::button::suggested(fl!("wizard-finish-later"))
+                        .on_press(Message::Dialog(DialogMessage::FinishWizardLater)),
+                )
+                .secondary_action(
+                    widget::button::destructive(fl!("wizard-discard"))
+                        .on_press(Message::Dialog(DialogMessage::DiscardWizard)),
+                ),
         };
         Some(built.into())
     }
@@ -1229,7 +1508,14 @@ impl Application for App {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        if let Some(wizard) = &self.wizard {
+        // With no backup yet there is no list for the wizard to sit beside,
+        // so it still fills the window (there is also no sidebar to switch
+        // away with in that case: see `nav_model`). Otherwise it only shows
+        // while its own sidebar entry is selected; "finish later" leaves it
+        // running underneath whatever is chosen instead.
+        if let Some(wizard) = &self.wizard
+            && (self.config.profiles.is_empty() || self.showing_wizard())
+        {
             return wizard.view().map(Message::Wizard);
         }
         if let Some((page, _)) = &self.restore {
@@ -1242,6 +1528,9 @@ impl Application for App {
         }
         if self.config.profiles.is_empty() {
             return pages::empty::view(self.dejadup);
+        }
+        if self.showing_home() {
+            return pages::home::view(&self.config.profiles, &self.runs, &self.pages, self.now);
         }
         let Some(id) = self.selected() else {
             return widget::space::horizontal().width(Length::Fill).into();
@@ -1317,6 +1606,10 @@ impl Application for App {
                     .entry(id.clone())
                     .or_default()
                     .update(message, &profile);
+                // The sidebar shows whether this backup is running, and its
+                // progress while it is: every change to it is worth a
+                // refresh, not just the ones that finish a run.
+                self.rebuild_nav(None);
                 return self.run_profile_effects(&id, effects);
             }
             Message::Wizard(message) => {
@@ -1340,6 +1633,9 @@ impl Application for App {
                     let (wizard, effects) = Wizard::create(home_dir().as_deref());
                     return self.start_wizard(wizard, effects);
                 }
+                // Only one wizard at a time: an in-progress one is resumed,
+                // never silently replaced.
+                self.select_wizard();
             }
             Message::ImportDejaDup => {
                 if self.wizard.is_none() {
@@ -1348,6 +1644,7 @@ impl Application for App {
                         |found| app(Message::DejaDupFound(found.ok().flatten())),
                     );
                 }
+                self.select_wizard();
             }
             Message::DejaDupFound(found) => {
                 use crate::dejadup::Place;
@@ -1363,10 +1660,14 @@ impl Application for App {
                         self.dialog =
                             Some(Dialog::Error(fl!("dejadup-unsupported", backend = backend)));
                     }
-                    Some(import) => {
+                    Some(import) if self.wizard.is_none() => {
                         let (wizard, effects) = Wizard::import(&import);
                         return self.start_wizard(wizard, effects);
                     }
+                    // A wizard appeared while Déjà Dup's settings were being
+                    // read (another way to open one was used meanwhile):
+                    // resume it rather than replacing it with this import.
+                    Some(_) => self.select_wizard(),
                 }
             }
             Message::OpenExisting => {
@@ -1374,6 +1675,7 @@ impl Application for App {
                     let (wizard, effects) = Wizard::open();
                     return self.start_wizard(wizard, effects);
                 }
+                self.select_wizard();
             }
             Message::BackUpSelected => {
                 if let Some(id) = self.selected().map(str::to_owned)
@@ -1394,6 +1696,84 @@ impl Application for App {
                     &fl!("schedule-failed"),
                     &EngineError::new(engine::ErrorKind::Internal, detail),
                 )));
+            }
+            Message::ExportSettings => {
+                return Task::perform(
+                    tasks::choose_export_path(fl!("settings-export-title")),
+                    |path| app(Message::ExportChosen(path)),
+                );
+            }
+            Message::ExportChosen(Some(path)) => {
+                let profiles = self.config.profiles.clone();
+                return Task::perform(
+                    async move {
+                        let text = tasks::export_settings(profiles).await?;
+                        tasks::write_file(path, text).await
+                    },
+                    |result| app(Message::ExportSaved(result)),
+                );
+            }
+            Message::ExportChosen(None) => {}
+            Message::ExportSaved(Ok(())) => {
+                self.dialog = Some(Dialog::Info(
+                    fl!("settings-export-done-title"),
+                    fl!("settings-export-done-body"),
+                ));
+            }
+            Message::ExportSaved(Err(detail)) => {
+                self.dialog = Some(Dialog::Error(errors::describe(
+                    &fl!("settings-export-failed"),
+                    &EngineError::new(engine::ErrorKind::Io, detail),
+                )));
+            }
+            Message::ImportSettings => {
+                return Task::perform(
+                    tasks::choose_import_path(fl!("settings-import-title")),
+                    |path| app(Message::ImportChosen(path)),
+                );
+            }
+            Message::ImportChosen(Some(path)) => {
+                return Task::perform(tasks::read_export(path), |result| {
+                    app(Message::ImportRead(result))
+                });
+            }
+            Message::ImportChosen(None) => {}
+            Message::ImportRead(Ok(export)) => {
+                let merged = settings_export::merge(&self.config.profiles, &export);
+                self.save_profiles(merged.profiles);
+                self.dialog = Some(Dialog::Info(
+                    fl!("settings-import-done-title"),
+                    fl!(
+                        "settings-import-done-body",
+                        added = (merged.counts.added as i64),
+                        skipped = (merged.counts.skipped as i64)
+                    ),
+                ));
+                // Each newly added backup's own schedule, exactly as an
+                // existing one gets it when the wizard creates or edits it.
+                return Task::batch(
+                    merged
+                        .added
+                        .into_iter()
+                        .map(Self::apply_schedule)
+                        .collect::<Vec<_>>(),
+                );
+            }
+            Message::ImportRead(Err(detail)) => {
+                self.dialog = Some(Dialog::Error(errors::describe(
+                    &fl!("settings-import-failed"),
+                    &EngineError::new(engine::ErrorKind::Io, detail),
+                )));
+            }
+            Message::SelectProfile(id) => {
+                let entity = self
+                    .nav
+                    .iter()
+                    .find(|&entity| matches!(self.nav.data::<NavItem>(entity), Some(NavItem::Profile(p)) if *p == id));
+                if let Some(entity) = entity {
+                    self.nav.activate(entity);
+                    return self.activate_selected();
+                }
             }
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {

@@ -28,6 +28,21 @@ use crate::debug_log;
 /// The rclone executable.
 const RCLONE: &str = "rclone";
 
+/// `args`, with the value of any `client_secret=…` replaced, for the debug
+/// log: a user's own Google API credentials should not sit in a log file
+/// even one that developer logging (off by default, stripped from release
+/// builds) has to be turned on to read.
+fn redact(args: &[&str]) -> Vec<String> {
+    args.iter()
+        .map(|arg| match arg.split_once('=') {
+            Some((key, _)) if key.eq_ignore_ascii_case("client_secret") => {
+                format!("{key}=<redacted>")
+            }
+            _ => (*arg).to_owned(),
+        })
+        .collect()
+}
+
 /// rclone's exit status for "directory not found".
 const EXIT_DIRECTORY_NOT_FOUND: i32 = 3;
 
@@ -49,7 +64,7 @@ pub fn target(remote: &str, path: &str) -> String {
 
 /// Run rclone with Stellarshot's configuration.
 fn rclone(config: &Path, args: &[&str]) -> Result<Output, EngineError> {
-    debug_log!(ENGINE, "rclone {}", args.join(" "));
+    debug_log!(ENGINE, "rclone {}", redact(args).join(" "));
     Command::new(RCLONE)
         .arg("--config")
         .arg(config)
@@ -343,6 +358,31 @@ pub fn delete_remote(config: &Path, name: &str) -> Result<(), EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_client_secret_is_redacted_for_the_log_but_nothing_else_is() {
+        let args = redact(&[
+            "config",
+            "create",
+            "stellarshot-abc",
+            "drive",
+            "scope=drive",
+            "client_id=my-id",
+            "client_secret=hunter2",
+        ]);
+        assert_eq!(
+            args,
+            vec![
+                "config",
+                "create",
+                "stellarshot-abc",
+                "drive",
+                "scope=drive",
+                "client_id=my-id",
+                "client_secret=<redacted>",
+            ]
+        );
+    }
 
     fn mode(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;

@@ -193,6 +193,75 @@ pub fn remove(id: &str) -> Result<(), String> {
     systemctl(&["daemon-reload"])
 }
 
+#[zbus::proxy(
+    interface = "org.freedesktop.systemd1.Manager",
+    default_service = "org.freedesktop.systemd1",
+    default_path = "/org/freedesktop/systemd1"
+)]
+trait Manager {
+    /// Loads a unit into memory if needed, and returns its object path.
+    /// Unlike `GetUnit`, this does not fail for a unit systemd has not
+    /// looked at since it last started.
+    fn load_unit(&self, name: &str) -> zbus::Result<zbus::zvariant::OwnedObjectPath>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.systemd1.Unit",
+    default_service = "org.freedesktop.systemd1"
+)]
+trait Unit {
+    /// Whether systemd actually found a unit file by this name. `LoadUnit`
+    /// never fails for a name it does not recognise: it returns a path to
+    /// an empty, "not-found" unit instead, so this is the only way to tell
+    /// the two apart.
+    #[zbus(property)]
+    fn load_state(&self) -> zbus::Result<String>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.systemd1.Timer",
+    default_service = "org.freedesktop.systemd1"
+)]
+trait Timer {
+    /// Microseconds since the epoch of the timer's next elapse against the
+    /// wall clock; `u64::MAX` if it has none scheduled (a manual backup's
+    /// removed timer) or the unit does not exist. Named explicitly: zbus
+    /// would otherwise derive `NextElapseUsecRealtime`, but systemd's
+    /// property capitalises the unit as `USec`.
+    #[zbus(property, name = "NextElapseUSecRealtime")]
+    fn next_elapse_usec_realtime(&self) -> zbus::Result<u64>;
+}
+
+/// When `id`'s timer will next run, if it has one. Asks systemd directly
+/// (rather than parsing `systemctl show`'s output, which is localized and
+/// not meant for programs to read) over the session bus every user session
+/// already has.
+pub async fn next_run(id: &str) -> Option<i64> {
+    match query_next_run(id).await {
+        Ok(usec) => usec,
+        Err(err) => {
+            debug_log!(SCHED, "could not read the next run of {id}: {err}");
+            None
+        }
+    }
+}
+
+async fn query_next_run(id: &str) -> zbus::Result<Option<i64>> {
+    let connection = zbus::Connection::session().await?;
+    let manager = ManagerProxy::new(&connection).await?;
+    let path = manager.load_unit(&timer_name(id)).await?;
+    let unit = UnitProxy::builder(&connection).path(&path)?.build().await?;
+    if unit.load_state().await? != "loaded" {
+        return Ok(None);
+    }
+    let timer = TimerProxy::builder(&connection)
+        .path(&path)?
+        .build()
+        .await?;
+    let usec = timer.next_elapse_usec_realtime().await?;
+    Ok((0 < usec && usec < u64::MAX).then_some((usec / 1_000_000) as i64))
+}
+
 /// Bring every timer in line with the settings: install or update the ones
 /// scheduled profiles need, and remove any left from profiles that are gone
 /// or no longer scheduled. Returns what could not be done.

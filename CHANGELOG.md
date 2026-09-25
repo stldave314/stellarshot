@@ -5,7 +5,46 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-09-24
+
+Seeing what is going on: status, history, and repository statistics.
+
+### Added
+
+- **A status icon for every backup in the sidebar**: up to date, running,
+  overdue, failed or damaged, with a legend under the new **Help** item
+  (<kbd>F1</kbd>), which also explains repository, snapshot, rclone, prune
+  and keep. A running backup's progress shows as a percentage in the
+  sidebar text, since the row has no room for a bar; the profile page's own
+  progress card is unchanged.
+- **The next scheduled run** on the status card, read from systemd.
+- **Folders included and excluded**, and space freed by every clean-up,
+  on the profile page.
+- **Repository statistics** on request: the real size in storage, the
+  compression ratio, and how much space could still be reclaimed.
+- **An animated progress bar** while a phase's total is not known yet,
+  instead of sitting at an empty 0%.
+- **A history** of every run, failure, check, clean-up and quiet skip, kept
+  per backup and shown on its page.
+- **One notification for a destination that stays unreachable**, instead of
+  silence: a backup that has missed its schedule for a while now shows
+  **Overdue** in the sidebar and raises a notification once per overdue
+  streak, not once per skipped attempt.
+- **Export and import of every backup's settings and history**, under
+  **Settings**. Never a password. Importing only adds a backup whose ID is
+  new; one already here keeps its own settings, with only its history
+  merged in.
+- **An "Overview" screen**, first in the sidebar: every backup's status,
+  every folder backed up on this computer and which backups cover it, and
+  every storage location and which backups keep a repository there.
+- **The wizard sits beside the backup list** now, once at least one backup
+  exists, instead of covering the whole window. **Cancel** offers **Finish
+  Later** (the sidebar gets a **Resume setup** entry to come back to it) or
+  **Discard**. Only one draft exists at a time; opening the wizard again
+  from anywhere resumes it rather than losing it.
+- **Use my own Google API credentials…**, under Google Drive in the wizard:
+  sign in with a Google Cloud client of your own instead of the one rclone
+  shares with everyone who has not set one up.
 
 ## [0.1.1] - 2026-09-24
 

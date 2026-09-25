@@ -21,6 +21,7 @@ use crate::app::errors;
 use crate::constants::CHECK_INTERVAL;
 use crate::debug::SCHED;
 use crate::engine::{EngineError, ErrorKind, KeepRules, Location, Secret};
+use crate::event_log;
 use crate::profile::{Profile, Schedule};
 use crate::run_state::{self, Failure, RunState, Stage};
 use crate::runner::{self, Job, Operation, Output};
@@ -69,6 +70,40 @@ fn now() -> i64 {
     jiff::Timestamp::now().as_second()
 }
 
+/// A skipped slot is quiet on its own — the next one tries again — but a
+/// destination that stays unreachable for a long time is a problem the
+/// window's sidebar shows and nothing else says out loud until it is
+/// looked at. Notify once per overdue streak, not at every skipped slot.
+fn notify_if_overdue(profile: &Profile, runtime: &tokio::runtime::Runtime) {
+    let state = run_state::load(&profile.id);
+    if !overdue_notification_due(profile, &state, now()) {
+        return;
+    }
+    record(profile, |state| state.overdue_notified = true);
+    let summary = fl!("notify-overdue", name = profile.name.clone());
+    let body = fl!(
+        "notify-overdue-body",
+        schedule = crate::app::pages::profile::schedule_summary(profile.schedule)
+    );
+    runtime.block_on(notify::failure(
+        &summary,
+        &body,
+        &fl!("notify-open"),
+        &profile.id,
+    ));
+}
+
+/// Whether a persistently unreachable destination has earned a
+/// notification: overdue, and not already notified about since the last
+/// success. Kept separate from [`notify_if_overdue`] so it can be tested on
+/// its own: that function's other half sends a real desktop notification,
+/// which no automated test may risk triggering for real (see
+/// `tests/scheduled.rs`'s doc comment on why it never runs a scenario that
+/// reaches `notify::failure`).
+fn overdue_notification_due(profile: &Profile, state: &RunState, now: i64) -> bool {
+    !state.overdue_notified && run_state::is_overdue(profile, state, now)
+}
+
 fn record(profile: &Profile, change: impl FnOnce(&mut RunState)) {
     if let Err(err) = run_state::update(&profile.id, change) {
         error_log!(SCHED, "could not record the run of {}: {err}", profile.id);
@@ -99,7 +134,9 @@ fn run(profile: &Profile, location: Location, secret: Secret) -> Result<(), Fail
     record(profile, |state| {
         state.last_success = Some(finished);
         state.failure = None;
+        state.overdue_notified = false;
     });
+    event_log::record(&profile.id, finished, event_log::EventKind::BackedUp);
     debug_log!(SCHED, "backed up {}", profile.id);
 
     let plan = Plan::new(profile, &run_state::load(&profile.id), finished);
@@ -126,20 +163,39 @@ fn run(profile: &Profile, location: Location, secret: Secret) -> Result<(), Fail
                 state.last_check = Some(checked);
                 state.damaged = damaged;
             });
+            event_log::record(
+                &profile.id,
+                checked,
+                event_log::EventKind::Checked { damaged },
+            );
         }
         result.map_err(|err| Failed(Stage::Check, err))?;
     }
 
     let damaged = run_state::load(&profile.id).damaged;
+    let mut freed = 0;
     if plan.prune_now(removed, damaged) {
-        operation(
+        freed = operation(
             Operation::Maintain,
             Job {
                 prune: true,
                 ..job()
             },
         )
-        .map_err(|err| Failed(Stage::Cleanup, err))?;
+        .map_err(|err| Failed(Stage::Cleanup, err))?
+        .pruned
+        .map_or(0, |report| report.bytes);
+        record(profile, |state| state.total_freed += freed);
+    }
+    if removed > 0 || freed > 0 {
+        event_log::record(
+            &profile.id,
+            now(),
+            event_log::EventKind::CleanedUp {
+                forgotten: removed,
+                freed,
+            },
+        );
     }
     Ok(())
 }
@@ -191,6 +247,12 @@ pub fn main(args: &[String]) -> ExitCode {
     };
     if stage == Stage::Backup && is_quiet(&error) {
         debug_log!(SCHED, "{id} skipped: {error}");
+        event_log::record(
+            id,
+            now(),
+            event_log::EventKind::Skipped { kind: error.kind },
+        );
+        notify_if_overdue(&profile, &runtime);
         return ExitCode::SUCCESS;
     }
 
@@ -207,6 +269,15 @@ pub fn main(args: &[String]) -> ExitCode {
             detail: error.detail.clone(),
         });
     });
+    event_log::record(
+        id,
+        time,
+        event_log::EventKind::Failed {
+            stage,
+            kind: error.kind,
+            detail: error.detail.clone(),
+        },
+    );
     let summary = match stage {
         Stage::Backup => fl!("notify-backup-failed", name = profile.name.clone()),
         Stage::Cleanup => fl!("notify-cleanup-failed", name = profile.name.clone()),
@@ -263,6 +334,34 @@ mod tests {
         assert!(plan.prune_now(3, false));
         assert!(!plan.prune_now(3, true), "not while damage is known");
         assert!(!plan.prune_now(0, false), "nothing was forgotten");
+    }
+
+    #[test]
+    fn an_overdue_destination_notifies_once_per_streak() {
+        let now = 1_000 * DAY;
+        let overdue = RunState {
+            last_success: Some(now - 3 * DAY),
+            ..RunState::default()
+        };
+        assert!(
+            overdue_notification_due(&profile(), &overdue, now),
+            "3 days late on a daily schedule is well past due"
+        );
+
+        let already_notified = RunState {
+            overdue_notified: true,
+            ..overdue.clone()
+        };
+        assert!(
+            !overdue_notification_due(&profile(), &already_notified, now),
+            "the same streak does not notify twice"
+        );
+
+        let current = RunState {
+            last_success: Some(now - DAY / 2),
+            ..RunState::default()
+        };
+        assert!(!overdue_notification_due(&profile(), &current, now));
     }
 
     #[test]

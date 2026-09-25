@@ -67,6 +67,27 @@ impl Destination {
         }
     }
 
+    /// What kind of place this is, in the same words the wizard's "where"
+    /// step uses.
+    pub fn kind_label(&self) -> String {
+        match self {
+            Self::Local { .. } => crate::fl!("place-folder"),
+            Self::Removable { .. } => crate::fl!("place-drive"),
+            Self::Sftp { .. } => crate::fl!("place-server"),
+            Self::Rclone { provider, .. } => provider.clone(),
+        }
+    }
+
+    /// A symbolic icon for the kind of place this is.
+    pub fn icon(&self) -> &'static str {
+        match self {
+            Self::Local { .. } => "folder-symbolic",
+            Self::Removable { .. } => "drive-removable-media-symbolic",
+            Self::Sftp { .. } => "network-server-symbolic",
+            Self::Rclone { .. } => "folder-remote-symbolic",
+        }
+    }
+
     /// Where the engine finds the repository right now. A removable drive
     /// that is not plugged in is `DestinationUnavailable`, naming the drive.
     pub fn location(&self) -> Result<Location, EngineError> {
@@ -121,6 +142,20 @@ pub enum Schedule {
     Hourly,
     Daily,
     Weekly,
+}
+
+impl Schedule {
+    /// How often a backup on this schedule is expected, for judging whether
+    /// one has fallen overdue. `None` for `Manual`, which has no expectation.
+    pub fn period(self) -> Option<i64> {
+        const HOUR: i64 = 3600;
+        match self {
+            Self::Manual => None,
+            Self::Hourly => Some(HOUR),
+            Self::Daily => Some(24 * HOUR),
+            Self::Weekly => Some(7 * 24 * HOUR),
+        }
+    }
 }
 
 /// How long snapshots are kept. Only this computer's snapshots are ever

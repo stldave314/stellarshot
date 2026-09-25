@@ -61,6 +61,12 @@ pub struct Place {
     /// The remote a Google sign-in created in Stellarshot's configuration.
     pub google_remote: Option<String>,
     pub signing_in: bool,
+    /// A Google API client of the user's own, instead of the one Stellarshot
+    /// signs in with by default. Both empty means the default.
+    pub google_client_id: String,
+    pub google_client_secret: String,
+    /// The custom-credentials fields are shown.
+    pub google_advanced: bool,
     pub cloud_path: String,
     pub user_remotes: Vec<String>,
     /// The chosen user remote, and the copy of it in Stellarshot's
@@ -93,6 +99,9 @@ pub enum Message {
     ServerPath(String),
     SignIn,
     SignedIn(Result<String, EngineError>),
+    ToggleGoogleAdvanced,
+    GoogleClientId(String),
+    GoogleClientSecret(String),
     CloudPath(String),
     RemotesListed(Result<Vec<String>, EngineError>),
     PickRemote(usize),
@@ -108,9 +117,12 @@ pub enum Effect {
     ListDrives,
     CheckRclone,
     ListRemotes,
-    /// Sign in to Google Drive, creating the remote `name`.
+    /// Sign in to Google Drive, creating the remote `name`. `credentials`
+    /// is the user's own client ID and secret, if they gave both; `None`
+    /// signs in with Stellarshot's own.
     SignIn {
         name: String,
+        credentials: Option<(String, String)>,
     },
     /// Copy the user's remote `from` into Stellarshot's configuration as `to`.
     CopyRemote {
@@ -141,6 +153,9 @@ impl Default for Place {
             server_path: String::new(),
             google_remote: None,
             signing_in: false,
+            google_client_id: String::new(),
+            google_client_secret: String::new(),
+            google_advanced: false,
             cloud_path: default_folder(),
             user_remotes: Vec::new(),
             user_remote: None,
@@ -322,9 +337,26 @@ impl Place {
                     return Vec::new();
                 }
                 self.signing_in = true;
+                let id = self.google_client_id.trim();
+                let secret = self.google_client_secret.trim();
+                let credentials = (!id.is_empty() && !secret.is_empty())
+                    .then(|| (id.to_owned(), secret.to_owned()));
                 vec![Effect::SignIn {
                     name: new_remote_name(),
+                    credentials,
                 }]
+            }
+            Message::ToggleGoogleAdvanced => {
+                self.google_advanced = !self.google_advanced;
+                Vec::new()
+            }
+            Message::GoogleClientId(value) => {
+                self.google_client_id = value;
+                Vec::new()
+            }
+            Message::GoogleClientSecret(value) => {
+                self.google_client_secret = value;
+                Vec::new()
             }
             Message::SignedIn(result) => {
                 self.signing_in = false;
@@ -553,12 +585,41 @@ impl Place {
                 let mut column = widget::column::with_capacity(4).spacing(spacing.space_xs);
                 column = match (&self.google_remote, self.signing_in) {
                     (_, true) => column.push(widget::text::body(fl!("place-signing-in"))),
-                    (None, false) => column
-                        .push(widget::text::body(fl!("place-google-intro")))
-                        .push(
-                            widget::button::suggested(fl!("place-sign-in"))
-                                .on_press(Message::SignIn),
-                        ),
+                    (None, false) => {
+                        let mut section = column
+                            .push(widget::text::body(fl!("place-google-intro")))
+                            .push(
+                                widget::button::suggested(fl!("place-sign-in"))
+                                    .on_press(Message::SignIn),
+                            )
+                            .push(
+                                widget::button::link(fl!("place-google-advanced"))
+                                    .on_press(Message::ToggleGoogleAdvanced),
+                            );
+                        if self.google_advanced {
+                            section = section
+                                .push(widget::text::caption(fl!(
+                                    "place-google-advanced-description"
+                                )))
+                                .push(
+                                    widget::text_input(
+                                        fl!("place-google-client-id"),
+                                        &self.google_client_id,
+                                    )
+                                    .label(fl!("place-google-client-id"))
+                                    .on_input(Message::GoogleClientId),
+                                )
+                                .push(
+                                    widget::text_input(
+                                        fl!("place-google-client-secret"),
+                                        &self.google_client_secret,
+                                    )
+                                    .label(fl!("place-google-client-secret"))
+                                    .on_input(Message::GoogleClientSecret),
+                                );
+                        }
+                        section
+                    }
                     (Some(_), false) => column.push(widget::text::body(fl!("place-signed-in"))),
                 };
                 if self.google_remote.is_some() {
@@ -693,10 +754,11 @@ mod tests {
         assert!(place.destination().is_none());
 
         let effects = place.update(Message::SignIn);
-        let Some(Effect::SignIn { name }) = effects.first() else {
+        let Some(Effect::SignIn { name, credentials }) = effects.first() else {
             panic!("expected a sign-in");
         };
         assert!(name.starts_with("stellarshot-"));
+        assert_eq!(*credentials, None, "no custom credentials were given");
         assert!(
             place.update(Message::SignIn).is_empty(),
             "one sign-in at a time"
@@ -710,6 +772,32 @@ mod tests {
             }
             other => panic!("expected an rclone destination, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_google_sign_in_carries_a_complete_pair_of_custom_credentials() {
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Google));
+
+        // Only one of the two given is not enough to use them: rclone needs
+        // both or neither.
+        place.update(Message::GoogleClientId("my-client-id".into()));
+        let effects = place.update(Message::SignIn);
+        let Some(Effect::SignIn { credentials, .. }) = effects.first() else {
+            panic!("expected a sign-in");
+        };
+        assert_eq!(*credentials, None, "a client ID alone is not enough");
+
+        place.signing_in = false;
+        place.update(Message::GoogleClientSecret("my-client-secret".into()));
+        let effects = place.update(Message::SignIn);
+        let Some(Effect::SignIn { credentials, .. }) = effects.first() else {
+            panic!("expected a sign-in");
+        };
+        assert_eq!(
+            *credentials,
+            Some(("my-client-id".into(), "my-client-secret".into()))
+        );
     }
 
     #[test]

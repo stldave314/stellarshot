@@ -19,6 +19,7 @@ pub mod rclone;
 mod repo;
 mod restore;
 mod snapshots;
+mod statistics;
 mod uploads;
 
 pub use backup::{BackupReport, BackupRequest};
@@ -30,6 +31,7 @@ pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
 pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, open, probe};
 pub use restore::{ConflictPolicy, RestorePreview, RestoreRequest, Target};
 pub use snapshots::SnapshotSummary;
+pub use statistics::Statistics;
 
 #[cfg(test)]
 mod tests;

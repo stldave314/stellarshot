@@ -14,8 +14,9 @@ use crate::app::format::{self, Ago};
 use crate::app::wizard::retention_label;
 use crate::constants::STALL_NOTICE;
 use crate::engine::{
-    EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SnapshotSummary,
+    EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SnapshotSummary, Statistics,
 };
+use crate::event_log::EventKind;
 use crate::fl;
 use crate::profile::{Profile, Schedule};
 use crate::run_state::{RunState, Stage};
@@ -60,6 +61,13 @@ impl Running {
         }
         self.progress = Some(progress);
     }
+
+    /// How much of the current phase is done, once its total is known.
+    fn fraction(&self) -> Option<f32> {
+        let progress = self.progress.as_ref()?;
+        let total = progress.total.filter(|total| *total > 0)?;
+        Some(progress.done as f32 / total as f32)
+    }
 }
 
 /// Everything the page knows beyond the profile's saved settings.
@@ -72,6 +80,18 @@ pub struct ProfileState {
     snapshots: Option<Vec<SnapshotSummary>>,
     work: Option<Running>,
     show_all: bool,
+    /// When this backup's timer will next run, from systemd. `None` until
+    /// asked, or if the backup is not scheduled.
+    next_run: Option<i64>,
+    /// The repository's statistics, once calculated: reads every index file
+    /// and lists the destination, so it waits for the user to ask.
+    statistics: Option<Result<Statistics, EngineError>>,
+    calculating_statistics: bool,
+    /// What has happened to this backup, oldest first. Loaded once when the
+    /// page opens; every later entry is added here directly, since whatever
+    /// adds one already knows what it is.
+    history: Vec<crate::event_log::Event>,
+    history_loaded: bool,
     /// Open the restore page as soon as the backup is unlocked: the
     /// desktop entry's "Restore Files" action.
     pub restore_when_unlocked: bool,
@@ -101,6 +121,11 @@ pub enum Message {
     Edit,
     Remove,
     DeleteAll,
+    /// systemd answered when this backup's timer will next run.
+    NextRunLoaded(Option<i64>),
+    CalculateStatistics,
+    StatisticsLoaded(Result<Statistics, EngineError>),
+    HistoryLoaded(Vec<crate::event_log::Event>),
 }
 
 /// What the page needs the application to do.
@@ -134,6 +159,14 @@ pub enum Effect {
     EditSchedule,
     Remove,
     DeleteAll,
+    /// Ask systemd when this backup's timer will next run.
+    FetchNextRun,
+    /// Read the repository's statistics: it needs the password.
+    FetchStatistics(Secret),
+    /// Add an entry to this backup's history.
+    LogEvent(EventKind),
+    /// Read this backup's history from disk: once, when the page opens.
+    FetchHistory,
 }
 
 impl Default for ProfileState {
@@ -149,6 +182,11 @@ impl Default for ProfileState {
             snapshots: None,
             work: None,
             show_all: false,
+            next_run: None,
+            statistics: None,
+            calculating_statistics: false,
+            history: Vec::new(),
+            history_loaded: false,
             restore_when_unlocked: false,
         }
     }
@@ -162,6 +200,12 @@ impl ProfileState {
     /// A backup, check or clean-up is running.
     pub fn is_busy(&self) -> bool {
         self.work.is_some()
+    }
+
+    /// How much of the running work is done, once its total is known: for
+    /// the sidebar, which can only show progress as a number.
+    pub fn progress_fraction(&self) -> Option<f32> {
+        self.work.as_ref()?.fraction()
     }
 
     /// Start `work` in a child process, if nothing else is running and the
@@ -180,13 +224,36 @@ impl ProfileState {
         self.snapshots.as_ref().is_some_and(|s| !s.is_empty())
     }
 
-    /// Called when the page is shown: look for a remembered password once.
-    pub fn activate(&mut self) -> Vec<Effect> {
-        if self.keyring_checked || self.secret.is_some() {
-            return Vec::new();
+    /// Mirror any `LogEvent` in `effects` into the page's own copy of the
+    /// history, so it shows up without waiting for a round trip back from
+    /// the store the effect writes to.
+    fn track_history(&mut self, effects: &[Effect]) {
+        let now = format::now();
+        for effect in effects {
+            if let Effect::LogEvent(kind) = effect {
+                self.history.push(crate::event_log::Event {
+                    time: now,
+                    kind: kind.clone(),
+                });
+            }
         }
-        self.keyring_checked = true;
-        vec![Effect::LoadKeyring]
+    }
+
+    /// Called when the page is shown: look for a remembered password once.
+    pub fn activate(&mut self, profile: &Profile) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if !self.keyring_checked && self.secret.is_none() {
+            self.keyring_checked = true;
+            effects.push(Effect::LoadKeyring);
+        }
+        if profile.schedule != Schedule::Manual {
+            effects.push(Effect::FetchNextRun);
+        }
+        if !self.history_loaded {
+            self.history_loaded = true;
+            effects.push(Effect::FetchHistory);
+        }
+        effects
     }
 
     /// Start a backup, if one can start.
@@ -271,10 +338,30 @@ impl ProfileState {
                 .map(Effect::Check)
                 .into_iter()
                 .collect(),
-            Message::Checked(event) => self.on_work(event, |outcome| match outcome {
-                Ok(_) => vec![Effect::RecordCheck(Ok(()))],
-                Err(error) => vec![Effect::RecordCheck(Err(error))],
-            }),
+            Message::Checked(event) => {
+                let effects = self.on_work(event, |outcome| match outcome {
+                    Ok(_) => vec![
+                        Effect::RecordCheck(Ok(())),
+                        Effect::LogEvent(EventKind::Checked { damaged: false }),
+                    ],
+                    Err(error) => {
+                        let damaged = error.kind == ErrorKind::RepositoryDamaged;
+                        let mut effects = vec![Effect::LogEvent(if damaged {
+                            EventKind::Checked { damaged: true }
+                        } else {
+                            EventKind::Failed {
+                                stage: crate::run_state::Stage::Check,
+                                kind: error.kind,
+                                detail: error.detail.clone(),
+                            }
+                        })];
+                        effects.push(Effect::RecordCheck(Err(error)));
+                        effects
+                    }
+                });
+                self.track_history(&effects);
+                effects
+            }
             Message::CleanUpNow => self
                 .start(Work::CleanUp)
                 .map(Effect::CleanUp)
@@ -284,13 +371,25 @@ impl ProfileState {
                 let mut effects = self.on_work(event, |outcome| match outcome {
                     Ok(Event::Done {
                         forgotten, pruned, ..
-                    }) => vec![Effect::CleanedUp {
-                        forgotten: forgotten.map_or(0, |report| report.removed),
-                        freed: pruned.map_or(0, |PruneReport { bytes }| bytes),
-                    }],
+                    }) => {
+                        let forgotten = forgotten.map_or(0, |report| report.removed);
+                        let freed = pruned.map_or(0, |PruneReport { bytes }| bytes);
+                        vec![
+                            Effect::CleanedUp { forgotten, freed },
+                            Effect::LogEvent(EventKind::CleanedUp { forgotten, freed }),
+                        ]
+                    }
                     Ok(_) => Vec::new(),
-                    Err(error) => vec![Effect::ShowError(fl!("clean-up-failed"), error)],
+                    Err(error) => vec![
+                        Effect::LogEvent(EventKind::Failed {
+                            stage: crate::run_state::Stage::Cleanup,
+                            kind: error.kind,
+                            detail: error.detail.clone(),
+                        }),
+                        Effect::ShowError(fl!("clean-up-failed"), error),
+                    ],
                 });
+                self.track_history(&effects);
                 effects.extend(self.fetch());
                 effects
             }
@@ -323,6 +422,32 @@ impl ProfileState {
             Message::Edit => vec![Effect::Edit],
             Message::Remove => vec![Effect::Remove],
             Message::DeleteAll => vec![Effect::DeleteAll],
+            Message::NextRunLoaded(next_run) => {
+                self.next_run = next_run;
+                Vec::new()
+            }
+            Message::CalculateStatistics => match &self.secret {
+                Some(secret) if !self.calculating_statistics => {
+                    self.calculating_statistics = true;
+                    vec![Effect::FetchStatistics(secret.clone())]
+                }
+                _ => Vec::new(),
+            },
+            Message::StatisticsLoaded(result) => {
+                self.calculating_statistics = false;
+                self.statistics = Some(result);
+                Vec::new()
+            }
+            Message::HistoryLoaded(mut history) => {
+                // Whatever this page logged itself while the read was in
+                // flight goes after it, but only what the read cannot
+                // already have on disk: an event a moment after everything
+                // just loaded, never one at or before it.
+                let since = history.last().map_or(i64::MIN, |event| event.time);
+                history.extend(self.history.drain(..).filter(|event| event.time > since));
+                self.history = history;
+                Vec::new()
+            }
         }
     }
 
@@ -364,17 +489,30 @@ impl ProfileState {
 
     fn on_backup(&mut self, event: ChildEvent) -> Vec<Effect> {
         let fetch = self.fetch();
-        self.on_work(event, |outcome| match outcome {
+        let effects = self.on_work(event, |outcome| match outcome {
             Ok(Event::Done { report, .. }) => {
                 let mut effects = fetch;
                 if let Some(report) = report {
                     effects.push(Effect::RecordSuccess(report.snapshot.time));
+                    effects.push(Effect::LogEvent(EventKind::BackedUp));
                 }
                 effects
             }
             Ok(_) => Vec::new(),
-            Err(error) => vec![Effect::ShowError(fl!("snapshot-failed"), error)],
-        })
+            Err(error) if error.kind == ErrorKind::Cancelled => {
+                vec![Effect::ShowError(fl!("snapshot-failed"), error)]
+            }
+            Err(error) => vec![
+                Effect::LogEvent(EventKind::Failed {
+                    stage: crate::run_state::Stage::Backup,
+                    kind: error.kind,
+                    detail: error.detail.clone(),
+                }),
+                Effect::ShowError(fl!("snapshot-failed"), error),
+            ],
+        });
+        self.track_history(&effects);
+        effects
     }
 
     pub fn view<'a>(
@@ -411,6 +549,12 @@ impl ProfileState {
             page = page.push(self.unlock_card());
         } else if let Some(snapshots) = &self.snapshots {
             page = page.push(self.snapshot_list(snapshots));
+        }
+
+        page = page.push(self.summary_section(profile, run));
+        page = page.push(self.statistics_section());
+        if let Some(history) = self.history_section() {
+            page = page.push(history);
         }
 
         page = page.push(
@@ -520,6 +664,9 @@ impl ProfileState {
                 .push(widget::text::title4(headline))
                 .push(widget::text::caption(detail))
                 .push(widget::text::caption(schedule_summary(profile.schedule)))
+                .push_maybe(self.next_run.map(|time| {
+                    widget::text::caption(fl!("next-run", time = format::local_time(time)))
+                }))
                 .push(
                     widget::row::with_capacity(2)
                         .spacing(spacing.space_xs)
@@ -602,6 +749,136 @@ impl ProfileState {
     }
 }
 
+impl ProfileState {
+    /// The folders this backup covers, and space freed by past clean-ups:
+    /// what the status card does not already say.
+    fn summary_section<'a>(&'a self, profile: &'a Profile, run: &RunState) -> Element<'a, Message> {
+        let join = |paths: &[std::path::PathBuf]| -> String {
+            if paths.is_empty() {
+                fl!("summary-none")
+            } else {
+                paths
+                    .iter()
+                    .map(|path| format::path(path))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        };
+        let mut section = widget::settings::section()
+            .title(fl!("summary-title"))
+            .add(row(fl!("summary-included"), join(&profile.sources)))
+            .add(row(fl!("summary-excluded"), join(&profile.excludes)));
+        if run.total_freed > 0 {
+            section = section.add(row(fl!("summary-freed"), format::bytes(run.total_freed)));
+        }
+        section.into()
+    }
+
+    /// The most recent entries in this backup's history, newest first.
+    /// `None` with nothing to show yet.
+    fn history_section(&self) -> Option<Element<'_, Message>> {
+        if self.history.is_empty() {
+            return None;
+        }
+        let mut section = widget::settings::section().title(fl!("history-title"));
+        for event in self.history.iter().rev().take(RECENT) {
+            section = section.add(row(
+                format::local_time(event.time),
+                describe_event(&event.kind),
+            ));
+        }
+        Some(section.into())
+    }
+
+    /// The repository's real size, compression ratio and reclaimable space,
+    /// calculated on request since it reads every index file.
+    fn statistics_section(&self) -> Element<'_, Message> {
+        let mut section = widget::settings::section().title(fl!("statistics-title"));
+        section = match (&self.statistics, self.calculating_statistics) {
+            (_, true) => section.add(widget::text::caption(fl!("statistics-calculating"))),
+            (None, false) => section.add(
+                widget::settings::item::builder(fl!("statistics-description")).control(
+                    widget::button::standard(fl!("statistics-calculate")).on_press_maybe(
+                        (self.is_unlocked() && !self.is_busy())
+                            .then_some(Message::CalculateStatistics),
+                    ),
+                ),
+            ),
+            (Some(Err(error)), false) => section.add(widget::text::caption(errors::explain(error))),
+            (Some(Ok(stats)), false) => {
+                let ratio = stats.compression_ratio().map_or_else(
+                    || fl!("statistics-no-ratio"),
+                    |ratio| format!("{ratio:.1}×"),
+                );
+                section = section
+                    .add(row(
+                        fl!("statistics-stored"),
+                        format::bytes(stats.stored_bytes),
+                    ))
+                    .add(row(fl!("statistics-ratio"), ratio));
+                if stats.reclaimable_bytes > 0 {
+                    section = section.add(row(
+                        fl!("statistics-reclaimable"),
+                        format::bytes(stats.reclaimable_bytes),
+                    ));
+                }
+                section.add(
+                    widget::button::standard(fl!("statistics-calculate")).on_press_maybe(
+                        (self.is_unlocked() && !self.is_busy())
+                            .then_some(Message::CalculateStatistics),
+                    ),
+                )
+            }
+        };
+        section.into()
+    }
+}
+
+/// A history entry, as a sentence.
+fn describe_event(kind: &EventKind) -> String {
+    match kind {
+        EventKind::BackedUp => fl!("event-backed-up"),
+        EventKind::Failed {
+            stage,
+            kind,
+            detail,
+        } => {
+            let stage = match stage {
+                crate::run_state::Stage::Backup => fl!("event-stage-backup"),
+                crate::run_state::Stage::Check => fl!("event-stage-check"),
+                crate::run_state::Stage::Cleanup => fl!("event-stage-cleanup"),
+            };
+            let error = EngineError::new(*kind, detail.clone());
+            fl!(
+                "event-failed",
+                stage = stage,
+                reason = errors::explain(&error)
+            )
+        }
+        EventKind::Skipped { kind } => {
+            let error = EngineError::new(*kind, String::new());
+            fl!("event-skipped", reason = errors::explain(&error))
+        }
+        EventKind::Checked { damaged: false } => fl!("event-checked-sound"),
+        EventKind::Checked { damaged: true } => fl!("event-checked-damaged"),
+        EventKind::CleanedUp { forgotten, freed } => fl!(
+            "event-cleaned-up",
+            count = (*forgotten as i64),
+            size = format::bytes(*freed)
+        ),
+    }
+}
+
+fn row(title: String, detail: String) -> Element<'static, Message> {
+    let spacing = theme::active().cosmic().spacing;
+    widget::column::with_capacity(2)
+        .spacing(spacing.space_xxxs)
+        .padding([spacing.space_xxs, spacing.space_none])
+        .push(widget::text::body(title))
+        .push(widget::text::caption(detail))
+        .into()
+}
+
 /// How often a backup runs, as a sentence.
 pub fn schedule_summary(schedule: Schedule) -> String {
     match schedule {
@@ -670,7 +947,7 @@ fn trouble<'a>(
 fn progress(running: &Running) -> Element<'_, Message> {
     let spacing = theme::active().cosmic().spacing;
     let (label, fraction, detail) = match &running.progress {
-        None => (fl!("progress-starting"), 0.0, String::new()),
+        None => (fl!("progress-starting"), None, String::new()),
         Some(progress) => {
             let label = match (running.work, progress.phase) {
                 (Work::CleanUp, _) => fl!("progress-cleaning-up"),
@@ -679,10 +956,7 @@ fn progress(running: &Running) -> Element<'_, Message> {
                 (_, Phase::BackingUp) => fl!("progress-backing-up"),
                 (_, Phase::Restoring) => fl!("progress-restoring"),
             };
-            let fraction = progress
-                .total
-                .filter(|total| *total > 0)
-                .map_or(0.0, |total| progress.done as f32 / total as f32);
+            let fraction = running.fraction();
             let amount = match (progress.bytes, progress.total) {
                 (true, Some(total)) => fl!(
                     "progress-amount",
@@ -720,10 +994,18 @@ fn progress(running: &Running) -> Element<'_, Message> {
         }
     });
 
+    // The total is not known yet while rustic is still walking the sources
+    // (or, for an upload-bound backup, while it waits on the destination):
+    // an animated bar says something is happening, rather than sitting at
+    // an empty 0%, which reads as stalled.
+    let bar: Element<'_, Message> = match fraction {
+        Some(fraction) => widget::progress_bar::determinate_linear(fraction).into(),
+        None => widget::progress_bar::indeterminate_linear().into(),
+    };
     widget::column::with_capacity(6)
         .spacing(spacing.space_xs)
         .push(widget::text::title4(label))
-        .push(widget::progress_bar::determinate_linear(fraction))
+        .push(bar)
         .push(widget::text::caption(detail))
         .push(widget::text::caption(elapsed))
         .push_maybe(waiting.map(widget::text::caption))
@@ -791,8 +1073,72 @@ mod tests {
     #[test]
     fn the_keyring_is_consulted_once() {
         let mut state = ProfileState::new();
-        assert!(matches!(state.activate().as_slice(), [Effect::LoadKeyring]));
-        assert!(state.activate().is_empty());
+        let effects = state.activate(&profile());
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::LoadKeyring)),
+            "did not load the keyring"
+        );
+        let effects = state.activate(&profile());
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::LoadKeyring)),
+            "the keyring is not asked for twice"
+        );
+    }
+
+    #[test]
+    fn a_scheduled_backup_asks_for_its_next_run() {
+        let mut state = ProfileState::new();
+        let mut scheduled = profile();
+        scheduled.schedule = Schedule::Daily;
+        let effects = state.activate(&scheduled);
+        assert!(effects.iter().any(|e| matches!(e, Effect::FetchNextRun)));
+
+        // A manual backup has no timer to ask about.
+        let mut state = ProfileState::new();
+        let effects = state.activate(&profile());
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FetchNextRun)));
+    }
+
+    #[test]
+    fn statistics_are_calculated_once_per_press_while_unlocked() {
+        let mut locked = ProfileState::new();
+        assert!(
+            locked
+                .update(Message::CalculateStatistics, &profile())
+                .is_empty(),
+            "needs the password"
+        );
+
+        let mut state = unlocked();
+        assert!(matches!(
+            state
+                .update(Message::CalculateStatistics, &profile())
+                .as_slice(),
+            [Effect::FetchStatistics(_)]
+        ));
+        assert!(
+            state
+                .update(Message::CalculateStatistics, &profile())
+                .is_empty(),
+            "a second press does not start another calculation"
+        );
+
+        let stats = Statistics {
+            stored_bytes: 100,
+            original_bytes: 300,
+            packed_bytes: 100,
+            reclaimable_bytes: 10,
+        };
+        state.update(Message::StatisticsLoaded(Ok(stats)), &profile());
+        assert!(
+            matches!(
+                state
+                    .update(Message::CalculateStatistics, &profile())
+                    .as_slice(),
+                [Effect::FetchStatistics(_)]
+            ),
+            "a finished calculation can be run again"
+        );
     }
 
     #[test]
@@ -883,6 +1229,36 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Effect::RecordSuccess(99)))
         );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::LogEvent(EventKind::BackedUp)))
+        );
+        assert!(
+            matches!(state.history.as_slice(), [event] if event.kind == EventKind::BackedUp),
+            "logged in the page's own copy too, without waiting for a round trip"
+        );
+    }
+
+    #[test]
+    fn a_late_history_load_does_not_duplicate_what_was_logged_while_it_ran() {
+        let mut state = unlocked();
+        // Something happens after the load was asked for but before it comes
+        // back: the local record must survive the merge.
+        state.history.push(crate::event_log::Event {
+            time: 500,
+            kind: EventKind::BackedUp,
+        });
+
+        let loaded = vec![crate::event_log::Event {
+            time: 100,
+            kind: EventKind::Checked { damaged: false },
+        }];
+        state.update(Message::HistoryLoaded(loaded), &profile());
+
+        assert_eq!(state.history.len(), 2, "nothing lost, nothing duplicated");
+        assert_eq!(state.history[0].time, 100);
+        assert_eq!(state.history[1].time, 500);
     }
 
     #[test]

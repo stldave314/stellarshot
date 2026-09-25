@@ -144,30 +144,59 @@ A new backup engine behind one module, on the current rustic release.
 
 ## 0.2 — See what is going on
 
-- [ ] **Status in the sidebar**: an icon per state (up to date, running,
-      overdue, failed, damaged) with a label or legend, and a progress bar
-      while a backup runs
-- [ ] **The time of the next scheduled run** on the status card
-- [ ] **A summary for each backup**: folders included and excluded, size, last
-      backup, number of snapshots, space freed by clean-ups
-- [ ] **Repository statistics** from rustic (`infos_files`, `infos_index`):
+- [x] **Status in the sidebar**: an icon for each of up to date, running,
+      overdue, failed and damaged, with a legend under **Help**. The sidebar
+      row is text and an icon only, with no room for an inline bar, so a
+      running backup's progress is a percentage in the text instead
+      (`Home — 42%`); the profile page's own card still has the real bar
+- [x] **The time of the next scheduled run** on the status card, read from
+      systemd over D-Bus
+- [x] **A summary for each backup**: folders included and excluded, and space
+      freed by every clean-up it has run. Size, last backup and snapshot
+      count already had a place on the status card
+- [x] **Repository statistics** from rustic (`infos_files`, `infos_index`):
       the real size in storage, the compression ratio, and how much space
-      is unused and could be reclaimed
-- [ ] **A home screen** with the state of every backup, every folder backed up
-      on this computer, and every storage location with its kind
-- [ ] **A one-line live view** of the file being read, and an animated bar
-      while the total is unknown
-- [ ] **An event log** of every run, failure, check and clean-up, kept with
-      the settings (and so included in their export)
-- [ ] **Export and import of Stellarshot's settings**: every backup and
-      setting, never a password
-- [ ] **Problems demand attention**: a full or vanished destination is logged,
-      marked on the backup and raised as an urgent notification (Wayland does
-      not let an app take focus by itself, by design)
-- [ ] **The wizard beside the backup list**, not over the whole window, and
-      resumable: Cancel offers "finish later" or "discard"
-- [ ] **In-app help** for terms a newcomer may not know (repository,
-      snapshot, rclone, prune) and at the places a mistake is easy
+      could still be reclaimed, calculated on request since both read the
+      whole repository
+- [x] **A home screen**, labelled **Overview** in the sidebar rather than
+      "Home" so it is never confused with a backup a user has named that
+      (an entirely plausible name for a home-folder backup): every backup
+      with its status and a **View** button, every folder backed up on this
+      computer with which backups cover it, and every storage location with
+      its kind and which backups keep a repository there
+- [x] **An animated bar while the total is unknown**. **A one-line live view
+      of the file being read** turned out to need a change inside rustic:
+      its progress trait reports counts only, never a current path. Worth
+      raising with the rustic project itself, per the rule at the top of
+      this page; not attempted here
+- [x] **An event log** of every run, failure, check and clean-up, from the
+      window or a schedule, shown on the profile page and kept for the
+      settings export below
+- [x] **Export and import of Stellarshot's settings**: every backup and its
+      history, to a file Stellarshot itself reads back. Importing only adds
+      backups whose ID is new here; an existing one is left exactly as it
+      is, with only its history merged in. Never a password: a profile
+      never holds one
+- [x] **Problems demand attention**: every run, failure, check, clean-up and
+      quiet skip is in the event log now; a destination unreachable for
+      long enough shows **Overdue** in the sidebar and raises one
+      notification per overdue streak, not one per skipped slot. A full
+      destination is not yet told apart from any other write failure:
+      rustic's own error type does not expose the underlying `ENOSPC`
+      cleanly enough to detect without guessing at error text, which this
+      project's own rule (prove it, don't guess) rules out for now
+- [x] **The wizard beside the backup list**, not over the whole window, once
+      at least one backup exists (setting up the very first one still fills
+      the window, since there is no list yet to sit beside). Resumable:
+      Cancel offers **Finish Later** (the draft stays, reachable again from
+      the sidebar's **Resume setup** entry) or **Discard**. A draft is never
+      silently replaced: opening the wizard again from anywhere, including
+      Edit or Change Schedule on a different backup, resumes the one already
+      in progress rather than losing it. This covers one session; a draft
+      does not yet survive quitting Stellarshot and reopening it
+- [x] **In-app help**: a **Help** item under **View** (and <kbd>F1</kbd>)
+      opens the icon legend above and a glossary of repository, snapshot,
+      rclone, prune and keep
 
 ## 0.3 — What is backed up, its history, and getting it back
 
@@ -227,8 +256,28 @@ A new backup engine behind one module, on the current rustic release.
       (rustic_backend's `rest` feature)
 - [ ] **Several destinations for one backup** (cloud and a USB drive), each
       with its own "in sync" state, using rustic's repository `copy`
-- [ ] **Stellarshot's own Google client ID**, instead of rclone's shared one,
-      which Google limits for all rclone users together
+- [ ] **A Google API client of Stellarshot's own, bundled with the app, used
+      by default: no Google Cloud console for most people.** 0.2 added
+      **Use my own Google API credentials…**, for anyone who already has a
+      Google Cloud project; this is the other half, for everyone else.
+      rclone's own shared client (what Stellarshot signs in with today,
+      unless a user overrides it) is retiring during 2026, so this moves
+      from "faster" to "required" this year. Register one Google Cloud
+      project under the project's own account, request the `drive.file`
+      scope rather than today's full `drive` (Google classifies `drive.file`
+      as non-sensitive, needing no verification review at all, versus
+      `drive`'s "restricted" tier, which needs a review and an annual paid
+      security assessment indefinitely — not something a solo project can
+      keep up), and ship the resulting client ID compiled into the binary.
+      `drive.file` only sees files the app itself created or that the user
+      hands it through Google's own picker, which needs checking against a
+      real account: does opening a backup made on another computer (so this
+      installation's sign-in did not create those files) still work, or does
+      it need a picker step to select the existing folder first? A shared
+      client ID is itself a shared fate: if it is ever abused by someone
+      else, Google could throttle or suspend it for every Stellarshot user
+      at once, which the escape hatch (a user's own credentials) exists to
+      route around
 - [ ] **One Google sign-in per account**, shared by every backup that uses
       it, so a restore needs one sign-in per account rather than per backup
 - [ ] **Google sign-in lifetime**: find out when rclone's Google tokens can

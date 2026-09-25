@@ -365,3 +365,89 @@ wizard-estimate-arithmetic = { $included } debii − { $excluded } usgschlosse =
 wizard-estimate-nothing-excluded = Us de Ordner obe isch nüt usgschlosse.
 wizard-estimate-adding-up = Wird zellt … was d Usschlüss weglönd, wird zämegrechnet.
 wizard-patterns-remove = Die Muster lönd { $size } weg, wo d usgschlossene Ordner nöd scho weglönd.
+status-up-to-date = Aktuell
+status-running = Lauft
+status-overdue = Überfällig
+status-failed = Fehlgschlage
+status-damaged = Beschädiget
+nav-running = { $name } — lauft …
+nav-running-percent = { $name } — { $percent } %
+menu-help = Hilf
+help = Hilf
+help-icons-title = Was d Symbol bedüted
+help-terms-title = Begriff
+term-repository = Repository
+term-repository-description = Wo d verschlüsselte, deduplizierte Date vo re Sicherig sind: en Ordner, e Platte, en Server oder Cloud-Speicher. Jedes Sicherigsprofil hät sis eiget.
+term-snapshot = Momentuufnahm
+term-snapshot-description = S Abbild vo dine Datene vo re Sicherig, zu emne bstimmte Zitpunkt. Es Repository hät vieli dervo, und e Widerherstellig lieset us eire vo ene.
+term-rclone = rclone
+term-rclone-description = S eigeständige Programm, wo Sterneschuss nutzt für SSH-Server, Google Drive und anderi Cloud-Speicher z erreiche. Es isch nöd Teil vo Sterneschuss und hät si eigeti Konfiguration.
+term-prune = Bereinige
+term-prune-description = Lösched Date, wo kei verbliebeni Momentuufnahm me bruucht, nachdem alti Momentuufnahme vergässe worde sind. „Automatisch Platz freigeh“ macht das für dich.
+term-keep = Bhalte
+term-keep-description = Weli alti Momentuufnahme bliebe, wänn Platz freigeh wird. „Intelligent“ bhaltet e chliner werdendi Gschicht; „Für immer“ bhaltet alles, und d Sicherig wachst nur.
+next-run = Nächsti Sicherig: { $time }
+summary-title = Ordner
+summary-none = Kei
+summary-included = Debii
+summary-excluded = Usgschlosse
+summary-freed = Freigeh dur Ufruume
+statistics-title = Repository-Statistik
+statistics-description = Di tatsächlichi Grössi im Speicher, s Kompressionsverhältnis, und wie viel no chönt zrückgwunne wärde. Lieset jedi Indexdatei und lischtet s Ziel uf.
+statistics-calculate = Bereschne
+statistics-calculating = Wird bereschnet …
+statistics-stored = Am Ziel gspeicheret
+statistics-ratio = Kompressionsverhältnis
+statistics-no-ratio = No nöd bekannt
+statistics-reclaimable = Chönt dur Ufruume zrückgwunne wärde
+history-title = Verlauf
+event-backed-up = Gsicheret
+event-stage-backup = Sicherig
+event-stage-check = Prüefig
+event-stage-cleanup = Ufruume
+event-failed = { $stage } fehlgschlage: { $reason }
+event-skipped = Übersprunge: { $reason }
+event-checked-sound = Prüefig bestande
+event-checked-damaged = Prüefig hät Schäde gfunde
+event-cleaned-up = { $count } Momentuufnahme vergässe, { $size } freigeh
+notify-overdue = „{ $name }“ isch scho lang nüm gsicheret worde
+notify-overdue-body = Ziel isch zu de vorgsehene Zite nöd erreichbar gsi. { $schedule } Lueg, öb's verbunde isch, und mach de Sterneschuss uf, zum jetzt z sichere.
+settings-backup-title = Sterneschuss sini eigete Iistellige sichere und widerherstelle
+settings-export = Iistellige exportiere
+settings-export-description = D Ordner, s Ziel und de Zitplan vo jeder Sicherig, sowie ihre Verlauf. Nie es Passwort.
+settings-export-button = Exportiere …
+settings-export-title = Sterneschuss sini Iistellige spichere
+settings-export-done-title = Iistellige exportiert
+settings-export-done-body = D Iistellige und de Verlauf vo jeder Sicherig sind i de gwählte Datei gspeicheret worde.
+settings-export-failed = D Iistellige händ nöd chöne gspeicheret wärde.
+settings-import = Iistellige importiere
+settings-import-description = Sicherige us emne Iistellige-Export dezuefüege. Ei, wo scho da isch, blibt gnau so wie si isch; nur ihre Verlauf wird ergänzt.
+settings-import-button = Importiere …
+settings-import-title = En Iistellige-Export zum Importiere wähle
+settings-import-done-title = Iistellige importiert
+settings-import-done-body = { $added ->
+    [0] Es sind kei neui Sicherige dezuecho.
+    [1] Es isch eini Sicherig dezuecho.
+   *[other] Es sind { $added } Sicherige dezuecho.
+} { $skipped ->
+    [0] {""}
+    [1] Eini isch scho da gsi und isch unverändert bliebe.
+   *[other] { $skipped } sind scho da gsi und sind unverändert bliebe.
+}
+settings-import-failed = D Iistellige händ nöd chöne importiert wärde.
+home = Übersicht
+home-backups-title = Sicherige
+home-backup-detail = { $status } · { $last }
+home-view = Azeige
+home-folders-title = Ordner, wo uf däm Computer gsicheret wärde
+home-locations-title = Speicherört
+home-location-detail = { $kind } · { $backups }
+wizard-resume = Yrichtig widerufnäh
+wizard-cancel-title = D Yrichtig vo däre Sicherig abbräche?
+wizard-cancel-body = Du chasch später i de Sytiliste druf zrugg cho, oder alles bisher Yigäh verwerfe.
+wizard-finish-later = Später fertig mache
+wizard-discard = Verwerfe
+place-google-advanced = Mini eigete Google-API-Zuedaate bruuche …
+place-google-advanced-description = Mäld dich a mit emne eigete Google-Cloud-Client, statt mit däm, wo rclone mit alle teilt, wo no kei eigete yrichtet händ. Bruucht sowohl e Client-ID als au es Client-Secret vo dim eigete Google-Cloud-Projekt; lah beides leer, zum de gteilte Standard bruuche.
+place-google-client-id = Client-ID
+place-google-client-secret = Client-Secret

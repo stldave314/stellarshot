@@ -184,6 +184,11 @@ pub enum Effect {
     },
     Finish(Finish),
     Close,
+    /// Cancel was pressed: ask the application to offer "finish later" or
+    /// "discard", rather than deciding here. Nothing is stopped yet — a
+    /// running estimate keeps going until [`Wizard::discard`] is actually
+    /// called, since "finish later" leaves it as it was.
+    ConfirmCancel,
 }
 
 /// What to do when the wizard completes.
@@ -442,6 +447,13 @@ impl Wizard {
         self.busy() || self.place.checking_since().is_some()
     }
 
+    /// Stop any running estimate. Called when the wizard is truly discarded,
+    /// as opposed to merely hidden while the user looks at something else
+    /// ("finish later"), which leaves it running.
+    pub fn discard(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
     /// What the "where" step needs to find at the destination.
     fn wanted(&self) -> Probe {
         match self.mode {
@@ -688,10 +700,7 @@ impl Wizard {
                 }
                 self.advance()
             }
-            Message::Cancel => {
-                self.cancel.store(true, Ordering::Relaxed);
-                vec![Effect::Close]
-            }
+            Message::Cancel => vec![Effect::ConfirmCancel],
             Message::Finished(result) => {
                 self.busy_since = None;
                 match result {

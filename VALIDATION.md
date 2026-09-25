@@ -330,6 +330,7 @@ Things a test cannot reach yet, and how they were confirmed.
 | The restore page opens from `--restore` and lists the demo snapshot's folders | `scripts/screenshots.sh restore`, then the image inspected | M4 |
 | Generated units are valid, including an executable path with a space and `%` | `systemd-analyze --user verify` on the service and timer: no errors, and the escaped path resolved to the real file | M5 |
 | A timer installs, runs its service and uninstalls cleanly | Installed for a throwaway ID in the real user session: listed by `list-timers` with the next run, `enabled`, its service started and exited; after removal no unit, no `timers.target.wants` link and no timer remained | M5 |
+| `schedule::next_run` reads the real next-run time over D-Bus | Run against a real scheduled backup's timer in the user session: correct to the minute against `systemctl list-timers`, and `None` for a made-up ID. **Proven able to fail:** first written with the property name zbus derives (`NextElapseUsecRealtime`) and `0` as the "none" sentinel; the real call failed with `Unknown property` (systemd's name capitalises the unit as `USec`), and a made-up ID silently returned `u64::MAX` seconds rather than `None`, because `LoadUnit` never fails for an unknown name — it returns a `"not-found"` unit instead, caught only by also reading `LoadState` | 0.2 |
 | A scheduled run works inside a systemd user service | `systemd-run --user --wait … stellarshot --scheduled <id>` with a demo profile: exit 0, a snapshot, and `last_success` and `last_check` recorded; the keyring was reachable from the service | M5 |
 | The wizard no longer clips fields or hides rows under the scrollbar | `scripts/screenshots.sh wizard` before and after: the scrollbar now sits beside the cards instead of over them; a focused SFTP field under Xwayland shows its whole focus ring at the left edge | 0.1.x |
 | One press of Next checks an SFTP destination | Under Xwayland with `xdotool`: one press ran the check (a closed port on 127.0.0.1), which failed at once, stayed on the step and left Next ready to try again | 0.1.x |
@@ -351,9 +352,17 @@ Things a test cannot reach yet, and how they were confirmed.
   transport and the remote-string tests.
 - **Importing a real Déjà Dup Google Drive backup**, which needs the sign-in
   above.
-- **A failure notification, and opening the backup by clicking it.** The
-  notification code has not been triggered on a desktop; a scheduled run that
-  fails (for example with its remembered password removed) shows it.
+- **Opening the backup by clicking a failure notification.** Not yet
+  triggered on a desktop on purpose.
+- **A long-overdue destination's own notification** (0.2, `scheduled::notify_if_overdue`).
+  Confirmed by accident rather than on purpose: an early integration test for
+  it seeded an old `last_success` and ran the real `--scheduled` binary
+  without isolating it from the real session bus, which sent a real
+  notification to this machine's desktop and then hung for several minutes
+  waiting on it, killed by hand. The notification itself therefore did
+  arrive and read correctly; the decision to send it moved to a pure,
+  unit-tested function (`overdue_notification_due`) and no automated test
+  may call `notify::failure` again — see `tests/scheduled.rs`'s doc comment.
 - **A timer firing on its own at its calendar time.** The timer's schedule and
   its service were each confirmed, and systemd starts one from the other.
 

@@ -188,7 +188,7 @@ right-click menu).
    | **Folder** | An empty folder. A folder on a USB drive is recognised as one automatically |
    | **Removable drive** | One of the drives plugged in now, and a folder on it (`Stellarshot/<computer name>` by default) |
    | **Network server (SFTP)** | Server, user name, port and folder. Uses your SSH agent or keys; the server must already be in `~/.ssh/known_hosts` |
-   | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive |
+   | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive. **Use my own Google API credentials…** lets you sign in with a Google Cloud client of your own instead of the one rclone shares with everyone who has not set one up |
    | **One of your rclone remotes** | Pick a remote you set up with `rclone config` (OneDrive, Dropbox, S3, …) and a folder on it |
 
    **Next** checks the location and moves on as soon as the check passes; the
@@ -568,10 +568,17 @@ written to stderr too.
 
 - **OneDrive has no sign-in button of its own yet.** Set it up once with
   `rclone config` and choose it under **One of your rclone remotes**.
-- **Google sign-in uses rclone's shared Google client**, which Google limits in
-  how fast it may be used; very large first backups can be slower than with
-  your own client ID. Déjà Dup has a Google client of its own, which is one
-  reason its Google Drive backups can be faster.
+- **Google sign-in uses rclone's shared Google client by default**, which
+  Google limits in how fast it may be used; very large first backups can be
+  slower than with your own client ID. Déjà Dup has a Google client of its
+  own, which is one reason its Google Drive backups can be faster. **Use my
+  own Google API credentials…** under Google Drive in the wizard lets you
+  give Stellarshot a client ID and secret from your own Google Cloud project
+  (console.cloud.google.com, with the Drive API enabled), so this backup's
+  traffic no longer shares that quota with the rest of rclone's users. rclone
+  itself is retiring its shared client during 2026, so this will move from
+  optional to necessary; see [ROADMAP.md](ROADMAP.md) for a client bundled
+  with Stellarshot itself, so most people never have to do this by hand.
 - **Timers need systemd.** On a system without a systemd user session,
   automatic backups cannot be set up; **Back Up Now** still works.
 - **Search, Deleted files and Compare show at most 500 entries.** Narrow the

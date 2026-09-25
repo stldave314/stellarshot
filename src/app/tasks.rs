@@ -87,6 +87,83 @@ pub async fn snapshots(
     blocking(move || engine::open(&location, &secret)?.snapshots()).await
 }
 
+/// Read every index file and list the destination: worth asking for, not
+/// fetching on its own.
+pub async fn statistics(
+    profile: Profile,
+    secret: Secret,
+) -> Result<engine::Statistics, EngineError> {
+    let location = profile.location()?;
+    blocking(move || engine::open(&location, &secret)?.statistics()).await
+}
+
+/// A backup's history, off the UI thread: it is a config read like any
+/// other, but every other one already goes through here.
+pub async fn history(profile_id: String) -> Vec<crate::event_log::Event> {
+    blocking(move || Ok::<_, EngineError>(crate::event_log::load(&profile_id)))
+        .await
+        .unwrap_or_default()
+}
+
+/// Every backup's settings and history, as text ready to write out.
+pub async fn export_settings(profiles: Vec<Profile>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::settings_export::Export::collect(&profiles).to_text()
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+/// Ask where to save an export, with `title` for the dialog. `Ok(None)` if
+/// the user cancelled.
+pub async fn choose_export_path(title: String) -> Option<PathBuf> {
+    match file_chooser::save::Dialog::new()
+        .title(title)
+        .file_name("stellarshot-settings.ron".to_owned())
+        .save_file()
+        .await
+    {
+        Ok(response) => response.url().and_then(url_to_path),
+        Err(err) => {
+            debug_log!(UI, "save-file chooser: {err}");
+            None
+        }
+    }
+}
+
+/// Ask for a file to import, with `title` for the dialog. `Ok(None)` if the
+/// user cancelled.
+pub async fn choose_import_path(title: String) -> Option<PathBuf> {
+    match file_chooser::open::Dialog::new()
+        .title(title)
+        .open_file()
+        .await
+    {
+        Ok(response) => url_to_path(response.url()),
+        Err(err) => {
+            debug_log!(UI, "open-file chooser: {err}");
+            None
+        }
+    }
+}
+
+/// Write `text` to `path`, off the UI thread.
+pub async fn write_file(path: PathBuf, text: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || std::fs::write(&path, text).map_err(|err| err.to_string()))
+        .await
+        .map_err(|err| err.to_string())?
+}
+
+/// Read and parse a settings export, off the UI thread.
+pub async fn read_export(path: PathBuf) -> Result<crate::settings_export::Export, String> {
+    tokio::task::spawn_blocking(move || {
+        let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        crate::settings_export::Export::from_text(&text)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
 /// What finishing the wizard produced.
 #[derive(Debug, Clone)]
 pub struct Finished {

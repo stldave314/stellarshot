@@ -365,3 +365,89 @@ wizard-estimate-arithmetic = { $included } included − { $excluded } excluded =
 wizard-estimate-nothing-excluded = Nothing is excluded from the folders above.
 wizard-estimate-adding-up = Counting… adding up what the exclusions leave out.
 wizard-patterns-remove = These patterns leave out { $size } that the excluded folders do not already.
+status-up-to-date = Up to date
+status-running = Running
+status-overdue = Overdue
+status-failed = Failed
+status-damaged = Damaged
+nav-running = { $name } — running…
+nav-running-percent = { $name } — { $percent }%
+menu-help = Help
+help = Help
+help-icons-title = What the icons mean
+help-terms-title = Terms
+term-repository = Repository
+term-repository-description = Where a backup's encrypted, deduplicated data lives: a folder, a drive, a server or cloud storage. Each backup profile has its own.
+term-snapshot = Snapshot
+term-snapshot-description = One backup run's picture of your files, taken at a point in time. A repository holds many, and restoring reads from one of them.
+term-rclone = rclone
+term-rclone-description = The separate program Stellarshot uses to reach SSH servers, Google Drive and other cloud storage. It is not part of Stellarshot and keeps its own configuration.
+term-prune = Prune
+term-prune-description = Delete the data that no remaining snapshot needs any more, after old snapshots have been forgotten. "Free up space automatically" does this for you.
+term-keep = Keep
+term-keep-description = Which old snapshots survive when space is freed. "Smart" keeps a shrinking history; "Forever" keeps everything, and the backup only grows.
+next-run = Next backup: { $time }
+summary-title = Folders
+summary-none = None
+summary-included = Included
+summary-excluded = Excluded
+summary-freed = Freed by clean-ups
+statistics-title = Repository statistics
+statistics-description = The real size in storage, the compression ratio, and how much could still be reclaimed. Reads every index file and lists the destination.
+statistics-calculate = Calculate
+statistics-calculating = Calculating…
+statistics-stored = Stored at the destination
+statistics-ratio = Compression ratio
+statistics-no-ratio = Not yet known
+statistics-reclaimable = Could be reclaimed by a clean-up
+history-title = History
+event-backed-up = Backed up
+event-stage-backup = Backup
+event-stage-check = Check
+event-stage-cleanup = Clean-up
+event-failed = { $stage } failed: { $reason }
+event-skipped = Skipped: { $reason }
+event-checked-sound = Check passed
+event-checked-damaged = Check found damage
+event-cleaned-up = Forgot { $count } snapshots, freed { $size }
+notify-overdue = "{ $name }" has not backed up in a while
+notify-overdue-body = Its destination has not been reachable at its scheduled times. { $schedule } Check that it is connected, then open Stellarshot to back up now.
+settings-backup-title = Backup and restore Stellarshot's own settings
+settings-export = Export settings
+settings-export-description = Every backup's folders, destination and schedule, and its history. Never a password.
+settings-export-button = Export…
+settings-export-title = Save Stellarshot's settings
+settings-export-done-title = Settings exported
+settings-export-done-body = Every backup's settings and history were saved to the file you chose.
+settings-export-failed = The settings could not be saved.
+settings-import = Import settings
+settings-import-description = Add backups from a settings export. A backup already here is left exactly as it is; only its history is added to.
+settings-import-button = Import…
+settings-import-title = Choose a settings export to import
+settings-import-done-title = Settings imported
+settings-import-done-body = { $added ->
+    [0] No new backups were added.
+    [1] One backup was added.
+   *[other] { $added } backups were added.
+} { $skipped ->
+    [0] {""}
+    [1] One was already here and was left as it is.
+   *[other] { $skipped } were already here and were left as they are.
+}
+settings-import-failed = The settings could not be imported.
+home = Overview
+home-backups-title = Backups
+home-backup-detail = { $status } · { $last }
+home-view = View
+home-folders-title = Folders backed up on this computer
+home-locations-title = Storage locations
+home-location-detail = { $kind } · { $backups }
+wizard-resume = Resume setup
+wizard-cancel-title = Stop setting up this backup?
+wizard-cancel-body = You can come back to it later from the sidebar, or discard everything typed so far.
+wizard-finish-later = Finish Later
+wizard-discard = Discard
+place-google-advanced = Use my own Google API credentials…
+place-google-advanced-description = Sign in with a Google Cloud client of your own instead of the shared one rclone provides, so this backup's Google Drive traffic does not compete with everyone else who has never set up their own. Needs both a client ID and a client secret from your own Google Cloud project; leave both blank to use the shared default.
+place-google-client-id = Client ID
+place-google-client-secret = Client secret

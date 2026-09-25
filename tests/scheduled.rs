@@ -8,6 +8,20 @@
 //! password goes into the real Secret Service under a throwaway profile ID
 //! and is removed again, so this needs a running, unlocked keyring (as
 //! `tests/keyring.rs` does) and fails, rather than skips, without one.
+//!
+//! **No test here may reach a real failure or overdue notification.** The
+//! keyring lookup and the notification both go over the same D-Bus session
+//! bus; overriding `XDG_RUNTIME_DIR` alone does not stop a notification
+//! from reaching a real desktop's notification daemon if the tests happen
+//! to run in a real session (as they do outside CI), and removing
+//! `DBUS_SESSION_BUS_ADDRESS` to stop that also breaks the keyring lookup
+//! every test here depends on. A test was tried once with a scenario that
+//! reached `notify::failure`: it sent a real notification and then waited
+//! on it for several minutes before being killed by hand. Test the
+//! decision to notify as a pure function instead (`scheduled.rs`'s own
+//! `overdue_notification_due`), and leave the desktop notification itself
+//! to manual verification, alongside the failure notification's own entry
+//! in `VALIDATION.md`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -109,6 +123,15 @@ impl Home {
         )
         .ok()
     }
+
+    /// The recorded event log, as text.
+    fn event_log(&self, id: &str) -> Option<String> {
+        std::fs::read_to_string(
+            self.path("state")
+                .join(format!("cosmic/{APP_ID}/v2/event-log-{id}")),
+        )
+        .ok()
+    }
 }
 
 #[test]
@@ -143,6 +166,16 @@ fn a_scheduled_backup_runs_checks_and_is_recorded() {
     );
     assert!(state.contains("failure: None"), "{state}");
     assert!(state.contains("damaged: false"), "{state}");
+
+    let events = home.event_log(&profile.0).expect("the run is logged");
+    assert!(
+        events.contains("BackedUp"),
+        "the backup is in the history: {events}"
+    );
+    assert!(
+        events.contains("Checked"),
+        "the first run's check is in the history: {events}"
+    );
 }
 
 #[test]
@@ -167,5 +200,10 @@ fn an_unplugged_destination_is_skipped_quietly() {
     assert!(
         !recorded_failure,
         "nothing to report; the next slot retries"
+    );
+    let events = home.event_log(&profile.0).expect("the skip is logged");
+    assert!(
+        events.contains("Skipped"),
+        "quiet does not mean invisible: {events}"
     );
 }

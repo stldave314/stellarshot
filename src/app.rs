@@ -921,6 +921,42 @@ impl App {
                         },
                     )
                 }
+                restore::Effect::Download {
+                    snapshot,
+                    path,
+                    is_folder,
+                } => {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    let file_name = if is_folder {
+                        format!("{name}.tar.gz")
+                    } else {
+                        name.into_owned()
+                    };
+                    Task::perform(
+                        async move {
+                            let destination =
+                                tasks::choose_save_path(fl!("download-title"), file_name).await?;
+                            Some(
+                                tasks::blocking(move || {
+                                    let browser = browsing(browser)?;
+                                    if is_folder {
+                                        browser.archive_folder(&snapshot, &path, &destination)
+                                    } else {
+                                        browser.dump_file(&snapshot, &path, &destination)
+                                    }
+                                })
+                                .await,
+                            )
+                        },
+                        |result| match result {
+                            None | Some(Ok(())) => app(Message::Noop),
+                            Some(Err(err)) => app(Message::Dialog(DialogMessage::Failed(
+                                fl!("download-failed"),
+                                err,
+                            ))),
+                        },
+                    )
+                }
                 restore::Effect::PickScope => Task::perform(
                     tasks::pick_folder(fl!("select-scope-folder")),
                     move |path| {
@@ -2020,7 +2056,10 @@ impl Application for App {
             }
             Message::ExportSettings => {
                 return Task::perform(
-                    tasks::choose_export_path(fl!("settings-export-title")),
+                    tasks::choose_save_path(
+                        fl!("settings-export-title"),
+                        "stellarshot-settings.ron".to_owned(),
+                    ),
                     |path| app(Message::ExportChosen(path)),
                 );
             }

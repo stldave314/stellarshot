@@ -6052,6 +6052,7 @@ dependencies = [
  "bytes",
  "bytesize",
  "filetime",
+ "flate2",
  "futures-util",
  "gethostname",
  "i18n-embed",
@@ -6071,6 +6072,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "shell-words",
+ "tar",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -6212,6 +6214,17 @@ dependencies = [
  "grid",
  "serde",
  "slotmap",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
 ]
 
 [[package]]

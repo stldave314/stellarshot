@@ -59,6 +59,14 @@ ron = "0.12"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 gethostname = "1"
+# Downloading a folder straight from a snapshot, without restoring it:
+# rustic's own `dump` only covers a single file, so a folder is Stellarshot's
+# own tar archive built from a walk of the snapshot's tree. gzip-compressed
+# (via `flate2`, already pulled in transitively) rather than rustic's own
+# zstd, since a `.tar.gz` is the more widely recognized, more easily
+# double-clicked archive format outside of a backup tool itself.
+tar = "0.4"
+flate2 = "1"
 # Desktop notifications; already built for the keyring and the portals.
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 futures-util = "0.3"

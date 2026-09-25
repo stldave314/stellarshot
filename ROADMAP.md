@@ -271,12 +271,14 @@ A new backup engine behind one module, on the current rustic release.
       undone. Not started on purpose: this destroys data if it goes wrong,
       and deserved more time than was left in this pass rather than a rushed
       first version
-- [ ] **Download straight from a snapshot**: a file, or a folder as a zip or
-      tar archive (`dump`), without restoring it. rustic's own `dump` only
-      covers a single file; a folder needs Stellarshot to walk it and write
-      an archive itself, which needs a zip or tar crate this project does not
-      currently depend on. Not started, so that dependency choice is not made
-      in passing
+- [x] **Download straight from a snapshot**: a file (rustic's own `dump`), or
+      a folder as a `.tar.gz` Stellarshot builds itself by walking the
+      snapshot's tree (`tar` + `flate2`, chosen over a `.zip` to keep Unix
+      permissions, ownership and symlinks intact, and over rustic's own zstd
+      archive for wider recognizability outside a backup tool). A "Download…"
+      button on the Browse tab, and on each older version of a file; proven
+      with a test that downloads a folder and confirms the extracted tree
+      matches the original byte-for-byte, permission-for-permission
 - [x] **Restore checks existing files by content**, not only by size and date
       (`verify_existing`), as a toggle in the restore sheet's Advanced
       section; proven with a test that corrupts a file without changing its

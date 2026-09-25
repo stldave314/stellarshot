@@ -240,6 +240,7 @@ versions-same = { $count ->
    *[other] ↳ същото в { $count } по-стари състояния
 }
 open-copy = Отваряне на копие
+download = Изтегляне…
 restore-this-version = Възстановяване на тази версия…
 deleted-scope = Файлове в { $folder }, които са в копия от последните { $days } дни, но вече ги няма на диска.
 deleted-change-folder = Смяна на папката…
@@ -301,6 +302,8 @@ restore-done-body = { $count ->
 restore-failed = Възстановяването не завърши.
 browse-failed = Това копие не можа да бъде прочетено.
 open-copy-failed = Не можа да се отвори копие на този файл.
+download-title = Запазване на копие от това резервно копие
+download-failed = Не можа да се запази копие от това резервно копие.
 select-scope-folder = Изберете папка за търсене
 select-restore-folder = Изберете къде да се възстанови
 

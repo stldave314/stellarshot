@@ -149,6 +149,11 @@ pub enum Message {
     /// Open the restore sheet for one version of one file.
     RestoreVersion(String, PathBuf),
     OpenCopy(String, PathBuf),
+    /// Download `path` as it is in the current snapshot: the bool is
+    /// whether it is a folder (a `.tar.gz`) rather than a single file.
+    Download(PathBuf, bool),
+    /// Download one older version of a file, from [`versions_view`].
+    DownloadVersion(String, PathBuf),
     TargetOriginal,
     TargetFolder,
     TargetChosen(PathBuf),
@@ -188,6 +193,12 @@ pub enum Effect {
     OpenCopy {
         snapshot: String,
         path: PathBuf,
+    },
+    /// Ask where to save `path` from `snapshot`, then write it there.
+    Download {
+        snapshot: String,
+        path: PathBuf,
+        is_folder: bool,
     },
     PickScope,
     PickTarget,
@@ -549,6 +560,21 @@ impl RestorePage {
                 ..RestoreRequest::default()
             }]),
             Message::OpenCopy(snapshot, path) => vec![Effect::OpenCopy { snapshot, path }],
+            Message::Download(path, is_folder) => self
+                .snapshot_id()
+                .map(|snapshot| {
+                    vec![Effect::Download {
+                        snapshot,
+                        path,
+                        is_folder,
+                    }]
+                })
+                .unwrap_or_default(),
+            Message::DownloadVersion(snapshot, path) => vec![Effect::Download {
+                snapshot,
+                path,
+                is_folder: false,
+            }],
             Message::TargetOriginal => {
                 if let Some(sheet) = self.sheet.as_mut() {
                     sheet.target = TargetChoice::Original;
@@ -825,7 +851,9 @@ impl RestorePage {
             _ => format::bytes(entry.size),
         };
         let modified = entry.modified.map(format::local_time).unwrap_or_default();
-        widget::row::with_capacity(5)
+        let is_folder = entry.kind == EntryKind::Directory;
+        let download_path = entry.path.clone();
+        widget::row::with_capacity(6)
             .spacing(spacing.space_s)
             .align_y(Alignment::Center)
             .push(widget::checkbox(checked).on_toggle(move |on| Message::Toggle(path.clone(), on)))
@@ -833,6 +861,12 @@ impl RestorePage {
             .push(widget::container(name).width(Length::Fill))
             .push(widget::text::caption(detail))
             .push(widget::text::caption(modified))
+            .push(
+                widget::button::icon(widget::icon::from_name("document-save-symbolic"))
+                    .tooltip(fl!("download"))
+                    .name(fl!("download"))
+                    .on_press(Message::Download(download_path, is_folder)),
+            )
             .into()
     }
 
@@ -857,7 +891,7 @@ impl RestorePage {
             }
             let id = version.snapshot.id.clone();
             column = column.push(
-                widget::row::with_capacity(4)
+                widget::row::with_capacity(5)
                     .spacing(spacing.space_s)
                     .align_y(Alignment::Center)
                     .push(
@@ -868,6 +902,12 @@ impl RestorePage {
                     .push(
                         widget::button::standard(fl!("open-copy"))
                             .on_press(Message::OpenCopy(id.clone(), path.to_path_buf())),
+                    )
+                    .push(
+                        widget::button::icon(widget::icon::from_name("document-save-symbolic"))
+                            .tooltip(fl!("download"))
+                            .name(fl!("download"))
+                            .on_press(Message::DownloadVersion(id.clone(), path.to_path_buf())),
                     )
                     .push(
                         widget::button::standard(fl!("restore-this-version"))

@@ -240,6 +240,7 @@ versions-same = { $count ->
    *[other] ↳ in { $count } älteren Momentaufnahmen gleich
 }
 open-copy = Kopie öffnen
+download = Herunterladen …
 restore-this-version = Diese Version wiederherstellen …
 deleted-scope = Dateien in { $folder }, die in Sicherungen der letzten { $days } Tage enthalten, aber nicht mehr vorhanden sind.
 deleted-change-folder = Ordner ändern …
@@ -301,6 +302,8 @@ restore-done-body = { $count ->
 restore-failed = Die Wiederherstellung wurde nicht abgeschlossen.
 browse-failed = Diese Sicherung konnte nicht gelesen werden.
 open-copy-failed = Es konnte keine Kopie dieser Datei geöffnet werden.
+download-title = Kopie aus dieser Sicherung speichern
+download-failed = Es konnte keine Kopie aus dieser Sicherung gespeichert werden.
 select-scope-folder = Wähle einen Ordner zum Durchsuchen
 select-restore-folder = Wähle, wohin wiederhergestellt werden soll
 

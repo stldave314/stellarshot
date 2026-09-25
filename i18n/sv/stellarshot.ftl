@@ -240,6 +240,7 @@ versions-same = { $count ->
    *[other] ↳ likadan i { $count } äldre ögonblicksbilder
 }
 open-copy = Öppna kopia
+download = Ladda ned…
 restore-this-version = Återställ den här versionen…
 deleted-scope = Filer i { $folder } som finns i säkerhetskopior från de senaste { $days } dagarna men inte längre finns på disken.
 deleted-change-folder = Byt mapp…
@@ -301,6 +302,8 @@ restore-done-body = { $count ->
 restore-failed = Återställningen slutfördes inte.
 browse-failed = Säkerhetskopian kunde inte läsas.
 open-copy-failed = Det gick inte att öppna en kopia av filen.
+download-title = Spara en kopia från den här säkerhetskopian
+download-failed = Det gick inte att spara en kopia från säkerhetskopian.
 select-scope-folder = Välj en mapp att leta i
 select-restore-folder = Välj vart du vill återställa
 

@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sizing each row on demand as it is expanded, with a mark for whether a
   folder is going in whole, left out, or partly one and partly the other,
   and a button to flip it.
+- **Download straight from a snapshot, without restoring anything**: a
+  "Download…" button on every row of the Browse tab saves a file as it was
+  backed up, or a folder as a `.tar.gz`; the same button on an older version
+  of a file downloads that version specifically.
 
 ### Fixed
 

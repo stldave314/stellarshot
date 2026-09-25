@@ -240,6 +240,7 @@ versions-same = { $count ->
    *[other] ↳ i { $count } ältere Momentuufnahme glich
 }
 open-copy = Kopie öffne
+download = Abelade …
 restore-this-version = Die Version widerherstelle …
 deleted-scope = Dateie i { $folder }, wo i Sicherige vo de letschte { $days } Täg drin sind, aber nüme vorhande.
 deleted-change-folder = Ordner ändere …
@@ -301,6 +302,8 @@ restore-done-body = { $count ->
 restore-failed = D Widerherstellig isch nöd fertig worde.
 browse-failed = Die Sicherig hät nöd chöne gläse wärde.
 open-copy-failed = Es hät kei Kopie vo dere Datei chöne göffnet wärde.
+download-title = Kopie us dere Sicherig spichere
+download-failed = Es hät kei Kopie us dere Sicherig chöne gspeichert wärde.
 select-scope-folder = Wähl en Ordner zum Durchsueche
 select-restore-folder = Wähl, wohi widerhergstellt werde söll
 

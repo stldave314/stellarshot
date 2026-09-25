@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rustic_core::repofile::SnapshotFile;
-use rustic_core::{IndexedIdsStatus, LsOptions, Repository, TreeId};
+use rustic_core::{IndexedFullStatus, LsOptions, Repository, TreeId};
 use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
@@ -78,7 +78,7 @@ pub struct MissingEntry {
 
 /// An open repository for looking around in.
 pub struct Browser {
-    repo: Mutex<Repository<IndexedIdsStatus>>,
+    repo: Mutex<Repository<IndexedFullStatus>>,
     /// Newest first.
     snapshots: Vec<(SnapshotFile, SnapshotSummary)>,
 }
@@ -120,6 +120,13 @@ fn not_found(what: &str) -> EngineError {
     )
 }
 
+fn wrong_kind(path: &Path, expected: &str) -> EngineError {
+    EngineError::new(
+        ErrorKind::Internal,
+        format!("{} is not a {expected} in this snapshot", path.display()),
+    )
+}
+
 impl Repo {
     /// Load the tree index and every snapshot, for browsing.
     pub fn browse(self) -> Result<Browser, EngineError> {
@@ -133,7 +140,7 @@ impl Repo {
             })
             .collect();
         snapshots.sort_by(|a, b| b.1.time.cmp(&a.1.time).then_with(|| a.1.id.cmp(&b.1.id)));
-        let repo = self.inner.to_indexed_ids()?;
+        let repo = self.inner.to_indexed()?;
         Ok(Browser {
             repo: Mutex::new(repo),
             snapshots,
@@ -149,7 +156,9 @@ impl Browser {
             .collect()
     }
 
-    fn repo(&self) -> Result<std::sync::MutexGuard<'_, Repository<IndexedIdsStatus>>, EngineError> {
+    fn repo(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Repository<IndexedFullStatus>>, EngineError> {
         self.repo
             .lock()
             .map_err(|_| EngineError::new(ErrorKind::Internal, "browser lock poisoned"))
@@ -187,6 +196,78 @@ impl Browser {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         Ok(entries)
+    }
+
+    /// Write `path`'s content, as it was in `snapshot`, to `destination`,
+    /// without restoring anything else. Fails if `path` is not a file.
+    pub fn dump_file(
+        &self,
+        snapshot: &str,
+        path: &Path,
+        destination: &Path,
+    ) -> Result<(), EngineError> {
+        let (file, _) = self.snapshot(snapshot)?;
+        let repo = self.repo()?;
+        let node = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        if !node.is_file() {
+            return Err(wrong_kind(path, "file"));
+        }
+        let mut out = std::fs::File::create(destination)?;
+        repo.dump(&node, &mut out)?;
+        Ok(())
+    }
+
+    /// Write `path` (a folder), as it was in `snapshot`, to `destination` as
+    /// a gzip-compressed tar archive, without restoring anything. Fails if
+    /// `path` is not a folder.
+    pub fn archive_folder(
+        &self,
+        snapshot: &str,
+        path: &Path,
+        destination: &Path,
+    ) -> Result<(), EngineError> {
+        let (file, _) = self.snapshot(snapshot)?;
+        let repo = self.repo()?;
+        let root = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        if !root.is_dir() {
+            return Err(wrong_kind(path, "folder"));
+        }
+        let out = std::fs::File::create(destination)?;
+        let gzip = flate2::write::GzEncoder::new(out, flate2::Compression::default());
+        let mut tar = tar::Builder::new(gzip);
+        for item in repo.ls(&root, &LsOptions::default())? {
+            let (relative, node) = item?;
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(node.meta.mode.unwrap_or(0o644));
+            if let Some(mtime) = node.meta.mtime {
+                header.set_mtime(mtime.as_second().max(0) as u64);
+            }
+            if let Some(uid) = node.meta.uid {
+                header.set_uid(u64::from(uid));
+            }
+            if let Some(gid) = node.meta.gid {
+                header.set_gid(u64::from(gid));
+            }
+            if node.is_dir() {
+                header.set_entry_type(tar::EntryType::Directory);
+                header.set_size(0);
+                header.set_cksum();
+                tar.append_data(&mut header, &relative, std::io::empty())?;
+            } else if node.is_symlink() {
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_size(0);
+                header.set_cksum();
+                tar.append_link(&mut header, &relative, node.node_type.to_link())?;
+            } else if node.is_file() {
+                header.set_size(node.meta.size);
+                header.set_cksum();
+                let mut content = Vec::new();
+                repo.dump(&node, &mut content)?;
+                tar.append_data(&mut header, &relative, content.as_slice())?;
+            }
+        }
+        tar.into_inner()?.finish()?;
+        Ok(())
     }
 
     /// Every entry in `snapshot` whose name contains `query` (ignoring case),
@@ -301,7 +382,7 @@ impl Browser {
 }
 
 fn diff_trees(
-    repo: &Repository<IndexedIdsStatus>,
+    repo: &Repository<IndexedFullStatus>,
     a: TreeId,
     b: TreeId,
     prefix: &Path,

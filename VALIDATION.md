@@ -196,6 +196,16 @@ noted honestly in ROADMAP.md rather than claimed as verified live.
 
 Not covered by an automated test, and not yet tried against the real, rendered window either: the layout itself (indentation, the disclosure arrow, the scrolling region) — the tests above exercise the state machine behind it, not what it looks like on screen.
 
+### Downloading straight from a snapshot (`src/engine/browse.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `dump_file_writes_exactly_that_files_bytes` | A file downloaded from a snapshot matches its backed-up content byte for byte, via rustic's own `dump` |
+| `dump_file_refuses_a_folder`, `archive_folder_refuses_a_file` | Downloading a folder as a file, or a file as a folder, is refused before anything is written, rather than producing an empty or wrong file |
+| `archive_folder_produces_a_tar_gz_with_the_same_tree` | A folder downloaded as a `.tar.gz`, extracted with a real `tar`/`gzip` reader, matches the original tree exactly — names, content and Unix permissions, proven against a tree with nested folders, unicode names, a `0600` file and a symlink |
+
+`Browser` moved from a size-optimized index (`IndexedIdsStatus`) to a fully-loaded one (`IndexedFullStatus`, via `to_indexed()` rather than `to_indexed_ids()`) so `dump` is available to call at all; every other browse operation (list, search, versions, diff, missing) keeps working unchanged, since `IndexedFullStatus` is a superset. Not covered by an automated test: the "Download…" buttons themselves in `src/app/pages/restore.rs`, or the save-file dialog they open — UI wiring, not new logic, following the same pattern already proven for **Open Copy** and **Restore This Version…**.
+
 ### Three bugs a live session surfaced, fixed the same day
 
 - **"Delete backup and all data" refused a backup whose data was already removed by hand**, treating "nothing here" the same as "this is not a repository" (a folder full of someone else's unrelated files) and refusing both identically. Fixed in `src/engine/location.rs` (local) and `src/engine/rclone.rs` (rclone) by classifying the three cases (empty, a real repository, something else entirely) separately rather than collapsing the first two together, and treating "empty" as a no-op success. `delete_succeeds_as_a_no_op_when_nothing_is_there_at_all` (both files) proves it against a real, genuinely-missing location — a second delete of an already-deleted repository is checked the same way, since that is exactly the shape of a user calling delete twice.

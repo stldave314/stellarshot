@@ -250,6 +250,7 @@ versions-same = { $count ->
    *[other] ↳ the same in { $count } older snapshots
 }
 open-copy = Open Copy
+download = Download…
 restore-this-version = Restore This Version…
 deleted-scope = Files in { $folder } that are in backups from the last { $days } days but no longer on disk.
 deleted-change-folder = Change Folder…
@@ -317,6 +318,8 @@ restore-done-body = { $count ->
 restore-failed = The restore did not finish.
 browse-failed = Could not read this backup.
 open-copy-failed = Could not open a copy of this file.
+download-title = Save a copy from this backup
+download-failed = Could not save a copy from this backup.
 select-scope-folder = Choose a folder to look in
 select-restore-folder = Choose where to restore to
 

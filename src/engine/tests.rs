@@ -862,6 +862,72 @@ fn missing_finds_deleted_files_with_their_last_snapshot() {
     );
 }
 
+#[test]
+fn dump_file_writes_exactly_that_files_bytes() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let destination = fixture.work.join("plain.txt");
+    browser(&fixture)
+        .dump_file("latest", &fixture.source.join("plain.txt"), &destination)
+        .unwrap();
+
+    assert_eq!(fs::read(&destination).unwrap(), b"plain");
+}
+
+#[test]
+fn dump_file_refuses_a_folder() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let destination = fixture.work.join("nested.txt");
+    let err = browser(&fixture)
+        .dump_file("latest", &fixture.source.join("nested"), &destination)
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Internal);
+    assert!(!destination.exists(), "nothing is written on failure");
+}
+
+#[test]
+fn archive_folder_produces_a_tar_gz_with_the_same_tree() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let destination = fixture.work.join("nested.tar.gz");
+    browser(&fixture)
+        .archive_folder("latest", &fixture.source.join("nested"), &destination)
+        .unwrap();
+
+    let extracted = fixture.work.join("extracted");
+    fs::create_dir_all(&extracted).unwrap();
+    let gzip = flate2::read::GzDecoder::new(fs::File::open(&destination).unwrap());
+    tar::Archive::new(gzip).unpack(&extracted).unwrap();
+
+    assert_eq!(
+        snapshot_of(&extracted),
+        snapshot_of(&fixture.source.join("nested")),
+    );
+}
+
+#[test]
+fn archive_folder_refuses_a_file() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let destination = fixture.work.join("plain.tar.gz");
+    let err = browser(&fixture)
+        .archive_folder("latest", &fixture.source.join("plain.txt"), &destination)
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Internal);
+    assert!(!destination.exists(), "nothing is written on failure");
+}
+
 // ---------------------------------------------------------------------------
 // Selective restore
 // ---------------------------------------------------------------------------

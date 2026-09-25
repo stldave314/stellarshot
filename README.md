@@ -82,6 +82,8 @@ snapshot you ever made.
   folder tree, search it, and see every version of a file, with identical
   versions marked. **Deleted files** lists what your backups still have that is
   no longer on disk, and **Compare** shows what changed between two snapshots.
+  **Download…** saves a file, an older version of one, or a whole folder as a
+  `.tar.gz`, straight from the snapshot, without restoring anything.
 - **A restore that shows you what it will do first.** Put files back where
   they were or in another folder. When a file is already there, choose **Keep
   both** (the default: your file is not touched and the restored copy gets a
@@ -299,7 +301,7 @@ soon as it is unlocked).
 
 | Tab | What it is for |
 | --- | --- |
-| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Restore This Version…** restores just that one |
+| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
 | **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
 | **Compare** | Choose two snapshots to list what was added, removed and changed between them. Ticking a changed or removed item restores it as it was in the snapshot on the left |
 

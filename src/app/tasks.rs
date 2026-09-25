@@ -115,12 +115,12 @@ pub async fn export_settings(profiles: Vec<Profile>) -> Result<String, String> {
     .map_err(|err| err.to_string())?
 }
 
-/// Ask where to save an export, with `title` for the dialog. `Ok(None)` if
-/// the user canceled.
-pub async fn choose_export_path(title: String) -> Option<PathBuf> {
+/// Ask where to save a file named `file_name`, with `title` for the dialog.
+/// `None` if the user canceled.
+pub async fn choose_save_path(title: String, file_name: String) -> Option<PathBuf> {
     match file_chooser::save::Dialog::new()
         .title(title)
-        .file_name("stellarshot-settings.ron".to_owned())
+        .file_name(file_name)
         .save_file()
         .await
     {

@@ -436,6 +436,13 @@ A new backup engine behind one module, on the current rustic release.
       child process (a separate program each time, per operation) all read
       it from a small shared value set once when settings are loaded, rather
       than it being threaded through every call that can open a repository
+- [x] **Compression level**, set once when a backup is created (restic's
+      format uses zstd; rustic's `set_compression` sets the level, for new
+      data only, and refuses it outright on a v1 repository — checked
+      against a real repository rather than assumed). A curated three-way
+      choice (Default, Fast, Best) rather than the raw -7 to 22 zstd range;
+      no quick benchmark on this machine to weigh speed against space, which
+      was part of the original idea for this — not built
 
 ## 0.5 — Automation and alerts
 
@@ -545,9 +552,6 @@ A new backup engine behind one module, on the current rustic release.
 - **Search across every snapshot** at once, over time
 - **A side-by-side comparison** of a file in a snapshot against the file on
   disk, before restoring over it
-- **Compression level** per backup (restic's format uses zstd; rustic's
-  `set_compression` sets the level, for new data only), with a quick
-  benchmark on this machine to weigh speed against space
 - **A low-memory profile** for machines that back up millions of files, once
   it is clear what rustic lets a caller limit
 - **A privileged helper for system folders** (`/etc`, `/var/lib/docker`):

@@ -197,6 +197,17 @@ noted honestly in ROADMAP.md rather than claimed as verified live.
 
 Not covered by an automated test, and not yet tried against the real, rendered window either: the layout itself (indentation, the disclosure arrow, the scrolling region, the checkbox no longer sitting under the scrollbar) — the tests above exercise the state machine behind it, not what it looks like on screen. The include/exclude control changed from a status-label button to a checkbox specifically because the old one did not read as interactive — a real usability report, not something a unit test would have caught, and not something this environment's own UI testing limitations allow verifying by eye either.
 
+### Compression level (`src/engine/repo.rs`, `src/profile.rs`, `src/app/wizard/mod.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `a_chosen_compression_level_is_stored_in_the_repository` (`src/engine/tests.rs`) | A chosen level reaches the repository's own config, against a real repository — read back through a freshly reopened handle, not just the one that created it |
+| `no_chosen_compression_leaves_rustics_own_default_in_place` (`src/engine/tests.rs`) | Leaving the default choice writes nothing to `ConfigOptions`, so a future rustic version's own default is not silently pinned to today's |
+| `compression_is_chosen_at_creation_and_never_revisited` (`src/app/wizard/mod.rs`) | Choosing a level updates the wizard's own state; editing an existing profile's schedule neither shows nor overwrites its already-chosen level — it is loaded from nothing and saved only for a genuinely new profile |
+| `old_profiles_without_new_fields_still_load` (`src/profile.rs`) | A profile saved before this field existed defaults to `Compression::Default`, not a parse failure |
+
+Not built: the benchmark against this machine's own speed that the original idea for this included, only a curated three-way choice (Default, Fast, Best) in place of zstd's full -7 to 22 range.
+
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 
 Three more changes from watching the app actually get used, none of them logic a unit test would catch:

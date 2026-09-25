@@ -446,13 +446,43 @@ fn a_new_repository_verifies_data_after_compression_by_default() {
 }
 
 #[test]
+fn a_chosen_compression_level_is_stored_in_the_repository() {
+    let dir = TempDir::new().unwrap();
+    let location = Location::local(dir.path().join("repo"));
+
+    let repo = init_with(&location, &secret(), false, Some(19)).unwrap();
+    assert_eq!(repo.compression_level(), Some(19));
+
+    let reopened = open(&location, &secret()).unwrap();
+    assert_eq!(
+        reopened.compression_level(),
+        Some(19),
+        "read back from the repository itself, not just the handle that created it"
+    );
+}
+
+#[test]
+fn no_chosen_compression_leaves_rustics_own_default_in_place() {
+    let dir = TempDir::new().unwrap();
+    let location = Location::local(dir.path().join("repo"));
+
+    let repo = init_with(&location, &secret(), false, None).unwrap();
+
+    assert_eq!(
+        repo.compression_level(),
+        None,
+        "nothing was overridden, so nothing should be pinned to today's default"
+    );
+}
+
+#[test]
 fn an_append_only_repository_refuses_to_forget_a_snapshot() {
     let dir = TempDir::new().unwrap();
     let source = dir.path().join("source");
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("file.txt"), b"content").unwrap();
     let location = Location::local(dir.path().join("repo"));
-    init_with(&location, &secret(), true).unwrap();
+    init_with(&location, &secret(), true, None).unwrap();
 
     assert!(open(&location, &secret()).unwrap().is_append_only());
     let report = open(&location, &secret())

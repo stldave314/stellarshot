@@ -196,7 +196,11 @@ pub async fn finish(
             let location = profile.location()?;
             let key = secret.clone();
             let append_only = profile.append_only;
-            blocking(move || engine::init_with(&location, &key, append_only).map(drop)).await?;
+            let compression = profile.compression.level();
+            blocking(move || {
+                engine::init_with(&location, &key, append_only, compression).map(drop)
+            })
+            .await?;
             Vec::new()
         }
         (Mode::Open, Some(secret)) => {

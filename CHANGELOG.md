@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Compression level**, chosen when a backup is created: Default, Fast or
+  Best.
+
 ### Fixed
 
 - **The Browse tree's include/exclude control now reads as a selector, not a

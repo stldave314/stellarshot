@@ -230,6 +230,10 @@ right-click menu).
    cloud storage, which another computer may be backing up to at the same
    time.
 
+   **Compression** (new backups only) is **Default** unless changed to
+   **Fast** (smaller time cost, larger backups) or **Best** (the opposite).
+   Set once, when the backup is created.
+
    While automatic backups are on, a **Conditions** section lets a laptop
    skip a slot rather than run in a state you would not want it to: only on
    mains power, only above a battery level, not on a connection marked

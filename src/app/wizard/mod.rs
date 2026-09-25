@@ -21,7 +21,8 @@ use crate::app::format;
 use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secret, SizeEstimate};
 use crate::fl;
 use crate::profile::{
-    Conditions, Destination, Hook, HookTiming, Profile, Retention, Schedule, default_excludes,
+    Compression, Conditions, Destination, Hook, HookTiming, Profile, Retention, Schedule,
+    default_excludes,
 };
 
 pub mod browse;
@@ -90,6 +91,10 @@ const KEEP_CHOICES: [Retention; 5] = [
 /// The minimum battery level a scheduled backup can require, in the order
 /// the list shows them.
 const BATTERY_CHOICES: [Option<u8>; 5] = [None, Some(20), Some(30), Some(50), Some(80)];
+
+/// Compression choices, in the order the list shows them.
+const COMPRESSION_CHOICES: [Compression; 3] =
+    [Compression::Default, Compression::Fast, Compression::Best];
 
 /// When a hook can run, in the order the list shows them.
 const HOOK_TIMINGS: [HookTiming; 4] = [
@@ -171,10 +176,14 @@ pub struct Wizard {
     /// Stellarshot offers no way to run the one change it still allows
     /// (turning append-only back off), so from here there is no way back.
     pub append_only: bool,
+    /// zstd compression. Only offered when creating a new backup, the same
+    /// as append-only: see [`crate::profile::Compression`].
+    pub compression: Compression,
     frequency_labels: Vec<String>,
     keep_labels: Vec<String>,
     battery_labels: Vec<String>,
     hook_timing_labels: Vec<String>,
+    compression_labels: Vec<String>,
     pub password: String,
     pub confirm: String,
     pub password_hidden: bool,
@@ -218,6 +227,7 @@ pub enum Message {
     Keep(usize),
     Prune(bool),
     AppendOnly(bool),
+    Compression(usize),
     RequireAc(bool),
     MinBattery(usize),
     BlockMetered(bool),
@@ -303,6 +313,7 @@ impl Wizard {
             hook_command_input: String::new(),
             hook_timing_input: HookTiming::default(),
             append_only: false,
+            compression: Compression::default(),
             // The 4th, "when the drive connects", is only ever shown once
             // the destination is a removable drive, but is always here so
             // `when_view` can slice into a stable, self-owned list rather
@@ -316,6 +327,10 @@ impl Wizard {
             keep_labels: Vec::new(),
             battery_labels: BATTERY_CHOICES.iter().map(|c| battery_label(*c)).collect(),
             hook_timing_labels: HOOK_TIMINGS.iter().map(|t| hook_timing_label(*t)).collect(),
+            compression_labels: COMPRESSION_CHOICES
+                .iter()
+                .map(|c| compression_label(*c))
+                .collect(),
             password: String::new(),
             confirm: String::new(),
             password_hidden: true,
@@ -674,6 +689,7 @@ impl Wizard {
         // existing append-only repository is still recognized as one.
         if new {
             profile.append_only = self.append_only;
+            profile.compression = self.compression;
         }
         let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
         self.busy_since = Some(Instant::now());
@@ -858,6 +874,12 @@ impl Wizard {
             }
             Message::AppendOnly(on) => {
                 self.append_only = on;
+                Vec::new()
+            }
+            Message::Compression(index) => {
+                if let Some(compression) = COMPRESSION_CHOICES.get(index) {
+                    self.compression = *compression;
+                }
                 Vec::new()
             }
             Message::RequireAc(on) => {
@@ -1282,11 +1304,24 @@ impl Wizard {
             );
         }
         if self.mode == Mode::Create {
-            keep = keep.add(
-                widget::settings::item::builder(fl!("wizard-append-only"))
-                    .description(fl!("wizard-append-only-description"))
-                    .toggler(self.append_only, Message::AppendOnly),
-            );
+            let selected = COMPRESSION_CHOICES
+                .iter()
+                .position(|c| *c == self.compression);
+            keep = keep
+                .add(
+                    widget::settings::item::builder(fl!("wizard-compression"))
+                        .description(fl!("wizard-compression-description"))
+                        .control(widget::dropdown(
+                            &self.compression_labels,
+                            selected,
+                            Message::Compression,
+                        )),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("wizard-append-only"))
+                        .description(fl!("wizard-append-only-description"))
+                        .toggler(self.append_only, Message::AppendOnly),
+                );
         }
 
         let mut column = widget::column::with_capacity(4)
@@ -1526,6 +1561,14 @@ fn hook_timing_label(timing: HookTiming) -> String {
         HookTiming::AfterSuccess => fl!("hook-timing-after-success"),
         HookTiming::AfterFailure => fl!("hook-timing-after-failure"),
         HookTiming::After => fl!("hook-timing-after"),
+    }
+}
+
+fn compression_label(compression: Compression) -> String {
+    match compression {
+        Compression::Default => fl!("wizard-compression-default"),
+        Compression::Fast => fl!("wizard-compression-fast"),
+        Compression::Best => fl!("wizard-compression-best"),
     }
 }
 
@@ -1927,6 +1970,37 @@ mod tests {
         assert_eq!(
             wizard.prune, None,
             "the destination decides until the user does"
+        );
+        assert_eq!(wizard.compression, Compression::Default);
+    }
+
+    #[test]
+    fn compression_is_chosen_at_creation_and_never_revisited() {
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        let best = COMPRESSION_CHOICES
+            .iter()
+            .position(|c| *c == Compression::Best)
+            .unwrap();
+        wizard.update(Message::Compression(best));
+        assert_eq!(wizard.compression, Compression::Best);
+
+        // Editing an existing profile never shows or changes compression:
+        // it can only be chosen once, when the repository is created.
+        let mut profile = scheduled_profile();
+        profile.compression = Compression::Fast;
+        let (mut wizard, _) = Wizard::schedule(&profile);
+        assert_eq!(
+            wizard.compression,
+            Compression::Default,
+            "not loaded from the profile being edited; there is no step that shows it"
+        );
+
+        let effects = wizard.update(Message::Next);
+        let saved = &finish_effect(&effects).expect("saving finishes").profile;
+        assert_eq!(
+            saved.compression,
+            Compression::Fast,
+            "left exactly as it was, not overwritten by the wizard's own untouched default"
         );
     }
 

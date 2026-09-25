@@ -316,6 +316,13 @@ impl Repo {
     pub fn is_append_only(&self) -> bool {
         self.inner.config().append_only == Some(true)
     }
+
+    /// The compression level actually stored in the repository's own
+    /// config, or `None` if it was created without overriding rustic's
+    /// default.
+    pub fn compression_level(&self) -> Option<i32> {
+        self.inner.config().compression
+    }
 }
 
 fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, EngineError> {
@@ -337,10 +344,11 @@ fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, Engi
 /// Create a repository. Refuses a location that already holds a repository or
 /// anything else.
 pub fn init(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
-    init_with(location, secret, false)
+    init_with(location, secret, false, None)
 }
 
-/// Create a repository, optionally in append-only mode from the start.
+/// Create a repository, optionally in append-only mode and at a chosen
+/// compression level from the start.
 ///
 /// Append-only can only be chosen here, at creation, through Stellarshot's
 /// own tools: rustic's `config` command, the only way to change it, refuses
@@ -348,11 +356,15 @@ pub fn init(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
 /// back off, which Stellarshot exposes no UI for. (Once off, `config` works
 /// normally again, including turning it back on — so this is not a
 /// guarantee against someone with the repository's own password, only
-/// against Stellarshot's own tools never doing it by themselves.)
+/// against Stellarshot's own tools never doing it by themselves.) The
+/// compression level is not one-way the same way: `rustic`'s own `config`
+/// command could still change it later, Stellarshot simply has no UI for
+/// that yet either.
 pub fn init_with(
     location: &Location,
     secret: &Secret,
     append_only: bool,
+    compression: Option<i32>,
 ) -> Result<Repo, EngineError> {
     match probe(location)? {
         Probe::NotEmpty => {
@@ -371,15 +383,17 @@ pub fn init_with(
     }
     debug_log!(
         ENGINE,
-        "init {} (append-only: {append_only})",
+        "init {} (append-only: {append_only}, compression: {compression:?})",
         location.describe()
     );
     let bars = SinkBars::default();
-    let config = if append_only {
-        ConfigOptions::default().set_append_only(true)
-    } else {
-        ConfigOptions::default()
-    };
+    let mut config = ConfigOptions::default();
+    if append_only {
+        config = config.set_append_only(true);
+    }
+    if let Some(level) = compression {
+        config = config.set_compression(level);
+    }
     let inner = unopened(location, &bars)?.init(
         &Credentials::password(secret.expose()),
         &KeyOptions::default(),

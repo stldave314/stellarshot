@@ -177,6 +177,36 @@ impl Schedule {
     }
 }
 
+/// zstd compression, set once when a repository is created. rustic's own
+/// `config` command can still change it on an existing repository, but
+/// Stellarshot offers no UI for that, matching how it already treats
+/// append-only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Compression {
+    /// rustic's own default level.
+    #[default]
+    Default,
+    /// Faster, larger snapshots: zstd level -3.
+    Fast,
+    /// Slower, smaller snapshots: zstd level 19.
+    Best,
+}
+
+impl Compression {
+    /// The level to pass rustic's own `ConfigOptions::set_compression`.
+    /// `None` leaves rustic's default in place rather than overriding it
+    /// with rustic's own default level spelled out, so a future rustic
+    /// version choosing a different default is not silently pinned to
+    /// today's.
+    pub fn level(self) -> Option<i32> {
+        match self {
+            Self::Default => None,
+            Self::Fast => Some(-3),
+            Self::Best => Some(19),
+        }
+    }
+}
+
 /// How long snapshots are kept. Only this computer's snapshots are ever
 /// forgotten; see [`crate::engine::Repo::forget`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +363,9 @@ pub struct Profile {
     /// When step.
     #[serde(default)]
     pub append_only: bool,
+    /// Set once, at creation: see [`Compression`].
+    #[serde(default)]
+    pub compression: Compression,
     #[serde(default)]
     pub schedule: Schedule,
     #[serde(default)]
@@ -376,6 +409,7 @@ impl Profile {
             bandwidth_limit: String::new(),
             password_command: String::new(),
             append_only: false,
+            compression: Compression::default(),
             schedule: Schedule::Manual,
             conditions: Conditions::default(),
             hooks: Vec::new(),
@@ -752,6 +786,7 @@ mod tests {
         assert!(profile.one_file_system);
         assert_eq!(profile.schedule, Schedule::Manual);
         assert!(profile.hooks.is_empty());
+        assert_eq!(profile.compression, Compression::Default);
     }
 
     #[test]

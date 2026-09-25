@@ -127,6 +127,11 @@ pub struct Wizard {
     /// Free up space automatically; `None` until the user chooses, which
     /// means the default for the destination.
     pub prune: Option<bool>,
+    /// rustic's own append-only mode. Only offered when creating a new
+    /// backup: it cannot be turned on later, since rustic's `config`
+    /// command, the only way to change it, itself stops working once it
+    /// is set.
+    pub append_only: bool,
     frequency_labels: Vec<String>,
     keep_labels: Vec<String>,
     pub password: String,
@@ -170,6 +175,7 @@ pub enum Message {
     Frequency(usize),
     Keep(usize),
     Prune(bool),
+    AppendOnly(bool),
     Back,
     Next,
     Cancel,
@@ -233,6 +239,7 @@ impl Wizard {
             frequency: Schedule::Daily,
             retention: Retention::Smart,
             prune: None,
+            append_only: false,
             frequency_labels: vec![
                 fl!("frequency-hourly"),
                 fl!("frequency-daily"),
@@ -562,6 +569,12 @@ impl Wizard {
             profile.retention = self.retention;
             profile.prune = self.prune;
         }
+        // Create-time only: rustic's `config` command, the only way to
+        // change this later, stops working once it is set, so it is never
+        // revisited through `Step::When` on an existing profile.
+        if new {
+            profile.append_only = self.append_only;
+        }
         let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
         self.busy_since = Some(Instant::now());
         vec![Effect::Finish(Box::new(Finish {
@@ -716,6 +729,10 @@ impl Wizard {
             }
             Message::Prune(on) => {
                 self.prune = Some(on);
+                Vec::new()
+            }
+            Message::AppendOnly(on) => {
+                self.append_only = on;
                 Vec::new()
             }
             Message::Back => {
@@ -1039,6 +1056,13 @@ impl Wizard {
                 widget::settings::item::builder(fl!("wizard-prune"))
                     .description(fl!("wizard-prune-description"))
                     .toggler(self.prune_enabled(), Message::Prune),
+            );
+        }
+        if self.mode == Mode::Create {
+            keep = keep.add(
+                widget::settings::item::builder(fl!("wizard-append-only"))
+                    .description(fl!("wizard-append-only-description"))
+                    .toggler(self.append_only, Message::AppendOnly),
             );
         }
 

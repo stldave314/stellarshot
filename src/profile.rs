@@ -46,6 +46,12 @@ pub enum Destination {
         /// What to call it: "Google Drive", or the user's remote name.
         provider: String,
     },
+    /// A repository on a rest-server or rustic-server, reached directly.
+    Rest {
+        /// The full server URL, including the repository name and any HTTP
+        /// basic auth (`http://user:pass@host:port/repo/`).
+        url: String,
+    },
 }
 
 impl Destination {
@@ -65,6 +71,9 @@ impl Destination {
                 host, user, path, ..
             } => format!("{user}@{host}:{path}"),
             Self::Rclone { path, provider, .. } => format!("{provider}: {path}"),
+            // Reuses `Location::describe`'s own redaction of a URL's
+            // embedded credentials, rather than a second copy of it here.
+            Self::Rest { url } => Location::Rest { url: url.clone() }.describe(),
         }
     }
 
@@ -76,6 +85,7 @@ impl Destination {
             Self::Removable { .. } => crate::fl!("place-drive"),
             Self::Sftp { .. } => crate::fl!("place-server"),
             Self::Rclone { provider, .. } => provider.clone(),
+            Self::Rest { .. } => crate::fl!("place-rest"),
         }
     }
 
@@ -86,6 +96,7 @@ impl Destination {
             Self::Removable { .. } => "drive-removable-media-symbolic",
             Self::Sftp { .. } => "network-server-symbolic",
             Self::Rclone { .. } => "folder-remote-symbolic",
+            Self::Rest { .. } => "network-server-symbolic",
         }
     }
 
@@ -117,6 +128,7 @@ impl Destination {
                 ))
             }
             Self::Rclone { remote, path, .. } => Ok(Location::rclone(remote.clone(), path.clone())),
+            Self::Rest { url } => Ok(Location::Rest { url: url.clone() }),
         }
     }
 
@@ -235,8 +247,18 @@ pub struct Profile {
     pub bandwidth_limit: String,
     /// A command that prints the password on its standard output, run fresh
     /// every time one is needed, instead of the keyring. Empty for none.
-    #[serde(default)]
+    ///
+    /// Skipped when empty (the common case) rather than always writing the
+    /// field name out, so a settings export with none set never has the
+    /// word "password" appear in it at all, matching a plain empty backup.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password_command: String,
+    /// Set once, at creation: rustic's own append-only mode, so a
+    /// compromised account cannot delete this backup's history. Guarded by
+    /// rustic itself, not just Stellarshot's own UI; see
+    /// [`Profile::prune_enabled`] and the wizard's Where step.
+    #[serde(default)]
+    pub append_only: bool,
     #[serde(default)]
     pub schedule: Schedule,
     #[serde(default)]
@@ -274,6 +296,7 @@ impl Profile {
             exclude_pattern_files: Vec::new(),
             bandwidth_limit: String::new(),
             password_command: String::new(),
+            append_only: false,
             schedule: Schedule::Manual,
             retention: Retention::KeepForever,
             prune: None,
@@ -289,10 +312,16 @@ impl Profile {
     /// prune by default; servers and cloud storage often are, and do not
     /// unless the user turns it on.
     pub fn prune_enabled(&self) -> bool {
-        self.prune.unwrap_or(match self.destination {
-            Destination::Local { .. } | Destination::Removable { .. } => true,
-            Destination::Sftp { .. } | Destination::Rclone { .. } => false,
-        })
+        // Not just a UI nicety: rustic itself refuses to forget or prune an
+        // append-only repository, but attempting it every scheduled run
+        // regardless would still mean a failure logged every time.
+        !self.append_only
+            && self.prune.unwrap_or(match self.destination {
+                Destination::Local { .. } | Destination::Removable { .. } => true,
+                Destination::Sftp { .. }
+                | Destination::Rclone { .. }
+                | Destination::Rest { .. } => false,
+            })
     }
 
     /// The password to open this backup's repository with, right now: from

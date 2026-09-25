@@ -130,6 +130,10 @@ pub enum Message {
     GlobalExcludePatternInput(String),
     AddGlobalExcludePattern,
     RemoveGlobalExcludePattern(usize),
+    ChooseCacheDir,
+    CacheDirChosen(Option<PathBuf>),
+    ClearCacheDir,
+    NoCache(bool),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -170,6 +174,14 @@ pub enum Dialog {
     WizardCancel,
     /// Editing a backup's `password_command`: `text` is the field as typed.
     PasswordCommand { id: String, text: String },
+    /// Changing a backup's password: it must already be unlocked, since
+    /// changing it needs the repository open.
+    ChangePassword {
+        id: String,
+        password: String,
+        confirm: String,
+        busy: bool,
+    },
 }
 
 impl Dialog {
@@ -180,6 +192,12 @@ impl Dialog {
             Self::DeleteAll {
                 name, typed, busy, ..
             } => !busy && typed == name,
+            Self::ChangePassword {
+                password,
+                confirm,
+                busy,
+                ..
+            } => !busy && !password.is_empty() && password == confirm,
             _ => true,
         }
     }
@@ -198,6 +216,9 @@ pub enum DialogMessage {
     /// "just dismiss" here.
     FinishWizardLater,
     DiscardWizard,
+    NewPassword(String),
+    ConfirmPassword(String),
+    PasswordChanged(String, Result<Secret, EngineError>),
 }
 
 #[derive(Clone, Debug)]
@@ -257,6 +278,38 @@ impl App {
             AppTheme::Light => 2,
             AppTheme::System => 0,
         };
+        let cache_dir_label = self
+            .config
+            .cache_dir
+            .as_ref()
+            .map(|path| format::path(path))
+            .unwrap_or_else(|| fl!("settings-cache-dir-default"));
+        let cache = widget::settings::section()
+            .title(fl!("settings-cache-title"))
+            .add(
+                widget::settings::item::builder(fl!("settings-cache-dir"))
+                    .description(cache_dir_label)
+                    .control(
+                        widget::row::with_capacity(2)
+                            .spacing(spacing.space_xs)
+                            .push(
+                                widget::button::standard(fl!("settings-cache-dir-choose"))
+                                    .on_press_maybe(
+                                        (!self.config.no_cache).then_some(Message::ChooseCacheDir),
+                                    ),
+                            )
+                            .push_maybe(self.config.cache_dir.is_some().then(|| {
+                                widget::button::standard(fl!("settings-cache-dir-reset"))
+                                    .on_press(Message::ClearCacheDir)
+                            })),
+                    ),
+            )
+            .add(
+                widget::settings::item::builder(fl!("settings-no-cache"))
+                    .description(fl!("settings-no-cache-description"))
+                    .toggler(self.config.no_cache, Message::NoCache),
+            );
+
         let mut global_excludes = widget::settings::section()
             .title(fl!("settings-global-excludes-title"))
             .add(widget::text::body(fl!(
@@ -317,6 +370,7 @@ impl App {
                         ),
                 )
                 .into(),
+            cache.into(),
             global_excludes.into(),
         ])
         .into()
@@ -1037,6 +1091,15 @@ impl App {
                     });
                     Task::none()
                 }
+                profile::Effect::ChangePassword => {
+                    self.dialog = Some(Dialog::ChangePassword {
+                        id: id.clone(),
+                        password: String::new(),
+                        confirm: String::new(),
+                        busy: false,
+                    });
+                    Task::none()
+                }
                 profile::Effect::LogEvent(kind) => {
                     event_log::record(&id, format::now(), kind);
                     Task::none()
@@ -1264,6 +1327,18 @@ impl App {
                 }
                 Task::none()
             }
+            DialogMessage::NewPassword(text) => {
+                if let Some(Dialog::ChangePassword { password, .. }) = &mut self.dialog {
+                    *password = text;
+                }
+                Task::none()
+            }
+            DialogMessage::ConfirmPassword(text) => {
+                if let Some(Dialog::ChangePassword { confirm, .. }) = &mut self.dialog {
+                    *confirm = text;
+                }
+                Task::none()
+            }
             DialogMessage::Confirm => {
                 let Some(dialog) = self.dialog.clone() else {
                     return Task::none();
@@ -1315,6 +1390,35 @@ impl App {
                         }
                         Task::none()
                     }
+                    Dialog::ChangePassword {
+                        id,
+                        password,
+                        confirm,
+                        ..
+                    } => {
+                        let (Some(profile), Some(secret)) = (
+                            self.config.profile(&id).cloned(),
+                            self.pages.get(&id).and_then(|page| page.secret().cloned()),
+                        ) else {
+                            return Task::none();
+                        };
+                        self.dialog = Some(Dialog::ChangePassword {
+                            id: id.clone(),
+                            password,
+                            confirm: confirm.clone(),
+                            busy: true,
+                        });
+                        let new_password = engine::Secret::new(confirm);
+                        Task::perform(
+                            tasks::change_password(profile, secret, new_password),
+                            move |result| {
+                                app(Message::Dialog(DialogMessage::PasswordChanged(
+                                    id.clone(),
+                                    result,
+                                )))
+                            },
+                        )
+                    }
                 }
             }
             DialogMessage::Failed(context, error) => {
@@ -1329,6 +1433,21 @@ impl App {
                 }
                 Err(err) => {
                     self.show_error(&fl!("delete-repo-failed"), &err);
+                    Task::none()
+                }
+            },
+            DialogMessage::PasswordChanged(id, result) => match result {
+                Ok(new_password) => {
+                    self.dialog = None;
+                    if let Some(page) = self.pages.get_mut(&id) {
+                        page.set_secret(new_password);
+                    }
+                    debug_log!(ENGINE, "changed the password of profile {id}");
+                    Task::none()
+                }
+                Err(err) => {
+                    self.dialog = None;
+                    self.show_error(&fl!("change-password-failed"), &err);
                     Task::none()
                 }
             },
@@ -1578,6 +1697,42 @@ impl Application for App {
                 )
                 .primary_action(widget::button::suggested(fl!("save")).on_press_maybe(confirm))
                 .secondary_action(cancel),
+            Dialog::ChangePassword {
+                password,
+                confirm: confirm_password,
+                ..
+            } => {
+                let confirm_action = confirm;
+                let mismatch = !confirm_password.is_empty() && password != confirm_password;
+                let mut fields = widget::column::with_capacity(3)
+                    .spacing(theme::active().cosmic().spacing.space_xs)
+                    .push(
+                        widget::secure_input(fl!("password"), password.as_str(), None, true)
+                            .label(fl!("password"))
+                            .on_input(|text| Message::Dialog(DialogMessage::NewPassword(text))),
+                    )
+                    .push(
+                        widget::secure_input(
+                            fl!("wizard-confirm"),
+                            confirm_password.as_str(),
+                            None,
+                            true,
+                        )
+                        .label(fl!("wizard-confirm"))
+                        .on_input(|text| Message::Dialog(DialogMessage::ConfirmPassword(text))),
+                    );
+                if mismatch {
+                    fields = fields.push(widget::text::caption(fl!("wizard-mismatch")));
+                }
+                widget::dialog()
+                    .title(fl!("change-password-title"))
+                    .body(fl!("change-password-body"))
+                    .control(fields)
+                    .primary_action(
+                        widget::button::suggested(fl!("save")).on_press_maybe(confirm_action),
+                    )
+                    .secondary_action(cancel)
+            }
         };
         Some(built.into())
     }
@@ -1884,6 +2039,37 @@ impl Application for App {
                     {
                         error_log!(CONFIG, "failed to save the global exclusions: {err}");
                     }
+                }
+            }
+            Message::ChooseCacheDir => {
+                return Task::perform(
+                    tasks::pick_folder(fl!("settings-cache-dir-title")),
+                    |path| app(Message::CacheDirChosen(path)),
+                );
+            }
+            Message::CacheDirChosen(Some(path)) => {
+                engine::cache_settings::set(Some(path.clone()), self.config.no_cache);
+                if let Some(handler) = &self.config_handler
+                    && let Err(err) = self.config.set_cache_dir(handler, Some(path))
+                {
+                    error_log!(CONFIG, "failed to save the cache location: {err}");
+                }
+            }
+            Message::CacheDirChosen(None) => {}
+            Message::ClearCacheDir => {
+                engine::cache_settings::set(None, self.config.no_cache);
+                if let Some(handler) = &self.config_handler
+                    && let Err(err) = self.config.set_cache_dir(handler, None)
+                {
+                    error_log!(CONFIG, "failed to save the cache location: {err}");
+                }
+            }
+            Message::NoCache(no_cache) => {
+                engine::cache_settings::set(self.config.cache_dir.clone(), no_cache);
+                if let Some(handler) = &self.config_handler
+                    && let Err(err) = self.config.set_no_cache(handler, no_cache)
+                {
+                    error_log!(CONFIG, "failed to save the cache setting: {err}");
                 }
             }
             Message::ToggleContextPage(context_page) => {

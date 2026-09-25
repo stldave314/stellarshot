@@ -9,8 +9,10 @@
 
 mod backup;
 pub mod browse;
+pub mod cache_settings;
 mod error;
 mod estimate;
+mod keys;
 pub mod location;
 pub mod lock;
 mod maintenance;
@@ -26,9 +28,10 @@ pub use backup::{BackupReport, BackupRequest};
 pub use browse::{Browser, Change, DiffEntry, EntryKind, FileVersion, MissingEntry, TreeEntry};
 pub use error::{EngineError, ErrorKind};
 pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdown};
+pub use keys::KeySummary;
 pub use maintenance::{ForgetReport, KeepRules, PruneReport, hostname};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
-pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, open, probe};
+pub use repo::{Location, Probe, Repo, Secret, delete_repository, init, init_with, open, probe};
 pub use restore::{ConflictPolicy, Ownership, RestorePreview, RestoreRequest, Target};
 pub use snapshots::SnapshotSummary;
 pub use statistics::Statistics;

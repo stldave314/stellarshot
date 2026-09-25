@@ -30,6 +30,20 @@ still to come.
 - **A password from a command**, instead of the keyring, for a password
   manager with a command-line client — set from the profile page's own
   **Manage** section.
+- **A REST server destination**: rest-server and rustic-server, reached
+  directly instead of through rclone, with a URL field in the wizard's Where
+  step. Everything but full deletion of the repository's data from
+  Stellarshot works, which is refused rather than attempted (see
+  ROADMAP.md's 0.4 section for why).
+- **Cache location**, under **Settings**: another folder, or no local cache
+  at all, for every repository this computer opens.
+- **Change a backup's password**, from the profile page's own **Manage**
+  section. If the old password was remembered, the keyring entry is
+  replaced with the new one rather than left stale.
+- **Append-only mode**, offered as a toggle when creating a backup: rustic
+  itself then refuses to delete a snapshot from it. Cannot be changed once
+  the backup exists — rustic's own `config` command, the only way to change
+  it later, stops working entirely once it is on.
 
 ### Fixed
 

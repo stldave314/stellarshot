@@ -289,8 +289,24 @@ A new backup engine behind one module, on the current rustic release.
 - [ ] **Direct connections without rclone** through rustic_backend's
       `opendal` feature: S3, Backblaze B2, Azure Blob Storage, Google Cloud
       Storage, WebDAV and SFTP
-- [ ] **REST servers** as a destination: rest-server and rustic-server
-      (rustic_backend's `rest` feature)
+- [x] **REST servers** as a destination: rest-server and rustic-server
+      (rustic_backend's `rest` feature), a URL field in the wizard's Where
+      step, reached directly rather than through rclone. Deleting a REST
+      repository's data from Stellarshot ("Delete backup and all data") is
+      refused rather than attempted: doing that safely, the way Local and
+      rclone destinations do (only ever removing the repository format's own
+      entries), needs a generic directory listing rustic_core exposes no
+      public API for against a REST server; "Remove from Stellarshot" still
+      works. A real backup and restore against a local `rustic-server`
+      passes by hand but is not yet a reliable automated test: some of a
+      backup's later requests intermittently fail with a connection error
+      rather than an HTTP status even once the server is confirmed actually
+      serving requests, not yet root-caused (see `tests/rest_server.rs`,
+      where the round trip is marked `#[ignore]`; `rustic-server`'s own
+      `private-repos` ACL default was also found to not actually respect
+      being turned off from the command line or its environment variables,
+      worked around with a repository-specific ACL section instead of the
+      default one)
 - [ ] **Several destinations for one backup** (cloud and a USB drive), each
       with its own "in sync" state, using rustic's repository `copy`
 - [ ] **A Google API client of Stellarshot's own, bundled with the app, used
@@ -329,7 +345,20 @@ A new backup engine behind one module, on the current rustic release.
       it, so a restore needs one sign-in per account rather than per backup
 - [ ] **Google sign-in lifetime**: find out when rclone's Google tokens can
       expire, show it, and ask for a renewal before a scheduled backup
-      would fail
+      would fail. Researched, not yet built: the stored token's own
+      "expiry" is the short-lived access token, which rclone already
+      refreshes on its own before every use, so reading it back and
+      showing it would not tell a user anything true about when they will
+      actually be signed out. The refresh token behind it, the one that
+      matters, carries no expiry at all in Google's response — it is valid
+      until revoked, unused for 6 months, or (for an app still in Google's
+      "Testing" publishing status, which a small client id can stay in
+      indefinitely without submitting for review) discarded after 7 days.
+      None of that is a date Stellarshot can show in advance. The buildable
+      version is reactive rather than predictive: catch an auth failure
+      from a real backup (now something the fixed logging in this release
+      can actually see rclone's own reason for, see CHANGELOG.md) and offer
+      a re-sign-in from there, rather than a countdown that cannot exist
 - [x] **Passwords from a command** instead of the keyring, run only when a
       job needs one (for example the Bitwarden CLI and Vaultwarden), set from
       the profile page's own **Manage** section. The command is split into
@@ -341,21 +370,47 @@ A new backup engine behind one module, on the current rustic release.
       for manual backups as well as scheduled ones is not done — `Nice=10`
       already applies to scheduled runs (see `src/schedule.rs`), a manual
       **Back Up Now** does not yet get the same treatment
-- [ ] **Append-only destinations**: a rest-server or rustic-server in
-      append-only mode, or storage with object lock, so a compromised
-      account cannot delete old snapshots. rustic's own append-only setting
-      (`set_append_only`) is offered as well, explained as a guard against
-      mistakes rather than attacks, since other tools do not have to obey it
+- [x] **Append-only destinations**: rustic's own append-only setting
+      (`set_append_only`), offered as a toggle on the wizard's Where step
+      when creating a backup, explained in its own description as a guard
+      against mistakes rather than attacks, since other tools do not have to
+      obey it. Cannot be turned on for an existing backup, or off again once
+      set, since rustic's `config` command — the only way to change it —
+      itself stops working once append-only is on; Forget and Prune are
+      skipped for such a backup rather than attempted and failing every run,
+      since rustic already refuses both against it. What is not built: a
+      rest-server or rustic-server run in its *own* append-only mode, or
+      storage with object lock — those guard the server side even against a
+      compromised Stellarshot; this setting only guards against Stellarshot
+      itself misbehaving or being told to by a compromised account with no
+      other write access
 - [ ] **A recovery sheet** when a backup is created: a second repository key
       (rustic's `add_key`) printed as a QR code and text, for when the
-      password is forgotten
-- [ ] **Change a backup's password**, and manage several keys per backup
-      (one per person or machine) (`add_key`, `delete_key`)
-- [ ] **Verify data before it is uploaded** (`set_extra_verify`): each piece
+      password is forgotten. `Repo::add_key` itself exists and is tested;
+      not done is generating and showing the sheet, which needs a QR code
+      renderer this project does not currently depend on, and a decision
+      about when in the wizard to offer it
+- [x] **Change a backup's password**, from the profile page's own **Manage**
+      section: adds a key for the new password, then removes the one it was
+      unlocked with (`add_key`, `delete_key`); if the old password was
+      remembered, the keyring entry is replaced rather than left stale, so
+      a scheduled backup keeps working. **Manage several keys per backup**
+      (one per person or machine) itself is not built: the engine already
+      supports listing, adding and removing individual keys
+      (`Repo::keys`/`add_key`/`delete_key`, all tested against a real
+      repository), but there is no list UI for it yet — the profile page
+      only exposes the single "change the key I am using" action above
+- [x] **Verify data before it is uploaded** (`set_extra_verify`): each piece
       is checked after compression, catching memory errors on machines
-      without ECC memory
-- [ ] **Where rustic keeps its cache**: another disk, or none on small
-      machines (`cache_dir`, `no_cache`)
+      without ECC memory. Already rustic's own default for every repository;
+      no Stellarshot code needed changing, confirmed with a test rather than
+      assumed, the same way 0.3 found extended attributes already worked
+- [x] **Where rustic keeps its cache**: another disk, or none on small
+      machines (`cache_dir`, `no_cache`), under **Settings**. Machine-wide
+      rather than per-backup, so the window, the scheduler and each `--run`
+      child process (a separate program each time, per operation) all read
+      it from a small shared value set once when settings are loaded, rather
+      than it being threaded through every call that can open a repository
 
 ## 0.5 — Automation and alerts
 

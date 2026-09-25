@@ -186,7 +186,8 @@ pub async fn finish(
         (Mode::Create, Some(secret)) => {
             let location = profile.location()?;
             let key = secret.clone();
-            blocking(move || engine::init(&location, &key).map(drop)).await?;
+            let append_only = profile.append_only;
+            blocking(move || engine::init_with(&location, &key, append_only).map(drop)).await?;
             Vec::new()
         }
         (Mode::Open, Some(secret)) => {
@@ -210,6 +211,24 @@ pub async fn finish(
         secret,
         snapshots,
     })
+}
+
+/// Change a backup's password: add a key for `new_password`, then remove
+/// the one `secret` opened it with. If the old password was remembered in
+/// the keyring, replaces it there with the new one, so a scheduled backup
+/// keeps working; otherwise leaves it unremembered, as it was.
+pub async fn change_password(
+    profile: Profile,
+    secret: Secret,
+    new_password: Secret,
+) -> Result<Secret, EngineError> {
+    let location = profile.location()?;
+    let key = new_password.clone();
+    blocking(move || engine::open(&location, &secret)?.change_password(key.expose())).await?;
+    if keyring::load(&profile.id).await.is_some() {
+        let _ = keyring::store(&profile.id, &profile.name, &new_password).await;
+    }
+    Ok(new_password)
 }
 
 /// Size what `request` covers, then what its exclusions take out, including

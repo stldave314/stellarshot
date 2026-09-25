@@ -408,6 +408,116 @@ fn extended_attributes_are_saved_and_restored() {
 }
 
 #[test]
+fn a_new_repository_verifies_data_after_compression_by_default() {
+    // rustic's own `extra_verify` already defaults to on; this only proves
+    // Stellarshot's `init` does not accidentally turn it off, not that a
+    // real corruption is caught (rustic exposes no public hook to induce
+    // one from outside).
+    let fixture = fixture();
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    assert!(repo.inner.config().extra_verify());
+}
+
+#[test]
+fn an_append_only_repository_refuses_to_forget_a_snapshot() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("file.txt"), b"content").unwrap();
+    let location = Location::local(dir.path().join("repo"));
+    init_with(&location, &secret(), true).unwrap();
+
+    assert!(open(&location, &secret()).unwrap().is_append_only());
+    let report = open(&location, &secret())
+        .unwrap()
+        .backup(&sources(&source), Arc::new(NoProgress))
+        .unwrap();
+
+    let err = open(&location, &secret())
+        .unwrap()
+        .delete_snapshots(&[report.snapshot.id])
+        .unwrap_err();
+    assert_eq!(
+        err.kind,
+        ErrorKind::Internal,
+        "rustic itself must refuse the deletion, not Stellarshot silently skipping it: {err:?}"
+    );
+    assert_eq!(
+        open(&location, &secret())
+            .unwrap()
+            .snapshots()
+            .unwrap()
+            .len(),
+        1,
+        "the snapshot must still be there after the refused deletion"
+    );
+}
+
+#[test]
+fn a_second_key_opens_the_same_repository_as_the_first() {
+    let fixture = fixture();
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    repo.add_key("a second password").unwrap();
+
+    // Both passwords must now open it, and see the same key listed twice.
+    open(&fixture.repo, &secret()).unwrap();
+    let second = open(&fixture.repo, &Secret::new("a second password")).unwrap();
+
+    let keys = second.keys().unwrap();
+    assert_eq!(keys.len(), 2, "both keys must be listed: {keys:?}");
+}
+
+#[test]
+fn changing_the_password_replaces_the_key_it_was_opened_with() {
+    let fixture = fixture();
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    repo.change_password("a new password").unwrap();
+
+    assert_eq!(
+        open(&fixture.repo, &Secret::new("a new password"))
+            .unwrap()
+            .keys()
+            .unwrap()
+            .len(),
+        1,
+        "the old key must be gone, not just a new one added"
+    );
+    let err = open(&fixture.repo, &secret()).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::WrongPassword);
+}
+
+#[test]
+fn a_key_that_is_not_the_current_one_can_be_deleted() {
+    let fixture = fixture();
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let added = repo.add_key("a second password").unwrap();
+
+    repo.delete_key(&added).unwrap();
+
+    assert_eq!(repo.keys().unwrap().len(), 1);
+    let err = open(&fixture.repo, &Secret::new("a second password")).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::WrongPassword);
+}
+
+#[test]
+fn the_key_a_repository_was_opened_with_cannot_be_deleted() {
+    let fixture = fixture();
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let current = repo.keys().unwrap();
+    let current_id = current
+        .into_iter()
+        .find(|key| key.current)
+        .expect("the key just used to open it must be marked current")
+        .id;
+
+    let err = repo.delete_key(&current_id).unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Internal);
+    // Still there and still works, not silently removed anyway.
+    open(&fixture.repo, &secret()).unwrap();
+}
+
+#[test]
 fn wrong_password_is_reported_as_such() {
     let fixture = fixture();
 

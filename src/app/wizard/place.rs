@@ -28,6 +28,7 @@ pub enum Kind {
     Server,
     Google,
     Remote,
+    Rest,
 }
 
 /// Default SSH port.
@@ -87,6 +88,9 @@ pub struct Place {
     /// rclone's `--bwlimit` syntax (`1M`, `8M:2M`), or empty for no limit.
     /// Only meaningful when [`Self::needs_rclone`].
     pub bandwidth_limit: String,
+    /// A rest-server or rustic-server URL, reached directly rather than
+    /// through rclone.
+    pub rest_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +119,7 @@ pub enum Message {
     Check,
     Probed(Destination, Result<Probe, EngineError>),
     BandwidthLimit(String),
+    RestUrl(String),
 }
 
 pub enum Effect {
@@ -172,6 +177,7 @@ impl Default for Place {
             preferred_drive: None,
             preferred_remote: None,
             bandwidth_limit: String::new(),
+            rest_url: String::new(),
         }
     }
 }
@@ -226,6 +232,12 @@ impl Place {
                     provider: self.user_remotes.get(index).cloned().unwrap_or_default(),
                 })
             }
+            Kind::Rest => {
+                let url = self.rest_url.trim();
+                (!url.is_empty()).then(|| Destination::Rest {
+                    url: url.to_owned(),
+                })
+            }
         }
     }
 
@@ -265,6 +277,9 @@ impl Place {
                 .user_remote
                 .as_ref()
                 .and_then(|(index, _)| self.user_remotes.get(*index).cloned()),
+            Kind::Rest => url::Url::parse(self.rest_url.trim())
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned)),
         }
     }
 
@@ -442,6 +457,10 @@ impl Place {
                 self.bandwidth_limit = limit;
                 Vec::new()
             }
+            Message::RestUrl(url) => {
+                self.rest_url = url;
+                Vec::new()
+            }
         }
     }
 
@@ -479,6 +498,11 @@ impl Place {
                 Kind::Remote,
                 fl!("place-remote"),
                 fl!("place-remote-description"),
+            ))
+            .add(option(
+                Kind::Rest,
+                fl!("place-rest"),
+                fl!("place-rest-description"),
             ));
 
         let mut column = widget::column::with_capacity(4)
@@ -686,6 +710,15 @@ impl Place {
                     .push(check)
                     .into()
             }
+            Kind::Rest => widget::column::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .push(
+                    widget::text_input(fl!("place-rest-url-placeholder"), &self.rest_url)
+                        .label(fl!("place-rest-url"))
+                        .on_input(Message::RestUrl),
+                )
+                .push(check)
+                .into(),
         }
     }
 }

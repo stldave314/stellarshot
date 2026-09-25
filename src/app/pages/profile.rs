@@ -115,6 +115,7 @@ pub enum Message {
     CleanedUp(ChildEvent),
     EditSchedule,
     EditPasswordCommand,
+    ChangePassword,
     DeleteSnapshot(String),
     SnapshotsDeleted(ChildEvent),
     TogglePinned(String, bool),
@@ -162,6 +163,7 @@ pub enum Effect {
     Edit,
     EditSchedule,
     EditPasswordCommand,
+    ChangePassword,
     Remove,
     DeleteAll,
     /// Ask systemd when this backup's timer will next run.
@@ -205,6 +207,19 @@ impl ProfileState {
     /// A backup, check or clean-up is running.
     pub fn is_busy(&self) -> bool {
         self.work.is_some()
+    }
+
+    /// The password this backup is unlocked with right now, if it is.
+    pub fn secret(&self) -> Option<&Secret> {
+        self.secret.as_ref()
+    }
+
+    /// Replace the unlocked password in memory, after changing it: the
+    /// repository itself was already reopened with the new one, so this
+    /// only keeps the window's own copy from going stale for whatever
+    /// operation comes next in the same session.
+    pub fn set_secret(&mut self, secret: Secret) {
+        self.secret = Some(secret);
     }
 
     /// How much of the running work is done, once its total is known: for
@@ -400,6 +415,7 @@ impl ProfileState {
             }
             Message::EditSchedule => vec![Effect::EditSchedule],
             Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
+            Message::ChangePassword => vec![Effect::ChangePassword],
             Message::DeleteSnapshot(id) => match &self.secret {
                 Some(secret) if self.work.is_none() => {
                     vec![Effect::DeleteSnapshots(secret.clone(), vec![id])]
@@ -628,6 +644,16 @@ impl ProfileState {
                         .control(
                             widget::button::standard(fl!("change"))
                                 .on_press(Message::EditPasswordCommand),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("change-password-row"))
+                        .description(fl!("change-password-row-description"))
+                        .control(
+                            widget::button::standard(fl!("change")).on_press_maybe(
+                                (self.secret.is_some() && !self.is_busy())
+                                    .then_some(Message::ChangePassword),
+                            ),
                         ),
                 )
                 .add(

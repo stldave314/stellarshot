@@ -195,6 +195,7 @@ right-click menu).
    | **Network server (SFTP)** | Server, user name, port and folder. Uses your SSH agent or keys; the server must already be in `~/.ssh/known_hosts` |
    | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive. **Use my own Google API credentials…** lets you sign in with a Google Cloud client of your own instead of the one rclone shares with everyone who has not set one up |
    | **One of your rclone remotes** | Pick a remote you set up with `rclone config` (OneDrive, Dropbox, S3, …) and a folder on it |
+   | **REST server** | A [rest-server](https://github.com/restic/rest-server) or [rustic-server](https://github.com/rustic-rs/rustic_server) you run yourself, as a URL including the repository name and any credentials (`http://user:pass@host:8000/repo/`) |
 
    A server, Google Drive or rclone remote also gets an **Advanced** section
    with a bandwidth limit, in rclone's own syntax (`1M`, or `8M:2M` for
@@ -404,6 +405,7 @@ The **Manage** section at the bottom of each backup's page:
 | **Free up space → Clean Up Now** | Forgets snapshots **Keep** no longer needs and deletes data nothing uses. It cannot be stopped once started |
 | **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
 | **How the password is provided → Change…** | The keyring (default), or a command that prints the password on its standard output, run fresh every time one is needed — for a password manager with a command-line client, such as the Bitwarden CLI |
+| **Password → Change…** | Needs the backup unlocked already. Adds a key for the new password, then removes the one you unlocked it with; updates the keyring entry too, if it was remembered |
 | **Remove from Stellarshot** | Forgets the backup and its remembered password. The data stays where it is and can be opened again later |
 | **Delete backup and all data** | Permanently deletes every snapshot. You type the backup's name to confirm. Only the repository's own files are removed |
 
@@ -450,6 +452,7 @@ restic -r /path/to/backup restore latest --target ~/restored
 | --- | --- | --- |
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 | Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
+| Cache location | rustic's own default (`~/.cache/rustic`) | Another folder, or no local cache at all, for every repository this computer opens |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in

@@ -42,7 +42,11 @@ impl Plan {
     pub fn new(profile: &Profile, state: &RunState, now: i64) -> Self {
         let interval = CHECK_INTERVAL.as_secs() as i64;
         Self {
-            forget: profile.retention.keep_rules(),
+            // rustic itself refuses both on an append-only repository; not
+            // attempting them here avoids a failure logged every run.
+            forget: (!profile.append_only)
+                .then(|| profile.retention.keep_rules())
+                .flatten(),
             check: state.last_check.is_none_or(|last| now - last >= interval),
             prune: profile.prune_enabled(),
         }

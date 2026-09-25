@@ -38,6 +38,9 @@ pub enum Operation {
     SetPinned,
     /// Forget snapshots under the retention rules, then prune if asked.
     Maintain,
+    /// Add a key for the new password, then remove the one the repository
+    /// was opened with: see [`crate::engine::Repo::change_password`].
+    ChangePassword,
 }
 
 impl Operation {
@@ -49,6 +52,7 @@ impl Operation {
             Self::DeleteSnapshots => "delete-snapshots",
             Self::SetPinned => "set-pinned",
             Self::Maintain => "maintain",
+            Self::ChangePassword => "change-password",
         }
     }
 
@@ -60,6 +64,7 @@ impl Operation {
             Self::DeleteSnapshots,
             Self::SetPinned,
             Self::Maintain,
+            Self::ChangePassword,
         ]
         .into_iter()
         .find(|op| op.as_arg() == arg)
@@ -96,6 +101,9 @@ pub struct Job {
     /// For `maintain`: prune after forgetting.
     #[serde(default)]
     pub prune: bool,
+    /// For `change-password`.
+    #[serde(default)]
+    pub new_password: Option<Secret>,
 }
 
 impl Job {
@@ -113,6 +121,7 @@ impl Job {
             pinned: None,
             keep: None,
             prune: false,
+            new_password: None,
         }
     }
 }
@@ -266,12 +275,21 @@ pub fn run(
                 ..Outcome::default()
             })
         }
+        Operation::ChangePassword => {
+            let new_password = job.new_password.ok_or_else(|| missing("new password"))?;
+            repo.change_password(new_password.expose())
+                .map(|()| Outcome::default())
+        }
     }
 }
 
 /// Entry point for `stellarshot --run <operation>`. `args` are the arguments
 /// after `--run`.
 pub fn main(args: &[String]) -> ExitCode {
+    // Applies the cache location preference to every repository this
+    // process opens; the rest of the app's settings go unused here.
+    let _ = crate::app::config::StellarshotConfig::config();
+
     let Some(operation) = args.first().and_then(|arg| Operation::from_arg(arg)) else {
         eprintln!(
             "usage: stellarshot --run <backup|restore|check|delete-snapshots|maintain> < job.json"

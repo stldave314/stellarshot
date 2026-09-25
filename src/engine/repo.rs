@@ -61,6 +61,10 @@ pub enum Location {
         #[serde(default)]
         bandwidth_limit: String,
     },
+    /// A repository on a rest-server or rustic-server, reached directly
+    /// (not through rclone). `url` is the full server URL including the
+    /// repository name and any HTTP basic auth (`http://user:pass@host:port/repo/`).
+    Rest { url: String },
 }
 
 impl Location {
@@ -97,15 +101,17 @@ impl Location {
     pub fn local_path(&self) -> Option<&Path> {
         match self {
             Self::Local { path } => Some(path),
-            Self::Rclone { .. } => None,
+            Self::Rclone { .. } | Self::Rest { .. } => None,
         }
     }
 
-    /// How the location reads in messages.
+    /// How the location reads in messages. Never includes a REST URL's own
+    /// embedded credentials, if it has any.
     pub fn describe(&self) -> String {
         match self {
             Self::Local { path } => path.display().to_string(),
             Self::Rclone { remote, path, .. } => super::rclone::target(remote, path),
+            Self::Rest { url } => redact_url(url),
         }
     }
 
@@ -117,6 +123,7 @@ impl Location {
             Self::Rclone { remote, path, .. } => {
                 Sha256::digest(super::rclone::target(remote, path).as_bytes())
             }
+            Self::Rest { url } => Sha256::digest(url.as_bytes()),
         };
         digest[..8]
             .iter()
@@ -163,6 +170,7 @@ impl Location {
                     .repository(format!("rclone:{}", super::rclone::target(remote, path)))
                     .options(options))
             }
+            Self::Rest { url } => Ok(BackendOptions::default().repository(format!("rest:{url}"))),
         }
     }
 
@@ -183,6 +191,21 @@ impl Location {
             ))
         }
     }
+}
+
+/// `url` with any embedded HTTP basic auth (`user:pass@`) removed, for
+/// showing in messages and logs. Returned unchanged if it does not parse as
+/// a URL at all, rather than hiding a typo.
+fn redact_url(url: &str) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_owned();
+    };
+    if parsed.username().is_empty() && parsed.password().is_none() {
+        return url.to_owned();
+    }
+    let _ = parsed.set_username("");
+    let _ = parsed.set_password(None);
+    parsed.to_string()
 }
 
 /// What a location holds, before anything is created or opened there.
@@ -211,6 +234,17 @@ pub fn probe(location: &Location) -> Result<Probe, EngineError> {
             config,
             ..
         } => super::rclone::probe(config, remote, path),
+        // No generic way to list a REST server path's contents the way a
+        // filesystem walk or `rclone lsf` does, so "holds other files, not
+        // a repository" is not distinguished here: only whether a `config`
+        // file already exists.
+        Location::Rest { .. } => {
+            let bars = SinkBars::default();
+            match unopened(location, &bars)?.config_id()? {
+                Some(_) => Ok(Probe::Repository),
+                None => Ok(Probe::Empty),
+            }
+        }
     }
 }
 
@@ -228,6 +262,15 @@ pub fn delete_repository(location: &Location) -> Result<(), EngineError> {
             config,
             ..
         } => super::rclone::delete_repository(config, remote, path),
+        // Deleting only the repository's own entries, never anything else
+        // at that path, needs a generic directory listing; rustic_core
+        // exposes no public API for that against a REST server. "Remove
+        // from Stellarshot" (forgetting it here, leaving the data) still
+        // works; only wiping it from here does not.
+        Location::Rest { .. } => Err(EngineError::new(
+            ErrorKind::Internal,
+            "Stellarshot cannot delete a REST server repository's data; remove it on the server, or use Remove from Stellarshot to forget it here",
+        )),
     }
 }
 
@@ -255,6 +298,13 @@ impl Repo {
     pub(crate) fn report_to(&self, sink: Arc<dyn ProgressSink>) -> SlotGuard {
         self.bars.slot.attach(sink)
     }
+
+    /// Whether this repository is append-only: `forget` and `prune` refuse
+    /// to run against it, the same as rustic's own tools, rather than
+    /// failing against the server on every attempt.
+    pub fn is_append_only(&self) -> bool {
+        self.inner.config().append_only == Some(true)
+    }
 }
 
 fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, EngineError> {
@@ -264,8 +314,10 @@ fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, Engi
         let uploads = ParallelUploads::new(backends.repository(), bars.slot.clone());
         backends = RepositoryBackends::new(Arc::new(uploads), backends.repo_hot());
     }
+    let mut options = RepositoryOptions::default();
+    super::cache_settings::apply(&mut options);
     Ok(Repository::new_with_progress(
-        &RepositoryOptions::default(),
+        &options,
         &backends,
         bars.clone(),
     )?)
@@ -274,6 +326,20 @@ fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, Engi
 /// Create a repository. Refuses a location that already holds a repository or
 /// anything else.
 pub fn init(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
+    init_with(location, secret, false)
+}
+
+/// Create a repository, optionally in append-only mode from the start.
+///
+/// Append-only cannot be turned on later through this project's own tools:
+/// rustic's `config` command, the only way to change it, itself stops
+/// working once it is set (append-only commands are all that work any
+/// longer), so it can only be chosen here, at creation.
+pub fn init_with(
+    location: &Location,
+    secret: &Secret,
+    append_only: bool,
+) -> Result<Repo, EngineError> {
     match probe(location)? {
         Probe::NotEmpty => {
             return Err(EngineError::new(
@@ -289,12 +355,21 @@ pub fn init(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
         }
         Probe::Empty => {}
     }
-    debug_log!(ENGINE, "init {}", location.describe());
+    debug_log!(
+        ENGINE,
+        "init {} (append-only: {append_only})",
+        location.describe()
+    );
     let bars = SinkBars::default();
+    let config = if append_only {
+        ConfigOptions::default().set_append_only(true)
+    } else {
+        ConfigOptions::default()
+    };
     let inner = unopened(location, &bars)?.init(
         &Credentials::password(secret.expose()),
         &KeyOptions::default(),
-        &ConfigOptions::default(),
+        &config,
     )?;
     Ok(Repo {
         location: location.clone(),

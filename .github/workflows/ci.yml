@@ -36,6 +36,12 @@ jobs:
         with:
           tool: cargo-deb,cargo-generate-rpm
 
+      # tests/rest_server.rs needs a real rustic-server; no prebuilt binary
+      # is published, so this builds it from source like any other tool
+      # this project tests against for real rather than mocking.
+      - name: Install rustic-server
+        run: cargo install rustic_server
+
       - name: Check formatting
         run: cargo fmt --all --check
 

@@ -3,10 +3,13 @@
 //! Exporting and importing Stellarshot's own settings: every backup and its
 //! history, never a password.
 //!
-//! A [`Profile`] never holds a password — it lives in the keyring, or
-//! nowhere — so there is nothing to leave out there. An event's detail text
-//! (`event_log::EventKind::Failed`) is the same wording already shown in a
-//! dialog or a notification; exporting it exposes nothing new.
+//! A [`Profile`] never holds a password itself — it lives in the keyring,
+//! or nowhere. `password_command`, a command that prints one, is the one
+//! field that comes close: `Export::collect` clears it, the same as if it
+//! were a password, since an export is more likely to be shared or copied
+//! somewhere less careful than the settings themselves. An event's detail
+//! text (`event_log::EventKind::Failed`) is the same wording already shown
+//! in a dialog or a notification; exporting it exposes nothing new.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,9 +38,17 @@ impl Export {
             .map(|profile| (profile.id.clone(), event_log::load(&profile.id)))
             .filter(|(_, events)| !events.is_empty())
             .collect();
+        let profiles = profiles
+            .iter()
+            .cloned()
+            .map(|mut profile| {
+                profile.password_command.clear();
+                profile
+            })
+            .collect();
         Self {
             version: VERSION,
-            profiles: profiles.to_vec(),
+            profiles,
             history,
         }
     }

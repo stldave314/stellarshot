@@ -2,6 +2,8 @@
 
 //! Stellarshot's settings, stored through `cosmic-config`.
 
+use std::path::PathBuf;
+
 use cosmic::{
     cosmic_config::{self, Config, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry},
     theme,
@@ -24,6 +26,13 @@ pub struct StellarshotConfig {
     /// Glob patterns left out of every backup, such as `node_modules` or
     /// Rust's `target`, set once instead of on each profile.
     pub global_exclude_patterns: Vec<String>,
+    /// Use this folder instead of rustic's own default cache location
+    /// (`~/.cache/rustic`), for every repository. Ignored when `no_cache`
+    /// is on.
+    pub cache_dir: Option<PathBuf>,
+    /// Do not cache repository index data locally at all: slower, but
+    /// nothing worth keeping on a machine low on disk space.
+    pub no_cache: bool,
 }
 
 impl StellarshotConfig {
@@ -32,7 +41,7 @@ impl StellarshotConfig {
     }
 
     pub fn config() -> StellarshotConfig {
-        match Self::config_handler() {
+        let config = match Self::config_handler() {
             Some(config_handler) => {
                 StellarshotConfig::get_entry(&config_handler).unwrap_or_else(|(errs, config)| {
                     debug_log!(CONFIG, "errors loading config: {errs:?}");
@@ -40,7 +49,9 @@ impl StellarshotConfig {
                 })
             }
             None => StellarshotConfig::default(),
-        }
+        };
+        crate::engine::cache_settings::set(config.cache_dir.clone(), config.no_cache);
+        config
     }
 
     pub fn profile(&self, id: &str) -> Option<&Profile> {

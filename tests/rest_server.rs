@@ -13,11 +13,21 @@
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use stellarshot::engine::{self, BackupRequest, Location, NoProgress, Secret};
 use tempfile::TempDir;
+
+/// The Rust test harness runs every test function in this file on its own
+/// thread by default, which means two or three real `rustic-server`
+/// processes competing for the CPU at once on a constrained machine. Locally
+/// that never mattered; in CI it was the actual cause of the `Connect`
+/// errors these tests kept failing with — confirmed by watching every one
+/// of a 3-attempt retry fail identically, which a genuine one-off race would
+/// not do. Held for a whole test's real work, so only one `rustic-server` is
+/// ever alive at a time.
+static ONLY_ONE_SERVER_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 fn require_rustic_server() {
     assert!(
@@ -131,6 +141,9 @@ fn secret() -> Secret {
 /// same production code, unmodified, against a real server; a location that
 /// is not actually reachable at all still fails every attempt and panics.
 fn retrying(repo_name: &str, scenario: impl Fn(&Path, u16)) {
+    let _guard = ONLY_ONE_SERVER_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut last = None;
     for attempt in 0..3 {
         let scratch = TempDir::new().unwrap();
@@ -153,10 +166,17 @@ fn retrying(repo_name: &str, scenario: impl Fn(&Path, u16)) {
 #[ignore = "flaky against a local rustic-server: a backup's later requests \
             (writing keys/) intermittently fail with a connection error \
             rather than an HTTP status, even once the server is confirmed \
-            actually serving requests; not yet root-caused. init, probe and \
-            delete-refusal above are not affected and run normally"]
+            actually serving requests, and even alone under \
+            ONLY_ONE_SERVER_AT_A_TIME (which fixed the same shape of \
+            failure in probe_finds_an_empty_location_then_the_repository_once_created \
+            and deleting_a_rest_repository_is_refused_rather_than_attempted, \
+            both caused by CPU contention between concurrent rustic-server \
+            processes in CI); not yet root-caused further"]
 fn backup_and_restore_round_trip_through_a_rest_server() {
     require_rustic_server();
+    let _guard = ONLY_ONE_SERVER_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let scratch = TempDir::new().unwrap();
     let server = spawn_server(&scratch.path().join("data"), "test-repo");
     let location = Location::Rest {

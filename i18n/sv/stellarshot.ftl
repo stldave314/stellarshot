@@ -500,6 +500,11 @@ place-advanced = Avancerat
 place-bandwidth-limit = Bandbreddsgräns
 place-bandwidth-limit-description = Begränsar hur snabbt den här säkerhetskopian laddar upp och ner, i rclones egen syntax (1M, eller 8M:2M för uppladdning:nedladdning). Tomt för ingen gräns.
 place-bandwidth-limit-placeholder = t.ex. 1M
+
+# Panel applet
+applet-tooltip = Stellarshot
+applet-none = Ingen säkerhetskopiering är inställd ännu.
+applet-open = Öppna Stellarshot
 wizard-exclude-caches = Utelämna cachemappar
 wizard-exclude-caches-description = Hoppa över mappar som märker sig själva som utbytbar cachedata med en CACHEDIR.TAG-fil.
 wizard-git-ignore = Följ .gitignore

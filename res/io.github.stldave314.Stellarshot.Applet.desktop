@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Stellarshot
+Comment=Whether a backup is running, and when each last succeeded
+Exec=stellarshot-applet
+Terminal=false
+Type=Application
+StartupNotify=true
+Icon=io.github.stldave314.Stellarshot-symbolic
+Categories=Utility;
+Keywords=COSMIC;Applet;Backup;Backups;Snapshot;restic;rustic;
+NoDisplay=true
+X-CosmicApplet=true

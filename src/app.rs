@@ -22,6 +22,7 @@ use crate::app::key_bind::key_binds;
 use crate::app::pages::profile::{self, ProfileState};
 use crate::app::pages::restore::{self, RestorePage};
 use crate::app::wizard::{Mode, Wizard, place};
+use crate::constants::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::debug::{CONFIG, ENGINE, UI};
 use crate::engine::{self, EngineError, Secret};
 use crate::event_log;
@@ -32,6 +33,7 @@ use crate::schedule;
 use crate::settings_export;
 use crate::{debug_log, error_log, fl};
 
+pub mod applet;
 pub mod child;
 pub mod config;
 pub mod errors;
@@ -236,6 +238,16 @@ pub struct Flags {
     pub select: Option<String>,
     /// Open the restore page for the selected backup once it is unlocked.
     pub start_restore: bool,
+}
+
+/// Required to launch single-instance (see `Cargo.toml`'s comment on the
+/// `libcosmic` `single-instance` feature); Stellarshot has no subcommands
+/// or extra arguments of its own to forward to an already-running
+/// instance, only the flags already folded into [`Flags`] itself before
+/// this is ever consulted.
+impl cosmic::app::CosmicFlags for Flags {
+    type SubCommand = String;
+    type Args = Vec<String>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1632,6 +1644,37 @@ impl Application for App {
         &mut self.core
     }
 
+    /// Closing the window minimizes to the panel applet rather than
+    /// quitting: [`get_app_settings`] turns off the default
+    /// close-quits-the-app behavior, so this is reached instead. The
+    /// process (and any backup in progress) keeps running with no window
+    /// open; the applet, or launching `stellarshot` again, reopens it
+    /// through [`Self::dbus_activation`].
+    ///
+    /// [`get_app_settings`]: crate::app::settings::get_app_settings
+    fn on_close_requested(&self, _id: window::Id) -> Option<Self::Message> {
+        Some(Message::WindowClose)
+    }
+
+    /// Launching `stellarshot` again while this one is already running
+    /// (single-instance; see `Cargo.toml`'s comment on the `libcosmic`
+    /// `single-instance` feature) reaches this instead of a second window.
+    /// Reopens the window if it was closed to the panel, or brings it to
+    /// the front if it was merely behind something else.
+    fn dbus_activation(&mut self, _msg: cosmic::dbus_activation::Message) -> Task<Self::Message> {
+        match self.core.main_window_id() {
+            Some(id) => Task::batch([window::gain_focus(id), window::minimize(id, false)]),
+            None => {
+                let (id, open) = window::open(window::Settings {
+                    size: cosmic::iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT),
+                    ..window::Settings::default()
+                });
+                self.core.set_main_window_id(Some(id));
+                open.map(|_| cosmic::Action::App(Message::Noop))
+            }
+        }
+    }
+
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
         vec![menu::menu_bar(&self.key_binds)]
     }
@@ -2203,13 +2246,24 @@ impl Application for App {
             }
             Message::CloseContextDrawer => self.core.window.show_context = false,
             Message::WindowClose => {
-                if let Some(id) = self.core.main_window_id() {
+                // Cleared here, not left for a later close event, so
+                // `dbus_activation` sees "no window" right away rather than
+                // trying to focus one that is on its way out.
+                if let Some(id) = self.core.set_main_window_id(None) {
                     return window::close(id);
                 }
             }
             Message::WindowNew => match env::current_exe() {
                 Ok(exe) => {
-                    if let Err(err) = process::Command::new(&exe).spawn() {
+                    // Single-instance activation (see `Cargo.toml`'s comment
+                    // on the `libcosmic` `single-instance` feature) is what
+                    // lets the applet reopen a window closed to the panel,
+                    // but it would also swallow an explicit "new window"
+                    // into just refocusing this one. Opt this one launch out.
+                    if let Err(err) = process::Command::new(&exe)
+                        .env("COSMIC_SINGLE_INSTANCE", "false")
+                        .spawn()
+                    {
                         error_log!(UI, "failed to execute {exe:?}: {err}");
                     }
                 }

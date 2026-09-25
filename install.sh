@@ -27,6 +27,8 @@ DESTDIR="${DESTDIR:-}"
 
 APP_ID="io.github.stldave314.Stellarshot"
 BIN_APP="stellarshot"
+BIN_APPLET="stellarshot-applet"
+APPLET_ID="$APP_ID.Applet"
 DIST="dist"
 
 # Every packaging target passes this. It forces developer debug logging off at
@@ -57,7 +59,7 @@ cmd_build() {
     need cargo "install a Rust toolchain from https://rustup.rs"
     info "Building (features: $FEATURES)"
     cargo build --release --features "$FEATURES" ${CARGO_JOBS:+-j "$CARGO_JOBS"}
-    info "Built target/release/$BIN_APP"
+    info "Built target/release/$BIN_APP and target/release/$BIN_APPLET"
 }
 
 # Install into $1 (a staging root, possibly empty for a real install).
@@ -67,9 +69,12 @@ stage() {
     local runner=("${@:2}")
 
     "${runner[@]}" install -Dm755 "target/release/$BIN_APP"    "$root$PREFIX/bin/$BIN_APP"
+    "${runner[@]}" install -Dm755 "target/release/$BIN_APPLET" "$root$PREFIX/bin/$BIN_APPLET"
 
     "${runner[@]}" install -Dm644 "res/$APP_ID.desktop" \
         "$root$PREFIX/share/applications/$APP_ID.desktop"
+    "${runner[@]}" install -Dm644 "res/$APPLET_ID.desktop" \
+        "$root$PREFIX/share/applications/$APPLET_ID.desktop"
 
     "${runner[@]}" install -Dm644 "res/icons/hicolor/scalable/apps/$APP_ID.svg" \
         "$root$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg"
@@ -112,7 +117,9 @@ cmd_uninstall() {
     info "Removing installed files from $PREFIX"
     as_root rm -f \
         "$PREFIX/bin/$BIN_APP" \
+        "$PREFIX/bin/$BIN_APPLET" \
         "$PREFIX/share/applications/$APP_ID.desktop" \
+        "$PREFIX/share/applications/$APPLET_ID.desktop" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID-symbolic.svg" \
         "$PREFIX/share/metainfo/$APP_ID.metainfo.xml"

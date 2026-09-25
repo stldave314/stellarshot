@@ -26,7 +26,7 @@ fn main() -> ExitCode {
         .position(|arg| arg == "--profile")
         .and_then(|index| args.get(index + 1))
         .cloned();
-    match cosmic::app::run::<App>(settings, flags) {
+    match cosmic::app::run_single_instance::<App>(settings, flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("stellarshot: {err}");

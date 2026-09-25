@@ -500,6 +500,11 @@ place-advanced = Erwiteret
 place-bandwidth-limit = Bandbreiti-Limit
 place-bandwidth-limit-description = Begrenzt, wie schnell die Sicherig uf- und abeladed, i rclone sinere eigete Syntax (1M, oder 8M:2M für Uflade:Abelade). Leer für kes Limit.
 place-bandwidth-limit-placeholder = z. B. 1M
+
+# Panel applet
+applet-tooltip = Stellarshot
+applet-none = Es isch na kei Sicherig igrichtet.
+applet-open = Stellarshot öffne
 wizard-exclude-caches = Cache-Ordner uslah
 wizard-exclude-caches-description = Ordner überspringe, wo sich mit re CACHEDIR.TAG-Datei als temporäri Cache-Date kennzeichnet.
 wizard-git-ignore = .gitignore beachte

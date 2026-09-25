@@ -63,6 +63,9 @@ pub fn get_app_settings() -> Settings {
         )
         .size(Size::new(WINDOW_WIDTH, WINDOW_HEIGHT))
         .debug(false)
+        // Closing the window minimizes to the panel applet rather than
+        // quitting: see `App::on_close_requested` and `App::dbus_activation`.
+        .exit_on_close(false)
 }
 
 /// Where rustic's and rclone's own diagnostics go, in addition to stderr.

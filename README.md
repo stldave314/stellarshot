@@ -355,6 +355,8 @@ space if that is turned on.
   shortly after you log in.
 - **An unplugged drive or no network** is not an error: the run is skipped and
   the next slot tries again. The page shows how long ago the last backup was.
+- **A laptop condition that is not met** (on battery, a metered connection, an
+  untrusted network) is skipped the same quiet way.
 - **A real failure** (a password that is no longer remembered, a full disk)
   raises a notification. Clicking it opens the backup, which shows what went
   wrong and a button to try again. The sidebar marks the backup with a
@@ -366,6 +368,19 @@ space if that is turned on.
 
 Only one thing writes to a backup at a time: if you press **Back Up Now**
 while a scheduled backup is running, you are told it is busy.
+
+### The panel applet
+
+Add **Stellarshot** from COSMIC Settings' panel applet list for a status icon:
+plain when everything is fine, a sync icon while a backup (scheduled or
+started from the window) is running, and a warning icon if one has failed or
+fallen overdue. Its popup lists every backup with when each last succeeded,
+and an **Open Stellarshot** button.
+
+Closing the window minimizes it to the panel rather than quitting — the
+process, and any backup in progress, keeps running. Opening Stellarshot again,
+from the applet or the launcher, brings the same window back rather than
+starting a second one.
 
 ### How "Smart" decides what to keep
 
@@ -433,18 +448,19 @@ next to it keeps one however old it gets, until unpinned.
 | <kbd>Ctrl</kbd>+<kbd>B</kbd> | Back up the selected backup now |
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Ctrl</kbd>+<kbd>I</kbd> | About |
-| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | New window |
-| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | New window — a genuinely separate one, not just refocusing this one |
+| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel; see [The panel applet](#the-panel-applet)) |
 
 ### Command line
 
 | Command | Effect |
 | --- | --- |
-| `stellarshot` | Open the window |
+| `stellarshot` | Open the window, or bring an already-running one to the front |
 | `stellarshot --new-backup` | Open the window straight into the setup wizard (the launcher's **New Backup** action) |
 | `stellarshot --restore` | Open the selected backup's restore page as soon as it is unlocked (the launcher's **Restore Files** action) |
 | `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
 | `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable or a laptop condition is not met |
+| `stellarshot-applet` | The panel applet; run by the panel itself, not normally launched directly |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
 ### Reading your backups without Stellarshot
@@ -654,6 +670,10 @@ written to stderr too.
   rclone  ── SSH servers and cloud storage, with Stellarshot's own rclone.conf
   timers  ── systemd user timers run `stellarshot --scheduled <id>`, which
              backs up through the same runner as the window's child process
+  applet  ── stellarshot-applet, a separate process the panel runs. Reads
+             each backup's status straight off disk (run history, and
+             whether something holds its repository's lock), the same way
+             the window itself does; no D-Bus link to the window at all
 ```
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
@@ -681,10 +701,13 @@ running as you can read.
 | `engine::maintenance` | Checks, forgetting by retention rules (this computer's snapshots only) and pruning |
 | `schedule` | Writing, enabling and removing each scheduled backup's systemd timer, and keeping them in line with the settings |
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
+| `conditions` | Whether a laptop's power, battery and network state satisfy a scheduled backup's conditions; reading the real state (UPower, NetworkManager) and deciding are kept apart |
 | `run_state` | What happened when each backup last ran on its own, in cosmic-config's state store |
+| `status` | Each backup's status from what any process can see on disk: run history, and whether its repository lock is currently held. Shared by the window (a run it did not itself start) and the applet |
 | `notify` | Desktop notifications, and opening the backup when one is clicked |
 | `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
 | `app` | The window: sidebar, menus, dialogs, settings |
+| `app::applet` | The panel applet: `stellarshot-applet`'s own window, sharing the library but nothing else with the main window |
 | `app::pages` | The first-launch screen, each backup's page, and the restore page |
 | `app::wizard` | The setup wizard's steps and validation; `place` is the "where" step |
 | `app::tasks` | Engine calls off the UI thread, the folder chooser, the estimate as a stream |

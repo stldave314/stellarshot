@@ -60,6 +60,16 @@ pub fn acquire_in(dir: &Path, location: &Location) -> Result<WriteLock, EngineEr
     }
 }
 
+/// Whether some process currently holds the write lock for `location`: a
+/// backup running from a schedule, or another window, that this process did
+/// not itself start. Never blocks; an unlocked repository returns `false`
+/// at once, and any other error (the lock directory could not even be
+/// created) is treated the same way, since this is a status display, not a
+/// guard against writing.
+pub fn is_running(location: &Location) -> bool {
+    matches!(acquire(location), Err(err) if err.kind == ErrorKind::Locked)
+}
+
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
@@ -91,5 +101,25 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let _a = acquire_in(dir.path(), &Location::local("/backups/a")).unwrap();
         let _b = acquire_in(dir.path(), &Location::local("/backups/b")).unwrap();
+    }
+
+    #[test]
+    fn is_running_reflects_a_real_held_lock_without_taking_it_over() {
+        let dir = TempDir::new().unwrap();
+        let location = Location::local("/backups/home");
+        assert!(
+            !is_running_in(dir.path(), &location),
+            "nothing holds it yet"
+        );
+
+        let held = acquire_in(dir.path(), &location).unwrap();
+        assert!(is_running_in(dir.path(), &location));
+
+        drop(held);
+        assert!(!is_running_in(dir.path(), &location), "released on drop");
+    }
+
+    fn is_running_in(dir: &Path, location: &Location) -> bool {
+        matches!(acquire_in(dir, location), Err(err) if err.kind == ErrorKind::Locked)
     }
 }

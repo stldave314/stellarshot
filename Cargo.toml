@@ -19,6 +19,10 @@ path = "src/lib.rs"
 name = "stellarshot"
 path = "src/main.rs"
 
+[[bin]]
+name = "stellarshot-applet"
+path = "src/bin/applet.rs"
+
 [features]
 default = []
 # Forces developer debug logging off at compile time. Every packaging target
@@ -84,7 +88,25 @@ atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
-features = ["a11y", "about", "dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit", "xdg-portal"]
+# "applet" is only used by the stellarshot-applet binary, not the window;
+# there is no per-binary feature selection in Cargo, so it is built into
+# the same feature set. "single-instance" is the window's own: launching it
+# again while it is already running (from the applet, or a second launcher
+# click) raises the existing window instead of opening a second one, which
+# "minimize to panel" depends on to be worth anything.
+features = [
+    "a11y",
+    "about",
+    "applet",
+    "dbus-config",
+    "multi-window",
+    "single-instance",
+    "tokio",
+    "wayland",
+    "wgpu",
+    "winit",
+    "xdg-portal",
+]
 
 [dependencies.i18n-embed]
 version = "0.16"
@@ -118,7 +140,9 @@ depends = "$auto"
 recommends = "rclone"
 assets = [
     ["target/release/stellarshot", "usr/bin/", "755"],
+    ["target/release/stellarshot-applet", "usr/bin/", "755"],
     ["res/io.github.stldave314.Stellarshot.desktop", "usr/share/applications/", "644"],
+    ["res/io.github.stldave314.Stellarshot.Applet.desktop", "usr/share/applications/", "644"],
     ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["res/io.github.stldave314.Stellarshot.metainfo.xml", "usr/share/metainfo/", "644"],
@@ -131,7 +155,9 @@ license = "GPL-3.0-only"
 recommends = { rclone = "*" }
 assets = [
     { source = "target/release/stellarshot", dest = "/usr/bin/stellarshot", mode = "755" },
+    { source = "target/release/stellarshot-applet", dest = "/usr/bin/stellarshot-applet", mode = "755" },
     { source = "res/io.github.stldave314.Stellarshot.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.desktop", mode = "644" },
+    { source = "res/io.github.stldave314.Stellarshot.Applet.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.Applet.desktop", mode = "644" },
     { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", mode = "644" },
     { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", mode = "644" },
     { source = "res/io.github.stldave314.Stellarshot.metainfo.xml", dest = "/usr/share/metainfo/io.github.stldave314.Stellarshot.metainfo.xml", mode = "644" },

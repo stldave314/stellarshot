@@ -468,9 +468,19 @@ A new backup engine behind one module, on the current rustic release.
 - [ ] **Bit-rot warnings**: an occasional full read (rustic's backup `force`)
       and a comparison with the previous snapshot; a file with the same date
       and size but different content points at a failing disk
-- [ ] **A COSMIC applet**, optional and addable from the app or COSMIC
-      Settings: running backups, last backup, errors, live through a D-Bus
-      bridge to the app. It also covers "minimize to the panel"
+- [x] **A COSMIC applet**, addable from COSMIC Settings' panel applet list:
+      a status icon (idle, running, or needing attention) with a popup
+      listing each backup's status and an Open Stellarshot button. Deliberately
+      read-only — it does not start a backup or talk to the window over
+      D-Bus at all, since everything it shows (each backup's run history,
+      and whether something currently holds its repository's write lock)
+      is already readable from disk by any process, the same way the
+      window itself reads it; `crate::status` is shared by both. It also
+      covers "minimize to the panel": closing the window now hides it
+      rather than quitting, through libcosmic's own single-instance
+      D-Bus activation — launching `stellarshot` again (from the applet,
+      or a second launcher click) reopens or refocuses the same window
+      rather than starting a second one
 
 ## 1.0 — Hardening
 

@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network or a VPN. A scheduled run that finds a condition unmet is skipped
   quietly, the same way an unreachable destination already was; the next
   slot tries again.
+- **A COSMIC panel applet** (`stellarshot-applet`), addable from COSMIC
+  Settings: a status icon and a popup with each backup's status and an
+  Open Stellarshot button. Closing the main window now minimizes it to the
+  panel instead of quitting; launching Stellarshot again reopens the same
+  window rather than a second one.
 
 ### Fixed
 

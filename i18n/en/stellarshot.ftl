@@ -526,3 +526,8 @@ place-advanced = Advanced
 place-bandwidth-limit = Bandwidth limit
 place-bandwidth-limit-description = Limit how fast this backup uploads and downloads, in rclone's own syntax (1M, or 8M:2M for upload:download). Empty for no limit.
 place-bandwidth-limit-placeholder = e.g. 1M
+
+# Panel applet
+applet-tooltip = Stellarshot
+applet-none = No backups are set up yet.
+applet-open = Open Stellarshot

@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LOG_PATH=$(grep -oP 'pub const PATH: &str = "\K[^"]+' src/debug.rs)
-BIN=stellarshot
+BINS=(stellarshot stellarshot-applet)
 
 if [[ -z "$LOG_PATH" ]]; then
     echo "FAIL: could not find the debug log PATH constant in src/debug.rs" >&2
@@ -48,31 +48,33 @@ trap 'restore; rm -f "$symbols"' EXIT
 # the pipeline reports failure even though the string was found — which would
 # invert both results below. Dump to a file and grep that instead.
 contains_log_path() {
-    strings "target/debug/$BIN" > "$symbols"
+    strings "target/debug/$1" > "$symbols"
     grep -qF "$LOG_PATH" "$symbols"
 }
 
-echo
-echo "== Building WITHOUT release-build (logging should be present) =="
-cargo build --quiet --bin "$BIN"
-if contains_log_path; then
-    echo "PASS: the log path is present, so this check can detect its absence"
-else
-    echo "FAIL: the log path is absent even with logging enabled."
-    echo "      This check cannot prove anything in that state — it would report"
-    echo "      success no matter what the feature flag did."
-    fail=1
-fi
+for bin in "${BINS[@]}"; do
+    echo
+    echo "== $bin: building WITHOUT release-build (logging should be present) =="
+    cargo build --quiet --bin "$bin"
+    if contains_log_path "$bin"; then
+        echo "PASS: the log path is present, so this check can detect its absence"
+    else
+        echo "FAIL: the log path is absent even with logging enabled."
+        echo "      This check cannot prove anything in that state — it would report"
+        echo "      success no matter what the feature flag did."
+        fail=1
+    fi
 
-echo
-echo "== Building WITH release-build (logging must be stripped) =="
-cargo build --quiet --bin "$BIN" --features release-build
-if contains_log_path; then
-    echo "FAIL: the log path is still in the binary; debug logging was not stripped"
-    fail=1
-else
-    echo "PASS: the log path is gone; the optimizer removed the logging code"
-fi
+    echo
+    echo "== $bin: building WITH release-build (logging must be stripped) =="
+    cargo build --quiet --bin "$bin" --features release-build
+    if contains_log_path "$bin"; then
+        echo "FAIL: the log path is still in the binary; debug logging was not stripped"
+        fail=1
+    else
+        echo "PASS: the log path is gone; the optimizer removed the logging code"
+    fi
+done
 
 echo
 if [[ $fail -ne 0 ]]; then

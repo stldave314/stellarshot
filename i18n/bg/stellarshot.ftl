@@ -500,6 +500,11 @@ place-advanced = Разширени
 place-bandwidth-limit = Ограничение на честотната лента
 place-bandwidth-limit-description = Ограничава колко бързо това резервно копие качва и изтегля, в собствения синтаксис на rclone (1M, или 8M:2M за качване:изтегляне). Празно за без ограничение.
 place-bandwidth-limit-placeholder = напр. 1M
+
+# Panel applet
+applet-tooltip = Stellarshot
+applet-none = Все още няма настроено архивиране.
+applet-open = Отваряне на Stellarshot
 wizard-exclude-caches = Пропускане на папки за кеш
 wizard-exclude-caches-description = Пропускане на всяка папка, която се обозначава като временни кеш данни с файл CACHEDIR.TAG.
 wizard-git-ignore = Спазване на .gitignore

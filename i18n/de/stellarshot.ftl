@@ -500,6 +500,11 @@ place-advanced = Erweitert
 place-bandwidth-limit = Bandbreitenbegrenzung
 place-bandwidth-limit-description = Begrenzt, wie schnell diese Sicherung hoch- und herunterlädt, in rclones eigener Syntax (1M, oder 8M:2M für Hochladen:Herunterladen). Leer für kein Limit.
 place-bandwidth-limit-placeholder = z. B. 1M
+
+# Panel applet
+applet-tooltip = Stellarshot
+applet-none = Es ist noch keine Sicherung eingerichtet.
+applet-open = Stellarshot öffnen
 wizard-exclude-caches = Cache-Ordner auslassen
 wizard-exclude-caches-description = Ordner überspringen, die sich mit einer CACHEDIR.TAG-Datei als temporäre Cache-Daten kennzeichnen.
 wizard-git-ignore = .gitignore beachten

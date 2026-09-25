@@ -98,7 +98,7 @@ impl ExclusionBreakdown {
 /// Walk `request`'s sources without its exclusions, sizing each of
 /// `folders` on the way. With [`estimate`]'s total, this gives the
 /// arithmetic the setup shows: "45 GB − 12 GB excluded = 33 GB". `Ok(None)`
-/// if cancelled.
+/// if canceled.
 pub fn exclusion_breakdown(
     request: &BackupRequest,
     folders: &[PathBuf],
@@ -148,7 +148,7 @@ fn canonical(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 /// Visit every file the backup of `request` would read, with its size, the
 /// way the backup reads them: rustic's own `LocalSource`, built from the
-/// same options. Returns `false` if cancelled.
+/// same options. Returns `false` if canceled.
 fn walk(
     request: &BackupRequest,
     cancel: &AtomicBool,

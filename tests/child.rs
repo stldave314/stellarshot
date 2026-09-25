@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! The window's side of the `--run` protocol: spawning the child, streaming
-//! its events, and cancelling it.
+//! its events, and canceling it.
 
 use std::path::PathBuf;
 
@@ -102,8 +102,8 @@ fn cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot() {
     });
 
     match events.last() {
-        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, ErrorKind::Cancelled),
-        other => panic!("expected the backup to end cancelled, got {other:?}"),
+        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, ErrorKind::Canceled),
+        other => panic!("expected the backup to end canceled, got {other:?}"),
     }
     let snapshots = engine::open(&location, &Secret::new(PASSWORD))
         .unwrap()
@@ -111,7 +111,7 @@ fn cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot() {
         .unwrap();
     assert!(
         snapshots.is_empty(),
-        "a cancelled backup must not leave a snapshot"
+        "a canceled backup must not leave a snapshot"
     );
 }
 

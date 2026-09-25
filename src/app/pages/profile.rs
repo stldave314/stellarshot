@@ -545,7 +545,7 @@ impl ProfileState {
                 effects
             }
             Ok(_) => Vec::new(),
-            Err(error) if error.kind == ErrorKind::Cancelled => {
+            Err(error) if error.kind == ErrorKind::Canceled => {
                 vec![Effect::ShowError(fl!("snapshot-failed"), error)]
             }
             Err(error) => vec![
@@ -1369,16 +1369,13 @@ mod tests {
         state.back_up(&profile());
 
         let effects = state.update(
-            Message::Backup(ChildEvent::Ended(EngineError::new(
-                ErrorKind::Cancelled,
-                "",
-            ))),
+            Message::Backup(ChildEvent::Ended(EngineError::new(ErrorKind::Canceled, ""))),
             &profile(),
         );
 
         assert!(!state.is_busy());
         assert!(
-            matches!(effects.as_slice(), [Effect::ShowError(_, err)] if err.kind == ErrorKind::Cancelled)
+            matches!(effects.as_slice(), [Effect::ShowError(_, err)] if err.kind == ErrorKind::Canceled)
         );
     }
 

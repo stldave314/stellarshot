@@ -1,7 +1,7 @@
 # M3: Storage locations and Déjà Dup import, implementation plan
 
 **Goal:** Back up to more than a local folder:
-- **USB drives**, recognised by their filesystem UUID wherever they're mounted.
+- **USB drives**, recognized by their filesystem UUID wherever they're mounted.
 - **SFTP servers.**
 - **Google Drive**, with the sign-in done inside Stellarshot.
 - **Any rclone remote** the user already has.

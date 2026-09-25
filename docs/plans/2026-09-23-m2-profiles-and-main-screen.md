@@ -22,10 +22,10 @@ The M0 and M1 constraints still apply. In addition:
 
 ## Deviations from the spec, decided here
 
-- **The wizard has three steps in M2 (what, where, secure).** "When" arrives with M5, where schedules and retention actually run. A schedule the app can't yet honour would be a setting that lies. Profiles store `schedule: Manual` and `retention: KeepForever` until then.
+- **The wizard has three steps in M2 (what, where, secure).** "When" arrives with M5, where schedules and retention actually run. A schedule the app can't yet honor would be a setting that lies. Profiles store `schedule: Manual` and `retention: KeepForever` until then.
 - **Local folders only.** Removable drives, SFTP and cloud storage are M3.
 - **Restore…** isn't shown on the status card until M4 provides it.
-- **The estimate restarts when the lists change instead of debouncing.** The previous scan is cancelled at once through its flag, which is simpler, and just as cheap, as a timer.
+- **The estimate restarts when the lists change instead of debouncing.** The previous scan is canceled at once through its flag, which is simpler, and just as cheap, as a timer.
 
 ## Review focus
 
@@ -58,7 +58,7 @@ pub struct SizeEstimate { pub files: u64, pub bytes: u64 }
 pub fn estimate(request: &BackupRequest, cancel: &AtomicBool, progress: &mut dyn FnMut(SizeEstimate)) -> Result<Option<SizeEstimate>, EngineError>;
 pub fn folder_size(path: &Path, cancel: &AtomicBool) -> Option<u64>;
 ```
-Hard links are counted once by (device, inode). `None` means cancelled. Tests: `estimate_matches_the_backup` and `estimate_respects_cancel`.
+Hard links are counted once by (device, inode). `None` means canceled. Tests: `estimate_matches_the_backup` and `estimate_respects_cancel`.
 
 ### Task 4: Keyring (`src/keyring.rs`)
 `store(profile, name, secret)`, `load(profile) -> Option<Secret>`, `forget(profile)`, all async. Test `tests/keyring.rs::keyring_round_trip` fails, not skips, when no Secret Service answers. CI runs it inside `dbus-run-session` with an unlocked gnome-keyring.
@@ -74,7 +74,7 @@ Hard links are counted once by (device, inode). `None` means cancelled. Tests: `
 ### Task 6: Wizard (`src/app/wizard.rs`)
 - **What:**
   - Include and exclude rows with sizes; "Add folders…" uses `open_folders()`.
-  - An exclude outside every include is labelled.
+  - An exclude outside every include is labeled.
   - Patterns go under Advanced.
   - The live estimate uses the total from Task 3.
 - **Where:** "Choose folder…", then `probe`. Empty means create, Repository means open, NotEmpty means refuse.

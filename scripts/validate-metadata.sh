@@ -7,7 +7,7 @@
 # `|| true`: a validator that always passes is not a validator.
 #
 # `appstreamcli validate` on its own is not enough to know the app will appear
-# correctly in a software centre. It passes a file with no screenshots, and it
+# correctly in a software center. It passes a file with no screenshots, and it
 # has no opinion about whether the newest release listed is the version that
 # actually ships. Both are checked here, because both are invisible until
 # someone looks at the store page and finds it empty or a version behind.

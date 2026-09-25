@@ -226,7 +226,7 @@ pub struct Profile {
     /// Leave out any folder containing a `CACHEDIR.TAG` file.
     #[serde(default)]
     pub exclude_caches: bool,
-    /// Honour each project's own `.gitignore`.
+    /// Honor each project's own `.gitignore`.
     #[serde(default)]
     pub git_ignore: bool,
     /// Write no snapshot when nothing changed since the last one.

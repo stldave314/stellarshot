@@ -35,7 +35,7 @@ note in the [README](README.md).
 - **Passwords are never written to Stellarshot's own files.** A password is
   either typed each session or, when you choose **Remember password**, kept in
   the desktop keyring (the Secret Service: GNOME Keyring or KWallet), which
-  encrypts it with your login password. The keyring item is labelled with the
+  encrypts it with your login password. The keyring item is labeled with the
   backup's name and removed when you remove the backup. Backups run in a
   separate process; the password is handed to it on its standard input, never
   on its command line or in its environment, which other programs running as

@@ -106,7 +106,7 @@ pub fn write(category: &str, args: Arguments<'_>) {
 
 /// Emit a line to the debug log.
 ///
-/// Expands to `if ENABLED { .. }`, so the optimiser removes it when logging is
+/// Expands to `if ENABLED { .. }`, so the optimizer removes it when logging is
 /// off — but the arguments are still type-checked, which stops disabled call
 /// sites from silently rotting.
 #[macro_export]

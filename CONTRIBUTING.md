@@ -73,7 +73,7 @@ rustic upgrade is contained in one module.
 through `stellarshot --run` and holds the repository lock. rustic cannot be
 interrupted; a process can.
 
-**Prove behaviour against real files.** Tests that delete, write or restore
+**Prove behavior against real files.** Tests that delete, write or restore
 work on real directories in temporary folders, and assert on what must survive
 as well as what must change.
 
@@ -92,7 +92,7 @@ in `cosmic-config`, with a UI control. Implementation tuning values belong in
 `src/constants.rs` as compile-time constants. Do not add a second runtime
 configuration file.
 
-**Package metadata comes from the manifest.** Version, licence and links are
+**Package metadata comes from the manifest.** Version, license and links are
 read with `env!("CARGO_PKG_*")`, so they cannot drift from `Cargo.toml`.
 
 **Debug logging goes to a file, behind `debug_log!`.** Scheduled backups run
@@ -108,10 +108,10 @@ version.
 Write a body explaining *why*, not what; the diff already says what.
 
 Keep the README current in the same commit as the change. If a feature is added
-or observable behaviour changes, the feature list, usage, settings and
+or observable behavior changes, the feature list, usage, settings and
 troubleshooting sections need to match, and so does [CHANGELOG.md](CHANGELOG.md).
 
-## Licence
+## License
 
 By contributing you agree that your work is licensed under GPL-3.0-only, the
 same as the project.

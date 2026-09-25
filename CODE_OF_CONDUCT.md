@@ -9,7 +9,7 @@ wrote it.
 
 - Be respectful of differing viewpoints, experience levels and backgrounds.
 - Give and accept constructive feedback gracefully.
-- Take responsibility when you get something wrong, apologise, and move on.
+- Take responsibility when you get something wrong, apologize, and move on.
 - Focus on what is best for the project and the people using it.
 
 ## What is not acceptable
@@ -38,7 +38,7 @@ incident.
 ## Enforcement
 
 Maintainers may edit, hide or delete contributions that do not follow this
-document, and may temporarily or permanently ban anyone whose behaviour is
+document, and may temporarily or permanently ban anyone whose behavior is
 inappropriate, threatening, or harmful.
 
 ---

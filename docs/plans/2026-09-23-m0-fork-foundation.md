@@ -2,7 +2,7 @@
 
 **Goal:** Turn the upstream checkout into an independently shippable project. That means its own identity, a safe Delete, warning-free CI, tag-triggered `.deb`/`.rpm`/tarball releases, developer logging that releases can't carry, and complete documentation. No feature work yet.
 
-**Architecture:** The app's behaviour stays the same apart from the Delete safety fix. M0 adds the scaffolding every later milestone relies on:
+**Architecture:** The app's behavior stays the same apart from the Delete safety fix. M0 adds the scaffolding every later milestone relies on:
 - `src/debug.rs` (the `debug_log!` / `error_log!` macros)
 - `src/constants.rs` (tuning values)
 - `install.sh` (the one build/install/package path)
@@ -195,7 +195,7 @@ It's called from `settings::init()` with `dirs::config_dir()` (the `XDG_CONFIG_H
 - Rewrite: `README.md`, following the standard layout:
   - The problem it solves and what it does.
   - Screenshots (`docs/screenshots/`) and a status line.
-  - Requirements, installing, using it, settings, troubleshooting, known limitations, how it works, building, the tests that can't pass vacuously, contributing, licence and credits.
+  - Requirements, installing, using it, settings, troubleshooting, known limitations, how it works, building, the tests that can't pass vacuously, contributing, license and credits.
   - Links to ROADMAP, CHANGELOG, SECURITY, VALIDATION and CONTRIBUTING.
 - Create: `ROADMAP.md` (spec §3 in public form), `CHANGELOG.md` (Keep a Changelog, `Unreleased`), `SECURITY.md` (threat model, reporting, what's protected and what isn't), `VALIDATION.md` (every automated and manual check, what it proves, how to run it), `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`.
 - Move: `res/screenshots/*` → `docs/screenshots/`. The metainfo screenshot URLs point at the raw files there.

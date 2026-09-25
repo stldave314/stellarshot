@@ -12,9 +12,9 @@ use crate::fl;
 pub fn describe(context: &str, error: &EngineError) -> String {
     match error.kind {
         // Both already say everything there is to say on their own: prefixing
-        // "X failed" ahead of "the password changed, but..." or "cancelled"
+        // "X failed" ahead of "the password changed, but..." or "canceled"
         // would read as contradicting itself.
-        ErrorKind::Cancelled | ErrorKind::KeyringUnavailable => explain(error),
+        ErrorKind::Canceled | ErrorKind::KeyringUnavailable => explain(error),
         _ => format!("{context}\n\n{}", explain(error)),
     }
 }
@@ -37,7 +37,7 @@ pub fn explain(error: &EngineError) -> String {
             fl!("error-destination-unavailable", path = error.detail.clone())
         }
         ErrorKind::Locked => fl!("error-locked"),
-        ErrorKind::Cancelled => fl!("error-cancelled"),
+        ErrorKind::Canceled => fl!("error-canceled"),
         ErrorKind::RepositoryDamaged => fl!("error-repository-damaged"),
         ErrorKind::RcloneMissing => fl!("error-rclone-missing"),
         ErrorKind::PasswordNotRemembered => fl!("error-password-not-remembered"),

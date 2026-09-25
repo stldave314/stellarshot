@@ -145,7 +145,7 @@ What we checked in rustic 0.13:
 | **Read** | snapshots, browse, search, versions, missing, diff, plan_restore, estimate | In-process `tokio::task::spawn_blocking`. Results come back through `Task::perform`. Several can run at once. `estimate` checks a `CancelFlag` between entries. |
 | **Write** | backup, restore, forget/prune, check, delete_all | A child process, `stellarshot --run <op> <profile-id> [args]`. It writes JSON progress lines to stdout and ends with `{"result": …}` or `{"error": kind, "detail": …}`. The UI consumes the lines as a stream through `Task::run`. |
 
-- **Cancel sends SIGTERM to the child.** It's safe for backup: the snapshot file is written last, so an interrupted backup leaves only unreferenced packs, and the next prune removes them. **Prune can't be cancelled** once it starts deleting, and the UI shows this.
+- **Cancel sends SIGTERM to the child.** It's safe for backup: the snapshot file is written last, so an interrupted backup leaves only unreferenced packs, and the next prune removes them. **Prune can't be canceled** once it starts deleting, and the UI shows this.
 - **The systemd timer runs the same `--run backup`**, so scheduled and manual backups share one code path.
 - **Fixed as a side effect:** today `app.rs` calls blocking rustic functions inside `async` blocks, which stalls tokio workers. And its `for command in commands { return … }` only runs the first command.
 

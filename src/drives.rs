@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Removable drives, recognised by their filesystem UUID.
+//! Removable drives, recognized by their filesystem UUID.
 //!
-//! A USB drive labelled "Backup" is mounted at `/media/alex/Backup` today and
+//! A USB drive labeled "Backup" is mounted at `/media/alex/Backup` today and
 //! at `/media/alex/Backup1` tomorrow if another drive with the same label is
 //! plugged in first. A backup that remembered the mount point would then
 //! write to the wrong drive or fail. Stellarshot remembers the drive's UUID

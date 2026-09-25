@@ -11,7 +11,7 @@
 //! a REST destination's own URL, which can carry HTTP basic auth
 //! (`http://user:pass@host/repo/`). `merge` (import) clears
 //! `password_command` again on whatever it adds, as a second line of
-//! defence against a hand-edited or otherwise untrusted export file rather
+//! defense against a hand-edited or otherwise untrusted export file rather
 //! than trusting the exporting installation to have behaved — a
 //! `password_command` from an untrusted file would otherwise run whatever
 //! it says, unprompted, the first time its backup's schedule fires. An

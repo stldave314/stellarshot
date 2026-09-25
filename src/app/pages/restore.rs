@@ -1396,7 +1396,7 @@ mod tests {
 
         page.update(Message::CancelRestore);
         let effects = page.update(Message::Restore(ChildEvent::Ended(EngineError::new(
-            crate::engine::ErrorKind::Cancelled,
+            crate::engine::ErrorKind::Canceled,
             "",
         ))));
 

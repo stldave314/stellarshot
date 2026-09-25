@@ -71,7 +71,7 @@ if contains_log_path; then
     echo "FAIL: the log path is still in the binary; debug logging was not stripped"
     fail=1
 else
-    echo "PASS: the log path is gone; the optimiser removed the logging code"
+    echo "PASS: the log path is gone; the optimizer removed the logging code"
 fi
 
 echo

@@ -38,7 +38,7 @@ impl ChildHandle {
     /// would never be seen to end.
     pub fn cancel(&self) {
         if let Ok(mut child) = self.0.lock() {
-            debug_log!(ENGINE, "cancelling child {:?}", child.id());
+            debug_log!(ENGINE, "canceling child {:?}", child.id());
             // `id()` is `None` once the child has been reaped, after which
             // its group ID could in time belong to someone else.
             if child.id().is_some() {
@@ -88,7 +88,7 @@ pub fn run_with(
     cosmic::iced::stream::channel(32, move |mut out: mpsc::Sender<ChildEvent>| async move {
         let ended = match drive(exe, operation, job, &mut out).await {
             Ok(true) => return,
-            Ok(false) => EngineError::new(ErrorKind::Cancelled, String::new()),
+            Ok(false) => EngineError::new(ErrorKind::Canceled, String::new()),
             Err(err) => err,
         };
         let _ = out.send(ChildEvent::Ended(ended)).await;
@@ -113,7 +113,7 @@ async fn drive(
         // Closing the window must not abandon a backup halfway: the child
         // finishes on its own.
         .kill_on_drop(false)
-        // Its own process group, so cancelling reaches everything it
+        // Its own process group, so canceling reaches everything it
         // started (see `ChildHandle::cancel`).
         .process_group(0)
         .spawn()?;
@@ -200,7 +200,7 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-/// Wait for the child without holding its lock, so it can still be cancelled.
+/// Wait for the child without holding its lock, so it can still be canceled.
 async fn wait(handle: &ChildHandle) -> Result<std::process::ExitStatus, EngineError> {
     loop {
         let finished = handle

@@ -45,7 +45,7 @@ pub struct BackupRequest {
     /// Leave out any folder containing a `CACHEDIR.TAG` file.
     #[serde(default)]
     pub exclude_caches: bool,
-    /// Honour each project's own `.gitignore`.
+    /// Honor each project's own `.gitignore`.
     #[serde(default)]
     pub git_ignore: bool,
     /// Do not descend into other mounted filesystems.

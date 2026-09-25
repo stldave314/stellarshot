@@ -28,8 +28,8 @@ pub enum ErrorKind {
     DestinationUnavailable,
     /// Another process is already writing to this repository.
     Locked,
-    /// The operation was cancelled before it finished.
-    Cancelled,
+    /// The operation was canceled before it finished.
+    Canceled,
     /// An integrity check found problems.
     RepositoryDamaged,
     /// Reading or writing local files failed.

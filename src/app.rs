@@ -779,22 +779,33 @@ impl App {
                 tasks::blocking(engine::rclone::user_remotes),
                 move |remotes| to_wizard(place::Message::RemotesListed(remotes)),
             ),
-            place::Effect::SignIn { name, credentials } => Task::perform(
-                tasks::blocking(move || {
-                    let config = engine::rclone::config_path();
-                    let mut params = vec!["scope=drive".to_owned()];
-                    if let Some((id, secret)) = &credentials {
-                        // rclone accepts these as plain `key=value` config
-                        // parameters, the same way `scope=drive` is passed;
-                        // there is no separate API for them.
-                        params.push(format!("client_id={id}"));
-                        params.push(format!("client_secret={secret}"));
-                    }
-                    let params: Vec<&str> = params.iter().map(String::as_str).collect();
-                    engine::rclone::sign_in(&config, &name, "drive", &params).map(|()| name)
-                }),
-                move |result| to_wizard(place::Message::SignedIn(result)),
-            ),
+            place::Effect::SignIn { name, credentials } => {
+                // Easy to miss as a line of page text below a button that
+                // just disappeared: a modal makes "go to your browser now"
+                // impossible to scroll past. Cleared again once sign-in
+                // finishes, successfully or not; the page itself already
+                // shows that outcome.
+                self.dialog = Some(Dialog::Info(
+                    fl!("place-signing-in-title"),
+                    fl!("place-signing-in-body"),
+                ));
+                Task::perform(
+                    tasks::blocking(move || {
+                        let config = engine::rclone::config_path();
+                        let mut params = vec!["scope=drive".to_owned()];
+                        if let Some((id, secret)) = &credentials {
+                            // rclone accepts these as plain `key=value`
+                            // config parameters, the same way `scope=drive`
+                            // is passed; there is no separate API for them.
+                            params.push(format!("client_id={id}"));
+                            params.push(format!("client_secret={secret}"));
+                        }
+                        let params: Vec<&str> = params.iter().map(String::as_str).collect();
+                        engine::rclone::sign_in(&config, &name, "drive", &params).map(|()| name)
+                    }),
+                    move |result| to_wizard(place::Message::SignedIn(result)),
+                )
+            }
             place::Effect::CopyRemote { index, from, to } => Task::perform(
                 tasks::blocking(move || {
                     let config = engine::rclone::config_path();
@@ -2023,6 +2034,15 @@ impl Application for App {
                 return self.run_profile_effects(&id, effects);
             }
             Message::Wizard(message) => {
+                // Sign-in finished, one way or the other: the "switch to
+                // your browser" modal has done its job either way, and the
+                // wizard page itself already shows the outcome.
+                if matches!(
+                    message,
+                    crate::app::wizard::Message::Place(place::Message::SignedIn(_))
+                ) {
+                    self.dialog = None;
+                }
                 let Some(wizard) = self.wizard.as_mut() else {
                     return Task::none();
                 };

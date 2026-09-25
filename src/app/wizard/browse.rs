@@ -179,7 +179,12 @@ impl Browse {
                 )
                 .push(
                     widget::scrollable(
-                        widget::column::with_children(rows).spacing(spacing.space_xxs),
+                        widget::column::with_children(rows)
+                            .spacing(spacing.space_xxs)
+                            // The scrollbar draws over the content rather
+                            // than reserving its own width, so without this
+                            // it sits on top of each row's own checkbox.
+                            .padding([0.0, f32::from(spacing.space_m), 0.0, 0.0]),
                     )
                     .height(Length::Fixed(320.0)),
                 )
@@ -200,7 +205,7 @@ impl Browse {
         };
         let mark = mark_of(path, excludes);
         let is_excluded_here = mark == Mark::Excluded;
-        rows.push(self.row(path, node, depth, mark, under_excluded_ancestor));
+        rows.push(self.row(path, node, depth, mark, excludes, under_excluded_ancestor));
         if let Some(children) = &node.children {
             for child in children {
                 self.push_rows(
@@ -231,12 +236,30 @@ impl Browse {
         }
     }
 
+    /// How many bytes under `path` are excluded, based on what has been
+    /// sized so far. A folder's own listed size is real disk usage,
+    /// unadjusted for what `excludes` takes out of it; this is what to
+    /// subtract from it to show what the backup would actually store.
+    /// Undercounts an excluded path this session never sized (never
+    /// expanded down to) — the common case, a folder like `.cache` right
+    /// under the source, is sized the moment its parent is opened, so this
+    /// still catches most of what matters without a separate size fetch
+    /// for every entry in the exclude list.
+    fn excluded_bytes(&self, path: &Path, excludes: &[PathBuf]) -> u64 {
+        excludes
+            .iter()
+            .filter(|excluded| excluded.starts_with(path))
+            .filter_map(|excluded| self.nodes.get(excluded).and_then(|node| node.size))
+            .sum()
+    }
+
     fn row<'a>(
         &self,
         path: &'a Path,
         node: &Node,
         depth: u16,
         mark: Mark,
+        excludes: &[PathBuf],
         under_excluded_ancestor: bool,
     ) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
@@ -267,29 +290,34 @@ impl Browse {
         }
         row = row.push(widget::text::body(name).width(Length::Fill));
         if let Some(size) = node.size {
-            row = row.push(widget::text::caption(format::bytes(size)));
+            let reduced = node.is_dir.then(|| self.excluded_bytes(path, excludes));
+            let text = match reduced {
+                Some(reduced) if reduced > 0 => fl!(
+                    "browse-size-reduced",
+                    size = format::bytes(size.saturating_sub(reduced)),
+                    total = format::bytes(size)
+                ),
+                _ => format::bytes(size),
+            };
+            row = row.push(widget::text::caption(text));
         }
         // A row already under an excluded ancestor has nothing meaningful
         // left to toggle: the ancestor's own mark already decides it, and
         // Stellarshot's exclude list cannot re-include one thing inside an
-        // excluded folder while leaving the rest of it out.
-        if node.is_dir && !under_excluded_ancestor {
-            let label = match mark {
-                Mark::Included => fl!("browse-mark-included"),
-                Mark::Partial => fl!("browse-mark-partial"),
-                Mark::Excluded => fl!("browse-mark-excluded"),
-            };
-            row = row.push(
-                widget::button::standard(label)
-                    .tooltip(if mark == Mark::Excluded {
-                        fl!("browse-include")
-                    } else {
-                        fl!("browse-exclude")
-                    })
-                    .on_press(Message::Mark(path.to_path_buf(), mark != Mark::Excluded)),
-            );
-        } else if node.is_dir {
-            row = row.push(widget::text::caption(fl!("browse-mark-excluded")));
+        // excluded folder while leaving the rest of it out. Shown as an
+        // unchecked, non-interactive checkbox rather than dropped entirely,
+        // so every row in the tree reads the same way at a glance.
+        if node.is_dir {
+            let checked = mark != Mark::Excluded;
+            let mut checkbox = widget::checkbox(checked);
+            if mark == Mark::Partial {
+                checkbox = checkbox.label(fl!("browse-mark-partial"));
+            }
+            if !under_excluded_ancestor {
+                let owned = path.to_path_buf();
+                checkbox = checkbox.on_toggle(move |on| Message::Mark(owned.clone(), !on));
+            }
+            row = row.push(checkbox);
         }
         row.into()
     }
@@ -371,6 +399,48 @@ mod tests {
 
         assert!(effects.is_empty());
         assert!(browse.nodes[Path::new("/home/alex")].children.is_none());
+    }
+
+    #[test]
+    fn excluded_bytes_sums_every_known_excluded_descendant() {
+        let mut browse = Browse::default();
+        browse.update(Message::Open(PathBuf::from("/home/alex")));
+        browse.update(Message::Listed(
+            PathBuf::from("/home/alex"),
+            vec![
+                entry("/home/alex/Documents", true, 1000),
+                entry("/home/alex/.cache", true, 300),
+            ],
+        ));
+
+        let excludes = [PathBuf::from("/home/alex/.cache")];
+
+        assert_eq!(
+            browse.excluded_bytes(Path::new("/home/alex"), &excludes),
+            300,
+            "a folder right under the root is sized the moment the root is opened"
+        );
+        assert_eq!(
+            browse.excluded_bytes(Path::new("/home/alex/Documents"), &excludes),
+            0,
+            "nothing excluded under this one"
+        );
+    }
+
+    #[test]
+    fn excluded_bytes_is_zero_for_an_exclude_never_sized_this_session() {
+        let mut browse = Browse::default();
+        browse.update(Message::Open(PathBuf::from("/home/alex")));
+        browse.update(Message::Listed(PathBuf::from("/home/alex"), vec![]));
+
+        // Deep enough that opening the root alone never loaded it.
+        let excludes = [PathBuf::from("/home/alex/Projects/target")];
+
+        assert_eq!(
+            browse.excluded_bytes(Path::new("/home/alex"), &excludes),
+            0,
+            "undercounts rather than guesses at a size it never actually read"
+        );
     }
 
     #[test]

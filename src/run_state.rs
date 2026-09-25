@@ -45,7 +45,11 @@ impl BackupStatus {
     /// The symbolic icon name for the sidebar.
     pub fn icon(self) -> &'static str {
         match self {
-            Self::UpToDate => "drive-harddisk-symbolic",
+            // A shield rather than a plain drive: "up to date" is a claim
+            // about safety, not just where the data happens to sit.
+            // Confirmed to actually render as a shield, not assumed from
+            // its freedesktop name alone.
+            Self::UpToDate => "security-high-symbolic",
             Self::Running => "emblem-synchronizing-symbolic",
             Self::Overdue => "appointment-missed-symbolic",
             Self::Failed => "dialog-error-symbolic",

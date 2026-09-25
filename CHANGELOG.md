@@ -5,6 +5,29 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The Browse tree's include/exclude control now reads as a selector, not a
+  status label.** A folder row's "Included"/"Excluded"/"Partly included"
+  button, whose text was the current state rather than an action, is now a
+  checkbox: checked to go in, unchecked to be left out.
+- **A folder's shown size in the Browse tree no longer hides what is
+  excluded beneath it.** Marking a subfolder excluded now reduces every
+  ancestor's own displayed size ("80 MB of 150 MB") rather than leaving it
+  showing the unreduced total with no sign anything changed.
+- **Signing in to Google Drive now says "switch to your browser" as a
+  dialog**, not a line of page text below a button that had just
+  disappeared. Closes on its own once sign-in finishes, successfully or
+  not.
+- **The Browse tree's checkbox no longer sits under the scrollbar**: the
+  scrollable list now reserves space on the right for it, rather than
+  letting the scrollbar overlay draw on top of a row's own controls.
+- **A shield in place of a plain hard drive** for a backup that is up to
+  date, in the sidebar and the status legend: "up to date" is a claim
+  about safety, not about where the data happens to sit.
+
 ## [0.5.0] - 2026-09-25
 
 Automation: conditions for when a scheduled backup is allowed to run, hooks

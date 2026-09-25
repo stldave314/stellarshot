@@ -135,6 +135,7 @@ fn run(
         Operation::Backup,
         Job {
             request: Some(profile.backup_request(global_exclude_patterns)),
+            hooks: profile.hooks.clone(),
             ..job()
         },
     )

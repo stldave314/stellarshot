@@ -15,6 +15,7 @@ pub mod dejadup;
 pub mod drives;
 pub mod engine;
 pub mod event_log;
+pub mod hooks;
 pub mod keyring;
 pub mod notify;
 pub mod password_command;

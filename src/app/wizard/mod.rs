@@ -20,7 +20,9 @@ use cosmic::{Apply, Element, theme, widget};
 use crate::app::format;
 use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secret, SizeEstimate};
 use crate::fl;
-use crate::profile::{Conditions, Destination, Profile, Retention, Schedule, default_excludes};
+use crate::profile::{
+    Conditions, Destination, Hook, HookTiming, Profile, Retention, Schedule, default_excludes,
+};
 
 pub mod browse;
 pub mod place;
@@ -36,6 +38,8 @@ pub enum Mode {
     Edit { profile_id: String },
     /// Change when an existing profile runs and what it keeps.
     Schedule { profile_id: String },
+    /// Change an existing profile's hooks.
+    Hooks { profile_id: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +48,7 @@ pub enum Step {
     Where,
     When,
     Secure,
+    Hooks,
 }
 
 impl Mode {
@@ -53,11 +58,15 @@ impl Mode {
             Self::Open => &[Step::Where, Step::When, Step::Secure],
             Self::Edit { .. } => &[Step::What],
             Self::Schedule { .. } => &[Step::When],
+            Self::Hooks { .. } => &[Step::Hooks],
         }
     }
 
     fn edits(&self) -> bool {
-        matches!(self, Self::Edit { .. } | Self::Schedule { .. })
+        matches!(
+            self,
+            Self::Edit { .. } | Self::Schedule { .. } | Self::Hooks { .. }
+        )
     }
 }
 
@@ -77,6 +86,14 @@ const KEEP_CHOICES: [Retention; 5] = [
 /// The minimum battery level a scheduled backup can require, in the order
 /// the list shows them.
 const BATTERY_CHOICES: [Option<u8>; 5] = [None, Some(20), Some(30), Some(50), Some(80)];
+
+/// When a hook can run, in the order the list shows them.
+const HOOK_TIMINGS: [HookTiming; 4] = [
+    HookTiming::Before,
+    HookTiming::AfterSuccess,
+    HookTiming::AfterFailure,
+    HookTiming::After,
+];
 
 /// The size estimate as the wizard shows it.
 #[derive(Debug, Default)]
@@ -138,6 +155,12 @@ pub struct Wizard {
     pub conditions: Conditions,
     /// The trusted-network field's own text box.
     pub network_input: String,
+    /// Commands run before and after a backup; see [`crate::hooks`].
+    pub hooks: Vec<Hook>,
+    /// The add-a-hook form's own fields.
+    pub hook_name_input: String,
+    pub hook_command_input: String,
+    pub hook_timing_input: HookTiming,
     /// rustic's own append-only mode. Only offered when creating a new
     /// backup: rustic's `config` command, the only way to change it,
     /// refuses every other change to an append-only repository, and
@@ -147,6 +170,7 @@ pub struct Wizard {
     frequency_labels: Vec<String>,
     keep_labels: Vec<String>,
     battery_labels: Vec<String>,
+    hook_timing_labels: Vec<String>,
     pub password: String,
     pub confirm: String,
     pub password_hidden: bool,
@@ -197,6 +221,12 @@ pub enum Message {
     NetworkInput(String),
     AddTrustedNetwork,
     RemoveTrustedNetwork(usize),
+    HookNameInput(String),
+    HookCommandInput(String),
+    HookTimingInput(usize),
+    AddHook,
+    RemoveHook(usize),
+    ToggleHook(usize, bool),
     Back,
     Next,
     Cancel,
@@ -264,6 +294,10 @@ impl Wizard {
             prune: None,
             conditions: Conditions::default(),
             network_input: String::new(),
+            hooks: Vec::new(),
+            hook_name_input: String::new(),
+            hook_command_input: String::new(),
+            hook_timing_input: HookTiming::default(),
             append_only: false,
             frequency_labels: vec![
                 fl!("frequency-hourly"),
@@ -272,6 +306,7 @@ impl Wizard {
             ],
             keep_labels: Vec::new(),
             battery_labels: BATTERY_CHOICES.iter().map(|c| battery_label(*c)).collect(),
+            hook_timing_labels: HOOK_TIMINGS.iter().map(|t| hook_timing_label(*t)).collect(),
             password: String::new(),
             confirm: String::new(),
             password_hidden: true,
@@ -376,6 +411,7 @@ impl Wizard {
         wizard.retention = profile.retention;
         wizard.prune = profile.prune;
         wizard.conditions = profile.conditions.clone();
+        wizard.hooks = profile.hooks.clone();
         wizard.base = Some(profile.clone());
         wizard
     }
@@ -399,6 +435,14 @@ impl Wizard {
         let mut wizard = Self::editing(mode, profile);
         wizard.keep_labels = wizard.keep_labels();
         (wizard, Vec::new())
+    }
+
+    /// Change `profile`'s hooks.
+    pub fn hooks(profile: &Profile) -> (Self, Vec<Effect>) {
+        let mode = Mode::Hooks {
+            profile_id: profile.id.clone(),
+        };
+        (Self::editing(mode, profile), Vec::new())
     }
 
     fn set_schedule(&mut self, schedule: Schedule) {
@@ -538,6 +582,7 @@ impl Wizard {
                     }
             }
             Step::When => true,
+            Step::Hooks => true,
             Step::Secure => match self.mode {
                 Mode::Create => !self.password.is_empty() && self.password == self.confirm,
                 _ => !self.password.is_empty(),
@@ -596,6 +641,9 @@ impl Wizard {
             profile.retention = self.retention;
             profile.prune = self.prune;
             profile.conditions = self.conditions.clone();
+        }
+        if new || steps.contains(&Step::Hooks) {
+            profile.hooks = self.hooks.clone();
         }
         // Create-time only: Stellarshot exposes no way to change this once
         // set (see `Wizard::append_only`'s own doc comment), so it is never
@@ -824,6 +872,48 @@ impl Wizard {
                 }
                 Vec::new()
             }
+            Message::HookNameInput(text) => {
+                self.hook_name_input = text;
+                Vec::new()
+            }
+            Message::HookCommandInput(text) => {
+                self.hook_command_input = text;
+                Vec::new()
+            }
+            Message::HookTimingInput(index) => {
+                if let Some(timing) = HOOK_TIMINGS.get(index) {
+                    self.hook_timing_input = *timing;
+                }
+                Vec::new()
+            }
+            Message::AddHook => {
+                let name = self.hook_name_input.trim().to_owned();
+                let command = self.hook_command_input.trim().to_owned();
+                if name.is_empty() || command.is_empty() {
+                    return Vec::new();
+                }
+                self.hooks.push(Hook {
+                    name,
+                    command,
+                    timing: self.hook_timing_input,
+                    enabled: true,
+                });
+                self.hook_name_input.clear();
+                self.hook_command_input.clear();
+                Vec::new()
+            }
+            Message::RemoveHook(index) => {
+                if index < self.hooks.len() {
+                    self.hooks.remove(index);
+                }
+                Vec::new()
+            }
+            Message::ToggleHook(index, on) => {
+                if let Some(hook) = self.hooks.get_mut(index) {
+                    hook.enabled = on;
+                }
+                Vec::new()
+            }
             Message::Back => {
                 let position = self.position();
                 if position > 0 {
@@ -867,6 +957,7 @@ impl Wizard {
             Mode::Open => fl!("wizard-open-title"),
             Mode::Edit { .. } => fl!("wizard-edit-title", name = self.name.clone()),
             Mode::Schedule { .. } => fl!("wizard-schedule-title", name = self.name.clone()),
+            Mode::Hooks { .. } => fl!("wizard-hooks-title", name = self.name.clone()),
         };
         let current = (self.position() + 1) as i64;
         let total = steps.len() as i64;
@@ -876,6 +967,7 @@ impl Wizard {
             Step::What => self.what_view(),
             Step::Where => self.where_view(),
             Step::When => self.when_view(),
+            Step::Hooks => self.hooks_step_view(),
             Step::Secure => self.secure_view(),
         };
 
@@ -893,7 +985,9 @@ impl Wizard {
             (None, false, _) => fl!("next"),
             (None, true, Mode::Create) => fl!("wizard-finish-create"),
             (None, true, Mode::Open) => fl!("wizard-finish-open"),
-            (None, true, Mode::Edit { .. } | Mode::Schedule { .. }) => fl!("save"),
+            (None, true, Mode::Edit { .. } | Mode::Schedule { .. } | Mode::Hooks { .. }) => {
+                fl!("save")
+            }
         };
         // Creating a repository on cloud storage takes a while; say so where
         // the button that started it is.
@@ -1230,6 +1324,80 @@ impl Wizard {
         section.into()
     }
 
+    fn hooks_step_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let mut section = widget::settings::section().title(fl!("wizard-hooks-section"));
+        for (index, hook) in self.hooks.iter().enumerate() {
+            section = section.add(
+                widget::settings::item::builder(hook.name.clone())
+                    .description(format!(
+                        "{} · {}",
+                        hook_timing_label(hook.timing),
+                        hook.command
+                    ))
+                    .control(
+                        widget::row::with_capacity(2)
+                            .spacing(spacing.space_xs)
+                            .align_y(Alignment::Center)
+                            .push(
+                                widget::checkbox(hook.enabled)
+                                    .on_toggle(move |on| Message::ToggleHook(index, on)),
+                            )
+                            .push(
+                                widget::button::icon(widget::icon::from_name(
+                                    "edit-delete-symbolic",
+                                ))
+                                .tooltip(fl!("remove"))
+                                .name(fl!("remove"))
+                                .on_press(Message::RemoveHook(index)),
+                            ),
+                    ),
+            );
+        }
+        let timing_selected = HOOK_TIMINGS
+            .iter()
+            .position(|t| *t == self.hook_timing_input);
+        section = section
+            .add(
+                widget::row::with_capacity(2)
+                    .spacing(spacing.space_xs)
+                    .push(
+                        widget::text_input(
+                            fl!("wizard-hook-name-placeholder"),
+                            &self.hook_name_input,
+                        )
+                        .on_input(Message::HookNameInput)
+                        .width(Length::FillPortion(1)),
+                    )
+                    .push(
+                        widget::text_input(
+                            fl!("wizard-hook-command-placeholder"),
+                            &self.hook_command_input,
+                        )
+                        .on_input(Message::HookCommandInput)
+                        .on_submit(|_| Message::AddHook)
+                        .width(Length::FillPortion(2)),
+                    ),
+            )
+            .add(
+                widget::row::with_capacity(2)
+                    .spacing(spacing.space_xs)
+                    .align_y(Alignment::Center)
+                    .push(widget::dropdown(
+                        &self.hook_timing_labels,
+                        timing_selected,
+                        Message::HookTimingInput,
+                    ))
+                    .push(widget::button::standard(fl!("add")).on_press(Message::AddHook)),
+            );
+
+        widget::column::with_capacity(2)
+            .spacing(spacing.space_m)
+            .push(widget::text::body(fl!("wizard-hooks-intro")))
+            .push(section)
+            .into()
+    }
+
     fn secure_view(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
         let mut fields = widget::column::with_capacity(3)
@@ -1314,6 +1482,15 @@ fn battery_label(choice: Option<u8>) -> String {
     match choice {
         None => fl!("wizard-battery-none"),
         Some(percent) => fl!("wizard-battery-percent", percent = (percent as i64)),
+    }
+}
+
+fn hook_timing_label(timing: HookTiming) -> String {
+    match timing {
+        HookTiming::Before => fl!("hook-timing-before"),
+        HookTiming::AfterSuccess => fl!("hook-timing-after-success"),
+        HookTiming::AfterFailure => fl!("hook-timing-after-failure"),
+        HookTiming::After => fl!("hook-timing-after"),
     }
 }
 
@@ -1849,5 +2026,74 @@ mod tests {
 
         wizard.update(Message::RemoveTrustedNetwork(0));
         assert!(wizard.conditions.trusted_networks.is_empty());
+    }
+
+    #[test]
+    fn a_new_backup_has_no_hooks() {
+        let (wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        assert!(wizard.hooks.is_empty());
+    }
+
+    #[test]
+    fn a_hook_needs_both_a_name_and_a_command() {
+        let (mut wizard, _) = Wizard::hooks(&scheduled_profile());
+        wizard.update(Message::HookNameInput("Stop database".to_owned()));
+        wizard.update(Message::AddHook);
+        assert!(wizard.hooks.is_empty(), "no command yet");
+
+        wizard.update(Message::HookCommandInput("systemctl stop db".to_owned()));
+        wizard.update(Message::AddHook);
+        assert_eq!(wizard.hooks.len(), 1);
+        assert_eq!(wizard.hooks[0].name, "Stop database");
+        assert_eq!(wizard.hooks[0].command, "systemctl stop db");
+        assert_eq!(wizard.hooks[0].timing, HookTiming::Before, "the default");
+        assert!(wizard.hooks[0].enabled);
+        assert_eq!(wizard.hook_name_input, "", "the fields clear after adding");
+        assert_eq!(wizard.hook_command_input, "");
+    }
+
+    #[test]
+    fn a_hooks_timing_can_be_chosen_before_adding_it() {
+        let (mut wizard, _) = Wizard::hooks(&scheduled_profile());
+        let after_success = HOOK_TIMINGS
+            .iter()
+            .position(|t| *t == HookTiming::AfterSuccess)
+            .unwrap();
+        wizard.update(Message::HookTimingInput(after_success));
+        wizard.update(Message::HookNameInput("Notify".to_owned()));
+        wizard.update(Message::HookCommandInput("notify-send done".to_owned()));
+        wizard.update(Message::AddHook);
+        assert_eq!(wizard.hooks[0].timing, HookTiming::AfterSuccess);
+    }
+
+    #[test]
+    fn a_hook_can_be_toggled_and_removed() {
+        let (mut wizard, _) = Wizard::hooks(&scheduled_profile());
+        wizard.update(Message::HookNameInput("A".to_owned()));
+        wizard.update(Message::HookCommandInput("true".to_owned()));
+        wizard.update(Message::AddHook);
+
+        wizard.update(Message::ToggleHook(0, false));
+        assert!(!wizard.hooks[0].enabled);
+
+        wizard.update(Message::RemoveHook(0));
+        assert!(wizard.hooks.is_empty());
+    }
+
+    #[test]
+    fn hooks_round_trip_through_editing() {
+        let mut profile = scheduled_profile();
+        profile.hooks = vec![Hook {
+            name: "Stop database".to_owned(),
+            command: "systemctl stop db".to_owned(),
+            timing: HookTiming::Before,
+            enabled: true,
+        }];
+        let (mut wizard, _) = Wizard::hooks(&profile);
+        assert_eq!(wizard.hooks, profile.hooks);
+
+        let effects = wizard.update(Message::Next);
+        let saved = &finish_effect(&effects).expect("saving finishes").profile;
+        assert_eq!(saved.hooks, profile.hooks);
     }
 }

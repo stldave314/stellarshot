@@ -80,6 +80,12 @@ pub const KEYRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// forever, silently skipping every timer fire after it.
 pub const PASSWORD_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Longest wait for one hook (stopping or starting a service, say) before it
+/// is killed and treated as a failure. A `Before` hook stuck this long would
+/// otherwise hold the repository's write lock open and block the backup it
+/// was meant to make safe forever.
+pub const HOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// How often a scheduled backup also checks the repository for damage. A
 /// check reads every index and tree, which is slow on a large backup behind
 /// a slow connection, so it runs after a backup at most this often.

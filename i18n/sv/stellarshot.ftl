@@ -313,6 +313,12 @@ error-keyring-unavailable = Lösenordet ändrades, men kunde inte sparas i nycke
 error-delete-unsupported = Stellarshot kan inte radera det här målets egna data på egen hand. Ta bort dem där själv, eller använd Ta bort för att glömma det här utan att radera något.
 change = Ändra…
 schedule-row = När den körs
+hooks-row = Krokar
+hooks-row-none = Inga krokar inställda
+hooks-row-count = { $count ->
+    [one] 1 krok aktiverad
+   *[other] { $count } krokar aktiverade
+}
 check-row = Leta efter skador
 check-row-last = Senast kontrollerad { $when }
 check-row-never = Aldrig kontrollerad
@@ -390,12 +396,22 @@ wizard-block-metered-description = Hoppa över medan systemet har markerat den a
 wizard-require-trusted-network = Endast på ett betrott nätverk
 wizard-require-trusted-network-description = Hoppa över om inte anslutningen är till ett av dessa Wi-Fi-nätverk, eller en VPN (Tailscale, WireGuard eller annan) är uppe.
 wizard-network-placeholder = Nätverksnamn
+wizard-hooks-title = Krokar för ”{ $name }”
+wizard-hooks-intro = Kör ett kommando eller program före och efter den här säkerhetskopieringen: stoppa en databas innan, eller avmontera en nätverksresurs efteråt. Delas upp på samma sätt som ett lösenordskommando, utan att anropa ett riktigt skal.
+wizard-hooks-section = Krokar
+wizard-hook-name-placeholder = Namn
+wizard-hook-command-placeholder = Kommando
+hook-timing-before = Före säkerhetskopieringen
+hook-timing-after-success = Efter en lyckad säkerhetskopiering
+hook-timing-after-failure = Efter en misslyckad säkerhetskopiering
+hook-timing-after = Efter säkerhetskopieringen, oavsett resultat
 notify-backup-failed = Säkerhetskopian ”{ $name }” misslyckades
 notify-cleanup-failed = Städningen av ”{ $name }” misslyckades
 notify-check-failed = Kontrollen av ”{ $name }” misslyckades
 notify-open = Öppna
 error-timed-out = Inget svar kom inom { $seconds } sekunder. Anslutningen kan vara långsam, eller så begränsar lagringstjänsten förfrågningarna. Kontrollera anslutningen och försök igen.
 error-conditions-not-met = Villkoren uppfylldes inte: { $reason }
+error-hook-failed = En krok misslyckades, så säkerhetskopieringen kördes inte: { $reason }
 place-checking-for = Kontrollerar… { $time }
 wizard-creating = Skapar… { $time }
 wizard-opening = Öppnar… { $time }

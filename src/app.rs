@@ -1066,6 +1066,7 @@ impl App {
                     };
                     let job = Job {
                         request: Some(profile.backup_request(&self.config.global_exclude_patterns)),
+                        hooks: profile.hooks.clone(),
                         ..Job::new(repository, secret)
                     };
                     Task::run(child::run(Operation::Backup, job), move |event| {
@@ -1149,6 +1150,15 @@ impl App {
                 profile::Effect::EditSchedule => {
                     if self.wizard.is_none() {
                         let (wizard, effects) = Wizard::schedule(&profile);
+                        self.start_wizard(wizard, effects)
+                    } else {
+                        self.select_wizard();
+                        Task::none()
+                    }
+                }
+                profile::Effect::EditHooks => {
+                    if self.wizard.is_none() {
+                        let (wizard, effects) = Wizard::hooks(&profile);
                         self.start_wizard(wizard, effects)
                     } else {
                         self.select_wizard();

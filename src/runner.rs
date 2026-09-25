@@ -25,6 +25,8 @@ use crate::engine::{
     ProgressEvent, ProgressSink, PruneReport, RestorePreview, RestoreRequest, Secret,
     SnapshotSummary, lock,
 };
+use crate::hooks::{self, HookResult};
+use crate::profile::Hook;
 use crate::{debug_log, error_log};
 
 /// The operation a child process performs.
@@ -79,6 +81,9 @@ pub struct Job {
     /// For `backup`.
     #[serde(default)]
     pub request: Option<BackupRequest>,
+    /// For `backup`: run before and after it.
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
     /// For `restore`: what to restore, where, and what to do about files
     /// that already exist.
     #[serde(default)]
@@ -114,6 +119,7 @@ impl Job {
             repository,
             password,
             request: None,
+            hooks: Vec::new(),
             restore: None,
             snapshot: None,
             destination: None,
@@ -210,6 +216,32 @@ fn missing(what: &str) -> EngineError {
     EngineError::new(ErrorKind::Internal, format!("the job has no {what}"))
 }
 
+/// The failed `Before` hook, as the backup's own failure: `results` is
+/// never empty when this is called, since [`hooks::run_before`] only
+/// returns `Err` after pushing the hook that failed.
+fn hook_failure(results: &[HookResult]) -> EngineError {
+    let Some(failed) = results.last() else {
+        return EngineError::new(ErrorKind::HookFailed, "a hook failed");
+    };
+    let detail = if failed.detail.is_empty() {
+        failed.name.clone()
+    } else {
+        format!("{}: {}", failed.name, failed.detail)
+    };
+    EngineError::new(ErrorKind::HookFailed, detail)
+}
+
+/// `After` hooks are best-effort: a failure is logged, not reported as the
+/// backup's own failure, since the backup has already succeeded or failed
+/// on its own terms by the time these run.
+fn log_after_hooks(results: &[HookResult]) {
+    for result in results {
+        if !result.ok {
+            error_log!(ENGINE, "hook \"{}\" failed: {}", result.name, result.detail);
+        }
+    }
+}
+
 /// What a finished operation reports.
 #[derive(Debug, Default)]
 pub struct Outcome {
@@ -232,11 +264,16 @@ pub fn run(
     // reaches this line, and so never removes the holder's progress file.
     let _progress_file = RemoveOnDrop(lock::progress_path(&job.repository));
     debug_log!(ENGINE, "--run {} holds the lock", operation.as_arg());
+    if operation == Operation::Backup {
+        hooks::run_before(&job.hooks).map_err(|results| hook_failure(&results))?;
+    }
     let repo = engine::open(&job.repository, &job.password)?;
     match operation {
         Operation::Backup => {
             let request = job.request.ok_or_else(|| missing("backup request"))?;
-            repo.backup(&request, sink).map(|report| Outcome {
+            let result = repo.backup(&request, sink);
+            log_after_hooks(&hooks::run_after(&job.hooks, result.is_ok()));
+            result.map(|report| Outcome {
                 report: Some(report),
                 ..Outcome::default()
             })

@@ -52,6 +52,9 @@ pub enum ErrorKind {
     /// A scheduled backup's conditions (power, battery, network) were not
     /// met. The detail says which.
     ConditionsNotMet,
+    /// A `Before` hook failed, so the backup did not run. The detail names
+    /// the hook and, if there was one, its own error.
+    HookFailed,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }

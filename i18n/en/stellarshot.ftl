@@ -329,6 +329,12 @@ error-keyring-unavailable = The password was changed, but it could not be saved 
 error-delete-unsupported = Stellarshot cannot delete this destination's own data by itself. Remove it there yourself, or use Remove to forget it here without deleting anything.
 change = Change…
 schedule-row = When it runs
+hooks-row = Hooks
+hooks-row-none = No hooks set up
+hooks-row-count = { $count ->
+    [one] 1 hook enabled
+   *[other] { $count } hooks enabled
+}
 check-row = Check for damage
 check-row-last = Last checked { $when }
 check-row-never = Never checked
@@ -406,12 +412,22 @@ wizard-block-metered-description = Skip while the system has marked the current 
 wizard-require-trusted-network = Only on a trusted network
 wizard-require-trusted-network-description = Skip unless connected to one of these Wi-Fi networks, or a VPN (Tailscale, WireGuard or another) is up.
 wizard-network-placeholder = Network name
+wizard-hooks-title = Hooks for “{ $name }”
+wizard-hooks-intro = Run a command or program before and after this backup: stopping a database before it runs, say, or unmounting a network share once it is done. Split the same way a password command is, without invoking a real shell.
+wizard-hooks-section = Hooks
+wizard-hook-name-placeholder = Name
+wizard-hook-command-placeholder = Command
+hook-timing-before = Before the backup
+hook-timing-after-success = After a successful backup
+hook-timing-after-failure = After a failed backup
+hook-timing-after = After the backup, either way
 notify-backup-failed = Backup “{ $name }” failed
 notify-cleanup-failed = Cleaning up “{ $name }” failed
 notify-check-failed = Checking “{ $name }” failed
 notify-open = Open
 error-timed-out = There was no answer within { $seconds } seconds. The connection may be slow, or the storage service may be limiting requests. Check your connection and try again.
 error-conditions-not-met = Its conditions were not met: { $reason }
+error-hook-failed = A hook failed, so the backup did not run: { $reason }
 place-checking-for = Checking… { $time }
 wizard-creating = Creating… { $time }
 wizard-opening = Opening… { $time }

@@ -313,6 +313,12 @@ error-keyring-unavailable = Паролата беше променена, но �
 error-delete-unsupported = Stellarshot не може да изтрие данните на тази дестинация сам. Премахнете ги там сами или използвайте „Премахване“, за да ги забравите тук, без да изтривате нищо.
 change = Промяна…
 schedule-row = Кога се изпълнява
+hooks-row = Куки
+hooks-row-none = Няма настроени куки
+hooks-row-count = { $count ->
+    [one] 1 активна кука
+   *[other] { $count } активни куки
+}
 check-row = Проверка за повреди
 check-row-last = Последна проверка { $when }
 check-row-never = Никога не е проверявано
@@ -390,12 +396,22 @@ wizard-block-metered-description = Пропускане, докато систе
 wizard-require-trusted-network = Само в доверена мрежа
 wizard-require-trusted-network-description = Пропускане, освен ако не сте свързани към някоя от тези Wi-Fi мрежи или няма активна VPN връзка (Tailscale, WireGuard или друга).
 wizard-network-placeholder = Име на мрежата
+wizard-hooks-title = Куки за „{ $name }“
+wizard-hooks-intro = Изпълнение на команда или програма преди и след това архивиране: например спиране на база от данни преди него, или демонтиране на мрежов дял след него. Разделя се по същия начин като команда за парола, без да се извиква истинска обвивка.
+wizard-hooks-section = Куки
+wizard-hook-name-placeholder = Име
+wizard-hook-command-placeholder = Команда
+hook-timing-before = Преди архивирането
+hook-timing-after-success = След успешно архивиране
+hook-timing-after-failure = След неуспешно архивиране
+hook-timing-after = След архивирането, независимо от резултата
 notify-backup-failed = Архивирането „{ $name }“ не успя
 notify-cleanup-failed = Почистването на „{ $name }“ не успя
 notify-check-failed = Проверката на „{ $name }“ не успя
 notify-open = Отваряне
 error-timed-out = Нямаше отговор в рамките на { $seconds } секунди. Връзката може да е бавна или услугата за съхранение да ограничава заявките. Проверете връзката и опитайте отново.
 error-conditions-not-met = Условията не бяха изпълнени: { $reason }
+error-hook-failed = Кука не бе изпълнена успешно, затова архивирането не се изпълни: { $reason }
 place-checking-for = Проверка… { $time }
 wizard-creating = Създаване… { $time }
 wizard-opening = Отваряне… { $time }

@@ -382,6 +382,28 @@ process, and any backup in progress, keeps running. Opening Stellarshot again,
 from the applet or the launcher, brings the same window back rather than
 starting a second one.
 
+### Hooks
+
+A backup can run a command or program at four points:
+
+| Timing | When |
+| --- | --- |
+| **Before the backup** | Before anything is read. A failure here stops the backup from running at all |
+| **After a successful backup** | Once the backup has finished cleanly |
+| **After a failed backup** | Once the backup has failed |
+| **After the backup, either way** | Always, once the backup has finished |
+
+Stop a database before it runs and start it again after, or unmount a network
+share once a backup to it is done, for example. A hook's command line is split
+the same way the password command under **How the password is provided** is:
+without invoking a real shell, so it is never subject to shell injection — a
+small wrapper script covers a pipe or another shell operator if one is
+needed. A hook that runs longer than two minutes is killed and treated as a
+failure, so a stuck one cannot hang a backup forever.
+
+An **After** hook's own failure is recorded in the log but does not undo an
+already-finished backup or turn its success into a reported failure.
+
 ### How "Smart" decides what to keep
 
 A backup is only as trustworthy as the rules that delete from it, so here
@@ -429,6 +451,7 @@ The **Manage** section at the bottom of each backup's page:
 | Action | What happens |
 | --- | --- |
 | **When it runs → Change…** | Automatic backups on or off, how often, what to keep, and whether to free space |
+| **Hooks → Change…** | Commands or programs run before and after a backup — see [Hooks](#hooks) below |
 | **Check for damage → Check Now** | Verifies every snapshot, folder and index entry. It shows when it last ran |
 | **Free up space → Clean Up Now** | Forgets snapshots **Keep** no longer needs and deletes data nothing uses. It cannot be stopped once started |
 | **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
@@ -698,6 +721,7 @@ running as you can read.
 | `drives` | Mounted removable drives, and where a drive with a given ID is mounted now |
 | `dejadup` | Reading Déjà Dup's settings (never its password) and turning them into a backup |
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
+| `hooks` | Runs a backup's hooks: a `Before` failure stops the backup, an `After` failure is only logged |
 | `engine::maintenance` | Checks, forgetting by retention rules (this computer's snapshots only) and pruning |
 | `schedule` | Writing, enabling and removing each scheduled backup's systemd timer, and keeping them in line with the settings |
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |

@@ -439,8 +439,16 @@ A new backup engine behind one module, on the current rustic release.
 
 ## 0.5 — Automation and alerts
 
-- [ ] **Hooks**: commands or programs before and after a backup, on their own
-      page, with conditions for when each runs
+- [x] **Hooks**: commands or programs before and after a backup, on their own
+      page (a focused wizard step, `Wizard::hooks`, reached from the
+      profile page's Manage section, the same pattern `Wizard::schedule`
+      already used), with conditions for when each runs — before the
+      backup, after a success, after a failure, or after either. Split and
+      run the same way a password command is, without invoking a real
+      shell. A `Before` hook that fails stops the backup from running at
+      all; an `After` hook's failure is logged but does not undo an
+      already-finished backup. Proven against the real `--run` child
+      process, not only the pure hook-running logic in isolation
 - [ ] **Start a backup when a particular USB drive is connected**
 - [x] **Conditions for laptops**: on mains power, above a battery level, not
       on a metered or mobile connection, only on trusted Wi-Fi networks or a

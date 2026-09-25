@@ -313,6 +313,12 @@ error-keyring-unavailable = Das Passwort wurde geändert, konnte aber nicht im S
 error-delete-unsupported = Stellarshot kann die Daten dieses Ziels nicht selbst löschen. Entferne sie dort selbst, oder verwende „Entfernen“, um sie hier zu vergessen, ohne etwas zu löschen.
 change = Ändern …
 schedule-row = Wann sie läuft
+hooks-row = Hooks
+hooks-row-none = Keine Hooks eingerichtet
+hooks-row-count = { $count ->
+    [one] 1 Hook aktiviert
+   *[other] { $count } Hooks aktiviert
+}
 check-row = Auf Schäden prüfen
 check-row-last = Zuletzt geprüft { $when }
 check-row-never = Noch nie geprüft
@@ -390,12 +396,22 @@ wizard-block-metered-description = Überspringen, solange das System die aktuell
 wizard-require-trusted-network = Nur in einem vertrauten Netzwerk
 wizard-require-trusted-network-description = Überspringen, sofern keine Verbindung zu einem dieser WLANs besteht und kein VPN (Tailscale, WireGuard oder ein anderes) aktiv ist.
 wizard-network-placeholder = Netzwerkname
+wizard-hooks-title = Hooks für „{ $name }“
+wizard-hooks-intro = Einen Befehl oder ein Programm vor und nach dieser Sicherung ausführen: zum Beispiel eine Datenbank vorher anhalten oder eine Netzwerkfreigabe danach aushängen. Wird wie ein Passwort-Befehl aufgeteilt, ohne eine echte Shell aufzurufen.
+wizard-hooks-section = Hooks
+wizard-hook-name-placeholder = Name
+wizard-hook-command-placeholder = Befehl
+hook-timing-before = Vor der Sicherung
+hook-timing-after-success = Nach einer erfolgreichen Sicherung
+hook-timing-after-failure = Nach einer fehlgeschlagenen Sicherung
+hook-timing-after = Nach der Sicherung, so oder so
 notify-backup-failed = Sicherung „{ $name }“ fehlgeschlagen
 notify-cleanup-failed = Aufräumen von „{ $name }“ fehlgeschlagen
 notify-check-failed = Prüfung von „{ $name }“ fehlgeschlagen
 notify-open = Öffnen
 error-timed-out = Innerhalb von { $seconds } Sekunden kam keine Antwort. Die Verbindung ist vielleicht langsam, oder der Speicherdienst begrenzt die Anfragen. Prüfe deine Verbindung und versuche es erneut.
 error-conditions-not-met = Die Bedingungen wurden nicht erfüllt: { $reason }
+error-hook-failed = Ein Hook ist fehlgeschlagen, daher wurde die Sicherung nicht ausgeführt: { $reason }
 place-checking-for = Wird geprüft … { $time }
 wizard-creating = Wird erstellt … { $time }
 wizard-opening = Wird geöffnet … { $time }

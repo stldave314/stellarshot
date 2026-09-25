@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Open Stellarshot button. Closing the main window now minimizes it to the
   panel instead of quitting; launching Stellarshot again reopens the same
   window rather than a second one.
+- **Hooks**: run a command or program before and after a backup, from a
+  new page reached through Manage → Hooks. Before the backup, after a
+  success, after a failure, or after either. A failing `Before` hook stops
+  the backup from running.
 
 ### Fixed
 

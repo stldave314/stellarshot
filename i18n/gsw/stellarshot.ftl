@@ -313,6 +313,12 @@ error-keyring-unavailable = S Passwort isch gänderet worde, hät aber nöd im S
 error-delete-unsupported = Stellarshot cha d Date vo däm Ziel nöd sälber lösche. Entfern si dert sälber, oder bruuch «Entferne», zum si da z vergässe, ohni öppis z lösche.
 change = Ändere …
 schedule-row = Wänn si lauft
+hooks-row = Hooks
+hooks-row-none = Kei Hooks igrichtet
+hooks-row-count = { $count ->
+    [one] 1 Hook aktiviert
+   *[other] { $count } Hooks aktiviert
+}
 check-row = Uf Schäde prüefe
 check-row-last = Zletscht prüeft { $when }
 check-row-never = No nie prüeft
@@ -390,12 +396,22 @@ wizard-block-metered-description = Überspringe, solangs System die aktuelli Ver
 wizard-require-trusted-network = Nur i emene vertroute Netzwerk
 wizard-require-trusted-network-description = Überspringe, ausser me isch mit eim vo dene WLANs verbunde, oder e VPN (Tailscale, WireGuard oder anders) lauft.
 wizard-network-placeholder = Netzwerkname
+wizard-hooks-title = Hooks für «{ $name }»
+wizard-hooks-intro = En Befehl oder es Programm vor und nach dere Sicherig usfüehre: zum Bispil e Datebank vorhär aahalte oder e Netzwerkfreigab nachhär uushänke. Wird gliich uftteilt wie ne Passwort-Befehl, ohni e echti Shell ufzruefe.
+wizard-hooks-section = Hooks
+wizard-hook-name-placeholder = Name
+wizard-hook-command-placeholder = Befehl
+hook-timing-before = Vor de Sicherig
+hook-timing-after-success = Nach ere erfolgriiche Sicherig
+hook-timing-after-failure = Nach ere fehlgschlagene Sicherig
+hook-timing-after = Nach de Sicherig, so oder so
 notify-backup-failed = Sicherig «{ $name }» fählgschlage
 notify-cleanup-failed = Ufruume vo «{ $name }» fählgschlage
 notify-check-failed = Prüefig vo «{ $name }» fählgschlage
 notify-open = Öffne
 error-timed-out = Innert { $seconds } Sekunde isch kei Antwort cho. D Verbindig isch vilicht langsam, oder de Speicherdienscht begränzt d Aafrage. Lueg dini Verbindig aa und probier's nomal.
 error-conditions-not-met = D Bedingige sind nöd erfüllt gsi: { $reason }
+error-hook-failed = En Hook isch fehlgschlage, drum isch d Sicherig nöd gloffe: { $reason }
 place-checking-for = Wird prüeft … { $time }
 wizard-creating = Wird gmacht … { $time }
 wizard-opening = Wird ufgmacht … { $time }

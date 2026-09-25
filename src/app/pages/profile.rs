@@ -118,6 +118,7 @@ pub enum Message {
     CleanUpNow,
     CleanedUp(ChildEvent),
     EditSchedule,
+    EditHooks,
     EditPasswordCommand,
     ChangePassword,
     DeleteSnapshot(String),
@@ -166,6 +167,7 @@ pub enum Effect {
     OpenRestore(Secret),
     Edit,
     EditSchedule,
+    EditHooks,
     EditPasswordCommand,
     ChangePassword,
     Remove,
@@ -421,6 +423,7 @@ impl ProfileState {
                 effects
             }
             Message::EditSchedule => vec![Effect::EditSchedule],
+            Message::EditHooks => vec![Effect::EditHooks],
             Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
             Message::ChangePassword => vec![Effect::ChangePassword],
             Message::DeleteSnapshot(id) => self
@@ -615,6 +618,13 @@ impl ProfileState {
                         ))
                         .control(
                             widget::button::standard(fl!("change")).on_press(Message::EditSchedule),
+                        ),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("hooks-row"))
+                        .description(hooks_summary(&profile.hooks))
+                        .control(
+                            widget::button::standard(fl!("change")).on_press(Message::EditHooks),
                         ),
                 )
                 .add(
@@ -983,6 +993,16 @@ pub fn schedule_summary(schedule: Schedule) -> String {
         Schedule::Hourly => fl!("schedule-hourly"),
         Schedule::Daily => fl!("schedule-daily"),
         Schedule::Weekly => fl!("schedule-weekly"),
+    }
+}
+
+/// How many hooks are set up, as a sentence.
+fn hooks_summary(hooks: &[crate::profile::Hook]) -> String {
+    let enabled = hooks.iter().filter(|hook| hook.enabled).count();
+    if enabled == 0 {
+        fl!("hooks-row-none")
+    } else {
+        fl!("hooks-row-count", count = (enabled as i64))
     }
 }
 

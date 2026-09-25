@@ -237,6 +237,37 @@ impl Conditions {
     }
 }
 
+/// When a hook runs, relative to a backup. See [`crate::hooks`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HookTiming {
+    /// Before the backup starts. A failure stops the backup from running at
+    /// all, since the hook exists to make it safe to take (stopping a
+    /// database, say) and a backup taken without it may not be.
+    #[default]
+    Before,
+    /// After a successful backup.
+    AfterSuccess,
+    /// After a backup that failed.
+    AfterFailure,
+    /// After the backup, whether it succeeded or not.
+    After,
+}
+
+/// A command or program run before or after a backup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hook {
+    /// A short label: shown on the Hooks page and in the run history, never
+    /// passed to the command itself.
+    pub name: String,
+    /// Split the same way `password_command` is: without invoking a real
+    /// shell, so it is never subject to shell injection. A small wrapper
+    /// script covers a pipe or another shell operator if one is needed.
+    pub command: String,
+    pub timing: HookTiming,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 /// One backup the user has set up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -300,6 +331,9 @@ pub struct Profile {
     pub schedule: Schedule,
     #[serde(default)]
     pub conditions: Conditions,
+    /// Commands run before and after a backup. See [`crate::hooks`].
+    #[serde(default)]
+    pub hooks: Vec<Hook>,
     #[serde(default)]
     pub retention: Retention,
     /// Delete data no snapshot needs any more after forgetting. `None` means
@@ -338,6 +372,7 @@ impl Profile {
             append_only: false,
             schedule: Schedule::Manual,
             conditions: Conditions::default(),
+            hooks: Vec::new(),
             retention: Retention::KeepForever,
             prune: None,
             last_success: None,

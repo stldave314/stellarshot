@@ -50,6 +50,7 @@ pub fn explain(error: &EngineError) -> String {
         ErrorKind::ConditionsNotMet => {
             fl!("error-conditions-not-met", reason = error.detail.clone())
         }
+        ErrorKind::HookFailed => fl!("error-hook-failed", reason = error.detail.clone()),
         ErrorKind::Io | ErrorKind::Internal => {
             fl!("error-details", details = error.detail.clone())
         }

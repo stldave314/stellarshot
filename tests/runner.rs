@@ -11,6 +11,7 @@ use stellarshot::engine::{
     self, BackupRequest, ConflictPolicy, ErrorKind, KeepRules, Location, Phase, RestoreRequest,
     Secret, Target, lock,
 };
+use stellarshot::profile::{Hook, HookTiming};
 use stellarshot::runner::{Event, Job};
 use tempfile::TempDir;
 
@@ -372,4 +373,112 @@ fn runner_pins_a_snapshot_and_protects_it_from_maintain() {
     // The pin protects the oldest snapshot beyond what `last: 1` alone would
     // keep, so 2 remain: the newest and the pinned one.
     assert_eq!(fixture.snapshot_count(), 2);
+}
+
+#[test]
+fn a_before_hook_runs_before_the_backup_and_can_be_seen_by_it() {
+    let fixture = Fixture::new();
+    let marker = fixture.dir.path().join("before-ran");
+    let job = Job {
+        hooks: vec![Hook {
+            name: "make a marker".to_owned(),
+            command: format!("touch {}", marker.display()),
+            timing: HookTiming::Before,
+            enabled: true,
+        }],
+        ..fixture.backup_job(PASSWORD)
+    };
+
+    let (events, status) = fixture.run("backup", &job);
+
+    assert!(status.success(), "events: {events:?}");
+    assert!(marker.exists(), "the hook must have run before the backup");
+}
+
+#[test]
+fn a_failing_before_hook_stops_the_backup_from_running_at_all() {
+    let fixture = Fixture::new();
+    let job = Job {
+        hooks: vec![Hook {
+            name: "always fails".to_owned(),
+            command: "false".to_owned(),
+            timing: HookTiming::Before,
+            enabled: true,
+        }],
+        ..fixture.backup_job(PASSWORD)
+    };
+
+    let (events, status) = fixture.run("backup", &job);
+
+    assert_eq!(status.code(), Some(1));
+    match events.last() {
+        Some(Event::Error { error }) => assert_eq!(error.kind, ErrorKind::HookFailed),
+        other => panic!("expected a hook-failed error, got {other:?}"),
+    }
+    assert_eq!(
+        fixture.snapshot_count(),
+        0,
+        "the backup itself must never have run"
+    );
+}
+
+#[test]
+fn a_disabled_before_hook_does_not_run() {
+    let fixture = Fixture::new();
+    let marker = fixture.dir.path().join("should-not-exist");
+    let job = Job {
+        hooks: vec![Hook {
+            name: "disabled".to_owned(),
+            command: format!("touch {}", marker.display()),
+            timing: HookTiming::Before,
+            enabled: false,
+        }],
+        ..fixture.backup_job(PASSWORD)
+    };
+
+    let (_, status) = fixture.run("backup", &job);
+
+    assert!(status.success());
+    assert!(!marker.exists());
+}
+
+#[test]
+fn an_after_success_hook_runs_once_the_backup_has_actually_finished() {
+    let fixture = Fixture::new();
+    let marker = fixture.dir.path().join("after-ran");
+    let job = Job {
+        hooks: vec![Hook {
+            name: "make a marker".to_owned(),
+            command: format!("touch {}", marker.display()),
+            timing: HookTiming::AfterSuccess,
+            enabled: true,
+        }],
+        ..fixture.backup_job(PASSWORD)
+    };
+
+    let (events, status) = fixture.run("backup", &job);
+
+    assert!(status.success(), "events: {events:?}");
+    assert!(marker.exists());
+    assert_eq!(fixture.snapshot_count(), 1, "the backup itself still ran");
+}
+
+#[test]
+fn an_after_success_hook_does_not_run_after_a_failed_backup() {
+    let fixture = Fixture::new();
+    let marker = fixture.dir.path().join("should-not-exist");
+    let job = Job {
+        hooks: vec![Hook {
+            name: "make a marker".to_owned(),
+            command: format!("touch {}", marker.display()),
+            timing: HookTiming::AfterSuccess,
+            enabled: true,
+        }],
+        ..fixture.backup_job("wrong")
+    };
+
+    let (_, status) = fixture.run("backup", &job);
+
+    assert_eq!(status.code(), Some(1));
+    assert!(!marker.exists());
 }

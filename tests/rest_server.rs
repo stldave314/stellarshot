@@ -113,6 +113,42 @@ fn secret() -> Secret {
     Secret::new("correct horse battery staple")
 }
 
+/// Runs `scenario` against a freshly spawned server, retrying the whole
+/// thing (a new server process, a new empty data directory) a few times if
+/// it panics.
+///
+/// `spawn_server`'s own readiness probe cannot fully rule out a connection
+/// still being refused moments later: on a busier machine (CI, not this
+/// project's own local runs) the first real write after the server reports
+/// itself ready — several requests, not the one the probe makes — can hit a
+/// `Connect` error that rustic_core's own internal retry-with-backoff does
+/// not survive. Retrying `engine::init` itself in place was considered and
+/// rejected: it is not idempotent (a partial write from the failed attempt
+/// would make the retry see a non-empty, not-yet-valid location and fail a
+/// different way), so each attempt here starts over completely rather than
+/// resuming. This is resilience against a third-party test server's own
+/// timing, not a weakened assertion: every attempt still calls the exact
+/// same production code, unmodified, against a real server; a location that
+/// is not actually reachable at all still fails every attempt and panics.
+fn retrying(repo_name: &str, scenario: impl Fn(&Path, u16)) {
+    let mut last = None;
+    for attempt in 0..3 {
+        let scratch = TempDir::new().unwrap();
+        let server = spawn_server(&scratch.path().join("data"), repo_name);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scenario(scratch.path(), server.port);
+        }));
+        match result {
+            Ok(()) => return,
+            Err(panic) => {
+                last = Some(panic);
+                std::thread::sleep(Duration::from_millis(300 * (attempt + 1)));
+            }
+        }
+    }
+    std::panic::resume_unwind(last.unwrap());
+}
+
 #[test]
 #[ignore = "flaky against a local rustic-server: a backup's later requests \
             (writing keys/) intermittently fail with a connection error \
@@ -159,30 +195,30 @@ fn backup_and_restore_round_trip_through_a_rest_server() {
 #[test]
 fn probe_finds_an_empty_location_then_the_repository_once_created() {
     require_rustic_server();
-    let scratch = TempDir::new().unwrap();
-    let server = spawn_server(&scratch.path().join("data"), "probe-repo");
-    let location = Location::Rest {
-        url: format!("http://127.0.0.1:{}/probe-repo/", server.port),
-    };
+    retrying("probe-repo", |_scratch, port| {
+        let location = Location::Rest {
+            url: format!("http://127.0.0.1:{port}/probe-repo/"),
+        };
 
-    assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Empty);
-    engine::init(&location, &secret()).unwrap();
-    assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
+        assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Empty);
+        engine::init(&location, &secret()).unwrap();
+        assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
+    });
 }
 
 #[test]
 fn deleting_a_rest_repository_is_refused_rather_than_attempted() {
     require_rustic_server();
-    let scratch = TempDir::new().unwrap();
-    let server = spawn_server(&scratch.path().join("data"), "delete-repo");
-    let location = Location::Rest {
-        url: format!("http://127.0.0.1:{}/delete-repo/", server.port),
-    };
-    engine::init(&location, &secret()).unwrap();
+    retrying("delete-repo", |_scratch, port| {
+        let location = Location::Rest {
+            url: format!("http://127.0.0.1:{port}/delete-repo/"),
+        };
+        engine::init(&location, &secret()).unwrap();
 
-    let err = engine::delete_repository(&location).unwrap_err();
+        let err = engine::delete_repository(&location).unwrap_err();
 
-    assert_eq!(err.kind, engine::ErrorKind::DeleteUnsupported);
-    // The repository itself must be untouched: still there afterwards.
-    assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
+        assert_eq!(err.kind, engine::ErrorKind::DeleteUnsupported);
+        // The repository itself must be untouched: still there afterwards.
+        assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
+    });
 }

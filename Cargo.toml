@@ -64,6 +64,14 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
 # Stopping a backup together with the rclone process rustic starts under it.
 rustix = { version = "1", features = ["process", "fs"] }
+# Writing a systemd unit file so it either has its old content or its new
+# content after a crash, never empty or half-written: a plain `fs::write`
+# has neither an atomic rename nor an fsync of the file or its directory
+# before returning, so an unclean shutdown mid-write can leave a zero-byte
+# unit file behind, which breaks that backup's schedule until re-saved.
+# Already pulled in transitively by libcosmic; this is a direct dependency
+# on the exact same fork and revision, not a second copy.
+atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

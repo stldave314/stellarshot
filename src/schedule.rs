@@ -9,8 +9,11 @@
 //! goes into a unit file, only the executable's path, escaped for systemd,
 //! and the profile's ID, which must be letters, digits and dashes.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use atomicwrites::{AllowOverwrite, AtomicFile};
 
 use crate::debug::SCHED;
 use crate::profile::{Profile, Schedule};
@@ -135,11 +138,20 @@ fn systemctl(args: &[&str]) -> Result<(), String> {
 
 /// Write `text` to `path` unless it already holds exactly that. Returns
 /// whether anything changed.
+///
+/// Written to a temporary file in the same directory, fsynced, then renamed
+/// into place and the directory itself fsynced — not a plain `fs::write`,
+/// which has neither step: an unclean shutdown between its create-and-truncate
+/// and the write landing on disk can leave a zero-byte unit file behind,
+/// which then fails to parse and silently breaks that backup's schedule
+/// until it is saved again.
 fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
     if std::fs::read_to_string(path).is_ok_and(|existing| existing == text) {
         return Ok(false);
     }
-    std::fs::write(path, text).map_err(|err| format!("{}: {err}", path.display()))?;
+    AtomicFile::new(path, AllowOverwrite)
+        .write(|file| file.write_all(text.as_bytes()))
+        .map_err(|err| format!("{}: {}", path.display(), std::io::Error::from(err)))?;
     Ok(true)
 }
 
@@ -211,7 +223,7 @@ trait Manager {
 )]
 trait Unit {
     /// Whether systemd actually found a unit file by this name. `LoadUnit`
-    /// never fails for a name it does not recognise: it returns a path to
+    /// never fails for a name it does not recognize: it returns a path to
     /// an empty, "not-found" unit instead, so this is the only way to tell
     /// the two apart.
     #[zbus(property)]
@@ -360,5 +372,34 @@ mod tests {
             assert_eq!(service_text(Path::new("/usr/bin/stellarshot"), id), None);
             assert_eq!(timer_text(id, Schedule::Daily), None, "{id:?}");
         }
+    }
+
+    #[test]
+    fn a_written_unit_never_ends_up_empty_or_half_written() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("stellarshot-backup-test.timer");
+
+        assert!(write_if_changed(&path, "first version\n").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first version\n");
+
+        // A second write with the same content is a no-op, not just
+        // harmless: rewriting a file that need not change is exactly the
+        // extra, avoidable exposure to an interrupted write this exists to
+        // rule out.
+        assert!(!write_if_changed(&path, "first version\n").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first version\n");
+
+        // Changed content really does overwrite the old file, not merely
+        // create a new one beside it or append to it.
+        assert!(write_if_changed(&path, "second, longer version\n").unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "second, longer version\n"
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "no leftover temporary file beside the real one"
+        );
     }
 }

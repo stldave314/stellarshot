@@ -66,6 +66,21 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.4.0" date="2026-09-25">
+      <description>
+        <p>What is backed up, its history, and getting it back, and storage
+        and credentials.</p>
+        <ul>
+          <li>Exclude by pattern or a file of patterns, and leave out cache folders and anything .gitignore covers</li>
+          <li>Pin a snapshot so cleaning up never removes it, however old it gets</li>
+          <li>Restore options: verify files by content, and choose how ownership comes back</li>
+          <li>A REST server destination (rest-server, rustic-server), reached directly without rclone</li>
+          <li>A bandwidth limit, and a password from a command instead of the keyring</li>
+          <li>Several keys per backup, and changing a backup's password from its own page</li>
+          <li>Append-only mode: rustic itself then refuses to delete a snapshot, a guard against mistakes rather than attacks</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-24">
       <description>
         <p>Seeing what is going on: status, history, and repository statistics.</p>

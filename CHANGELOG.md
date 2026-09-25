@@ -5,11 +5,12 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-09-25
 
-A first slice of what is backed up, its history, and getting it back, and of
-storage and credentials — see ROADMAP.md's 0.3 and 0.4 sections for what is
-still to come.
+What is backed up, its history, and getting it back, and storage and
+credentials: exclusions, snapshot pinning, restore options, bandwidth
+limits, a password from a command, REST server destinations, several keys
+per backup, and append-only mode.
 
 ### Added
 

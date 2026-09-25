@@ -75,6 +75,14 @@ wizard-include = Inkludera
 wizard-exclude = Exkludera
 wizard-exclude-outside = Ligger inte i en inkluderad mapp, så den ändrar ingenting
 wizard-add-folders = Lägg till mappar…
+browse-open = Bläddra…
+browse-close = Stäng
+browse-scanning = Skannar… { $count } hittade hittills
+browse-mark-included = Inkluderad
+browse-mark-partial = Delvis inkluderad
+browse-mark-excluded = Exkluderad
+browse-include = Inkludera den här mappen
+browse-exclude = Exkludera den här mappen
 wizard-pick-sources = Välj mappar att säkerhetskopiera
 wizard-pick-excludes = Välj mappar att utelämna
 wizard-advanced = Avancerat
@@ -135,7 +143,7 @@ error-not-a-repository = Det finns ingen lagringsplats i { $path }.
 error-already-exists = { $path } innehåller redan en lagringsplats.
 error-destination-unavailable = { $path } kan inte nås. Om den finns på en flyttbar enhet eller en nätverksresurs, kontrollera att den är ansluten.
 error-locked = En annan säkerhetskopiering använder redan den här lagringsplatsen. Försök igen när den är klar.
-error-cancelled = Åtgärden avbröts. Ingenting ändrades.
+error-canceled = Åtgärden avbröts. Ingenting ändrades.
 error-repository-damaged = Kontrollen av lagringsplatsen hittade problem. Ta inte bort andra kopior av dina data förrän detta är löst.
 
 # About

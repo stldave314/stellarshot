@@ -50,7 +50,7 @@ snapshot you ever made.
   The card counts its running time, shows how much has reached cloud storage,
   and says what it is waiting for when the figures stand still. Backups run
   in their own process: the window never freezes, **Cancel** stops the backup
-  and the rclone connection under it at once, a cancelled or interrupted
+  and the rclone connection under it at once, a canceled or interrupted
   backup never leaves a half-written snapshot, and closing the window lets a
   running backup finish.
 - **Passwords remembered in your keyring**, if you want (it is on by default).
@@ -66,7 +66,7 @@ snapshot you ever made.
 - **Deleting never touches anything else.** Only the entries the repository
   format creates are removed; other files in the same folder stay, symlinks are
   not followed, and nothing is deleted while another backup is writing.
-- **Back up wherever suits you.** A folder, a **USB drive** (recognised by
+- **Back up wherever suits you.** A folder, a **USB drive** (recognized by
   its ID, so it still works when it is mounted somewhere new), an **SSH
   server**, **Google Drive** (you sign in from Stellarshot), or any of **your
   own rclone remotes**: OneDrive, Dropbox, S3 and everything else rclone
@@ -174,15 +174,19 @@ right-click menu).
 
 1. **What.** Your home folder is included, with `~/.cache`, the Trash and
    `~/Downloads` left out. **Add Folders…** under *Include* or *Exclude* adds
-   more (you can pick several at once). The estimate at the top updates as you
-   go, and once it has counted, it writes out the sum: what the included
-   folders hold, minus what the exclusions take out, equals the backup. An
-   exclusion that is not inside any included folder is marked as
+   more (you can pick several at once). **Browse…** on an included folder
+   opens a disk-usage tree rooted there instead: every row sized as it is
+   expanded, marked **Included**, **Excluded**, or **Partly included**, with
+   a button to flip it — an easier way to find what is actually taking up
+   space than guessing folder names ahead of time. The estimate at the top
+   updates as you go, and once it has counted, it writes out the sum: what the
+   included folders hold, minus what the exclusions take out, equals the
+   backup. An exclusion that is not inside any included folder is marked as
    changing nothing. Under **Advanced** you can leave out names that match a
    pattern anywhere, such as `*.tmp` or `node_modules`; choose whether to
    stay on the same drive (on by default, so a network share mounted inside
    your home folder is not swept up); leave out any folder tagged as
-   disposable cache data; honour each project's own `.gitignore`; and skip
+   disposable cache data; honor each project's own `.gitignore`; and skip
    recording a snapshot at all when nothing has changed since the last one.
    Patterns left out of every backup at once, rather than just this one, are
    set under [Settings](#settings).
@@ -190,7 +194,7 @@ right-click menu).
 
    | Choice | What you provide |
    | --- | --- |
-   | **Folder** | An empty folder. A folder on a USB drive is recognised as one automatically |
+   | **Folder** | An empty folder. A folder on a USB drive is recognized as one automatically |
    | **Removable drive** | One of the drives plugged in now, and a folder on it (`Stellarshot/<computer name>` by default) |
    | **Network server (SFTP)** | Server, user name, port and folder. Uses your SSH agent or keys; the server must already be in `~/.ssh/known_hosts` |
    | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive. **Use my own Google API credentials…** lets you sign in with a Google Cloud client of your own instead of the one rclone shares with everyone who has not set one up |
@@ -260,7 +264,7 @@ snapshot Déjà Dup made is there afterwards.
 
 Only backups in the **restic** format can be imported, which is what current
 Déjà Dup versions make. A backup in Déjà Dup's older duplicity format is
-recognised and refused, and stays readable in Déjà Dup. Déjà Dup's own
+recognized and refused, and stays readable in Déjà Dup. Déjà Dup's own
 settings are never changed; if its automatic backups are on, turn them off in
 Déjà Dup so the two apps do not both back up the same folders.
 
@@ -556,7 +560,7 @@ Only one process may write to a backup at a time. Wait for the other one to
 finish. If none is running, nothing is holding the lock either: it is released
 automatically when a process ends, even when it crashes.
 
-**Restore… is greyed out.**
+**Restore… is grayed out.**
 The backup needs to be unlocked (the password entered or remembered), hold at
 least one snapshot, and not be in the middle of a backup.
 
@@ -645,7 +649,7 @@ written to stderr too.
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
 process, `stellarshot --run <operation>`, because rustic cannot be interrupted
-once an operation starts and a process can. Cancelling kills the child's whole
+once an operation starts and a process can. Canceling kills the child's whole
 process group, so the `rclone` that rustic starts for SSH and cloud storage
 stops with it. The password reaches the child on stdin,
 never in its command line or environment, both of which other programs
@@ -715,12 +719,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and the
 ## Credits
 
 Stellarshot was created by **Aaron Honeycutt** and **Eduardo Flores** in the
-[cosmic-utils](https://github.com/cosmic-utils) organisation, with translations
+[cosmic-utils](https://github.com/cosmic-utils) organization, with translations
 from its contributors. This project continues from their work.
 
 Backups are made by [rustic](https://rustic.cli.rs/), a Rust implementation of
 the [restic](https://restic.net/) repository format.
 
-## Licence
+## License
 
 GPL-3.0-only. See [LICENSE](LICENSE).

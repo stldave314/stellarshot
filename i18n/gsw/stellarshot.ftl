@@ -75,6 +75,14 @@ wizard-include = Iischlüüsse
 wizard-exclude = Usschlüüsse
 wizard-exclude-outside = Isch i keim iigschlossene Ordner und ändert drum nüt
 wizard-add-folders = Ordner hinzuefüege …
+browse-open = Duresueche …
+browse-close = Schliesse
+browse-scanning = Wird gscannt … bis jetzt { $count } gfunde
+browse-mark-included = Iigschlosse
+browse-mark-partial = Teilwiis iigschlosse
+browse-mark-excluded = Usgschlosse
+browse-include = Dää Ordner iischlüüsse
+browse-exclude = Dää Ordner usschlüüsse
 wizard-pick-sources = Ordner zum Sichere wähle
 wizard-pick-excludes = Ordner zum Uuslah wähle
 wizard-advanced = Erwiiteret
@@ -135,7 +143,7 @@ error-not-a-repository = Under { $path } git's kei Archiv.
 error-already-exists = { $path } hät scho es Archiv drin.
 error-destination-unavailable = { $path } isch nöd erreichbar. Wänn's uf emne Wächseldatenträger oder emne Netzwerk-Ordner isch, lueg, öb's verbunde isch.
 error-locked = Es anders Sichere bruucht das Archiv grad. Probier's nomal, wänn's fertig isch.
-error-cancelled = De Vorgang isch abbroche worde. Es isch nüt veränderet worde.
+error-canceled = De Vorgang isch abbroche worde. Es isch nüt veränderet worde.
 error-repository-damaged = D Prüefig vom Archiv hät Problem gfunde. Lösch kei anderi Kopie vo dine Date, bis das glöst isch.
 
 # About

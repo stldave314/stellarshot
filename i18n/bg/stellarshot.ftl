@@ -75,6 +75,14 @@ wizard-include = Включване
 wizard-exclude = Изключване
 wizard-exclude-outside = Не е във включена папка, затова не променя нищо
 wizard-add-folders = Добавяне на папки…
+browse-open = Преглед…
+browse-close = Затваряне
+browse-scanning = Сканиране… досега открити { $count }
+browse-mark-included = Включена
+browse-mark-partial = Частично включена
+browse-mark-excluded = Изключена
+browse-include = Включване на тази папка
+browse-exclude = Изключване на тази папка
 wizard-pick-sources = Изберете папки за копиране
 wizard-pick-excludes = Изберете папки за пропускане
 wizard-advanced = Разширени
@@ -135,7 +143,7 @@ error-not-a-repository = В { $path } няма хранилище.
 error-already-exists = { $path } вече съдържа хранилище.
 error-destination-unavailable = { $path } е недостъпно. Ако е на преносимо устройство или мрежов ресурс, проверете дали е свързано.
 error-locked = Друго резервно копиране вече използва това хранилище. Опитайте отново, когато приключи.
-error-cancelled = Операцията беше отменена. Нищо не беше променено.
+error-canceled = Операцията беше отменена. Нищо не беше променено.
 error-repository-damaged = Проверката на хранилището откри проблеми. Не изтривайте други копия на данните си, докато това не бъде решено.
 
 # About

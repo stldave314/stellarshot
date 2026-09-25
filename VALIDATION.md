@@ -4,7 +4,7 @@ How Stellarshot is checked, what each check proves, and how to run it.
 
 The rule every check here follows: **a check that cannot fail is not a check.**
 Each one is written so that a missing fixture, an empty input or a skipped step
-produces a failure, not a green result. Security-relevant behaviour is proven
+produces a failure, not a green result. Security-relevant behavior is proven
 against real files and real binaries, never by reading the code.
 
 ## Running everything locally
@@ -26,12 +26,12 @@ again before publishing (`.github/workflows/release.yml`).
 
 ### Repository safety (`src/engine/location.rs`, `src/engine/tests.rs`)
 
-These guard against the upstream behaviour that could have deleted a home
+These guard against the upstream behavior that could have deleted a home
 directory. They run against real directories in temporary folders.
 
 | Test | What it proves |
 | --- | --- |
-| `delete_repository_leaves_foreign_files` | Deleting a repository removes every repository entry, leaves a neighbouring `Documents/report.odt` byte-for-byte intact, keeps the folder, and reports what it left |
+| `delete_repository_leaves_foreign_files` | Deleting a repository removes every repository entry, leaves a neighboring `Documents/report.odt` byte-for-byte intact, keeps the folder, and reports what it left |
 | `delete_repository_removes_the_folder_when_nothing_else_is_there` | A folder holding only a repository is removed completely |
 | `delete_refuses_a_folder_that_is_not_a_repository` | A folder without `config` and `keys` is refused, and nothing in it is touched |
 | `delete_does_not_follow_a_symlinked_entry` | A `snapshots` entry that is a symlink to another folder is removed as a link; the target's files survive |
@@ -143,8 +143,8 @@ the top, then reports an error instead of looping.
 
 A review of everything changed since 0.2.0 found nine real issues, ranked
 most to least severe below. All were fixed and covered by a test where the
-finding was about behaviour a test can exercise; the two that are purely
-about wording (an inaccurate doc comment, a claim about a rustic behaviour
+finding was about behavior a test can exercise; the two that are purely
+about wording (an inaccurate doc comment, a claim about a rustic behavior
 that turned out to be wrong once checked against its actual source) needed
 no test, only a correction.
 
@@ -155,7 +155,7 @@ no test, only a correction.
 | `redact_url` failed open: a URL whose password contains an unescaped `/`, `?` or `#` fails to parse at all, and the old code returned the original string, credentials and all, in that case | Returns a fixed, non-leaking placeholder instead when parsing fails, rather than guessing where credentials end | `redact_url_shows_nothing_of_a_url_it_cannot_parse`, plus `redact_url_removes_a_parseable_urls_credentials` and `redact_url_leaves_a_credential_free_url_alone` for the normal cases, none of which existed before (`src/engine/repo.rs`) |
 | A crafted or hand-edited settings export could carry a `password_command` through import even though a real export already clears it, and a bandwidth limit was hand-quoted into the rclone command string with a plain `'...'`, so a value containing a quote could end its own argument and start another — including `--password-command`, which rclone would then run | `merge` also clears `password_command` on import, not trusting the file; the rclone command is built with `shell_words::quote`, which cannot be broken out of | `a_password_command_from_an_untrusted_export_is_cleared_on_import` (`src/settings_export.rs`); `a_bandwidth_limit_cannot_inject_a_second_rclone_argument` (`src/engine/repo.rs`) |
 | Changing a backup's password ran in-process, skipping the cross-process write lock every other write takes, and a failed keyring update afterward was silently dropped — a scheduled backup could then keep failing with no explanation | Routed through the same `--run` child as every other write, which takes the lock and the logging fix above; a keyring failure now surfaces as its own error rather than nothing | Covered by the existing `changing_the_password_replaces_the_key_it_was_opened_with` and the four other key-management tests (`src/engine/tests.rs`), which already exercise `change_password` end to end; the lock and keyring-failure paths themselves are UI/process wiring not practical to unit test, same as the rest of `child.rs`'s process-spawning |
-| An append-only repository's own state was only recognised when Stellarshot created it — opening an existing one left the flag `false`, so Clean Up Now and pinning stayed offered and would then be refused by rustic itself | Read back from the repository itself (`is_append_only`) when opening, not assumed from the wizard's own toggle (which only exists at creation); Clean Up Now, pin and single-snapshot delete are now hidden for an append-only backup | `an_append_only_repository_refuses_to_forget_a_snapshot` (`src/engine/tests.rs`) proves the underlying setting; the UI gating itself is a `.then_some`/`.then` guard, the same pattern already used for `is_busy()` elsewhere, not separately unit tested |
+| An append-only repository's own state was only recognized when Stellarshot created it — opening an existing one left the flag `false`, so Clean Up Now and pinning stayed offered and would then be refused by rustic itself | Read back from the repository itself (`is_append_only`) when opening, not assumed from the wizard's own toggle (which only exists at creation); Clean Up Now, pin and single-snapshot delete are now hidden for an append-only backup | `an_append_only_repository_refuses_to_forget_a_snapshot` (`src/engine/tests.rs`) proves the underlying setting; the UI gating itself is a `.then_some`/`.then` guard, the same pattern already used for `is_busy()` elsewhere, not separately unit tested |
 | Pinning or deleting a single snapshot never marked the page busy, so a fast double-click could send a second request against a snapshot whose ID the first request had already rewritten, hitting an internal "no snapshot with that ID" | Both now go through the same single-flight `Work` tracking as a backup, check or clean-up | Not separately tested: the fix reuses `start`/`on_work`, already covered by the existing backup/check/clean-up tests exercising that same machinery |
 | A password command's own failure (a locked vault, a wrong command) was silently swallowed into the same generic "password not remembered" outcome, indistinguishable from never having set one at all, and had no timeout, so a command stuck on a prompt nobody could see would hang a `--scheduled` run forever | `Profile::password` now returns the real error separately from "nothing configured"; the command itself runs under a timeout with `kill_on_drop` | `a_failing_password_command_is_reported_rather_than_treated_as_unremembered` (`src/profile.rs`); `a_command_that_never_finishes_times_out_rather_than_hanging_forever` (`src/password_command.rs`) |
 | A missing or unreadable exclude-pattern file was silently ignored (`unwrap_or_default`), so a backup would quietly include whatever it was meant to leave out | Fails the backup with an `Io` error naming the file instead | `a_missing_pattern_file_fails_the_backup_rather_than_including_everything` (`src/engine/tests.rs`) |
@@ -183,6 +183,24 @@ the session's accessibility bus at all (`AT-SPI: Unable to open bus
 connection`), a sandboxing issue with the environment a demo instance
 needs rather than anything about Stellarshot's own code. Not yet retried;
 noted honestly in ROADMAP.md rather than claimed as verified live.
+
+### Browsing folders by size (`src/engine/disk_tree.rs`, `src/app/wizard/browse.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `files_are_sized_by_their_own_length`, `a_folders_size_is_everything_under_it`, `largest_comes_first` (`src/engine/disk_tree.rs`) | A file's size is its own length; a folder's is the real sum of everything under it, against a real temporary tree; rows come back largest first |
+| `a_symlink_counts_its_own_size_and_is_never_followed`, `a_symlink_cycle_does_not_hang` (`src/engine/disk_tree.rs`) | A symlink is sized as itself, not the target, and is never walked into — checked against a real symlink cycle (a folder linking back to its own ancestor), which a walk that did follow symlinks would spin on forever rather than return from |
+| `cancelling_stops_the_walk`, `an_unreadable_root_reports_an_error_not_an_empty_list` (`src/engine/disk_tree.rs`) | A set cancel flag stops a walk in progress rather than being ignored; a folder that cannot even be opened is a real error, not silently reported as holding nothing |
+| `opening_lists_the_root`, `toggling_an_unlisted_folder_requests_its_children`, `toggling_an_expanded_folder_collapses_it_without_a_new_request`, `marking_bubbles_up_rather_than_being_applied_here` (`src/app/wizard/browse.rs`) | Opening the browser requests the root's own children; expanding an unlisted folder asks for its children exactly once, not again if it is already expanded or already loading; collapsing needs no new request; marking a folder excluded is not applied by this module itself, only handed up to the wizard that owns the actual exclude list |
+| `mark_of_a_plain_folder_is_included`, `mark_of_a_listed_exclude_is_excluded`, `mark_of_an_ancestor_of_an_exclude_is_partial`, `mark_of_an_unrelated_folder_is_included` (`src/app/wizard/browse.rs`) | The three-way mark (Included / Excluded / Partly included) matches the wizard's own exclude list correctly in each case, including a folder that is not itself excluded but has an exclusion somewhere inside it |
+
+Not covered by an automated test, and not yet tried against the real, rendered window either: the layout itself (indentation, the disclosure arrow, the scrolling region) — the tests above exercise the state machine behind it, not what it looks like on screen.
+
+### Three bugs a live session surfaced, fixed the same day
+
+- **"Delete backup and all data" refused a backup whose data was already removed by hand**, treating "nothing here" the same as "this is not a repository" (a folder full of someone else's unrelated files) and refusing both identically. Fixed in `src/engine/location.rs` (local) and `src/engine/rclone.rs` (rclone) by classifying the three cases (empty, a real repository, something else entirely) separately rather than collapsing the first two together, and treating "empty" as a no-op success. `delete_succeeds_as_a_no_op_when_nothing_is_there_at_all` (both files) proves it against a real, genuinely-missing location — a second delete of an already-deleted repository is checked the same way, since that is exactly the shape of a user calling delete twice.
+- **A crash mid-write could leave a systemd unit file empty**, breaking a backup's schedule silently until it was saved again — found from a real hard freeze during this session, not reasoned about in the abstract. `src/schedule.rs`'s `write_if_changed` used a plain `fs::write`, with neither an atomic rename nor an fsync of the file or its directory. Fixed with `atomicwrites` (the same crate `cosmic-config` already uses internally for the profile list, confirmed by reading its own source rather than assumed). `a_written_unit_never_ends_up_empty_or_half_written` (`src/schedule.rs`) proves the write, the no-op-when-unchanged case, and the overwrite case together; `write_file` (`src/app/tasks.rs`, used for settings exports) gets the identical fix with no dedicated test of its own beyond the existing export round-trip tests, since the underlying mechanism is exactly the same one already proven in `schedule.rs`.
+- **A typed destination path (SSH server, Google Drive folder, custom rclone remote, REST URL) never checked itself**, unlike a folder picker or a drive selection, which check themselves the moment something is chosen — so a folder that already held a backup, or leftover files from an interrupted one, stayed unexplained until Check or Next was found and pressed. Fixed by adding `on_submit` (Enter) to every one of those fields in `src/app/wizard/place.rs`, the same trigger the wizard's own Name field already used to advance. No dedicated test: it is one line per field wiring an existing, already-tested message (`Message::Check`) to an existing, already-tested widget event, not new logic of its own.
 
 ### Scheduling (`src/schedule.rs`, `src/scheduled.rs`, `src/run_state.rs`, `tests/scheduled.rs`)
 
@@ -217,9 +235,9 @@ These run the real `stellarshot` binary, the way the window does.
 | `backup_finishes_after_the_window_goes_away` | Closing the reading end of the pipe mid-backup does not stop it; the snapshot is recorded |
 | `runner_restores_a_selection_keeping_both` | A selective restore through the child process, as the Restore button runs it: `done` carries the counts, the existing file is untouched, and exactly one dated copy appears |
 | `a_backup_streams_started_progress_and_done` | The window's stream yields `Started`, progress, then `Done` |
-| `cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Cancelled`, with no snapshot left behind |
+| `cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Canceled`, with no snapshot left behind |
 | `a_missing_executable_is_reported_not_hung` | If the child cannot start, the stream ends with an error instead of waiting forever |
-| `cancelling_a_backup_through_rclone_ends_it_and_stops_rclone` (`tests/rclone.rs`) | Cancel during a backup through rclone ends the stream as `Cancelled` within 30 seconds, and no `rclone serve` for the repository is left running. **Proven able to fail:** before the child ran in its own process group, the stream never ended (the orphaned rclone held its output open) and the test timed out |
+| `cancelling_a_backup_through_rclone_ends_it_and_stops_rclone` (`tests/rclone.rs`) | Cancel during a backup through rclone ends the stream as `Canceled` within 30 seconds, and no `rclone serve` for the repository is left running. **Proven able to fail:** before the child ran in its own process group, the stream never ended (the orphaned rclone held its output open) and the test timed out |
 
 ### Backup profiles (`src/profile.rs`)
 
@@ -236,7 +254,7 @@ These run the real `stellarshot` binary, the way the window does.
 | --- | --- |
 | `estimate_matches_the_backup` | With an exclusion nested inside an include, an overlapping include, a pattern and a hard link, the estimate **equals** the byte total the backup then reports; per-folder totals are exact too. This is the regression Déjà Dup has |
 | `exclude_through_a_symlinked_path_still_applies` (`src/engine/tests.rs`) | An exclusion written through a symlinked path (`/home` → `/var/home`) still leaves the folder out |
-| `estimate_respects_cancel` | A cancelled estimate stops and reports nothing, so a stale total never replaces a newer one |
+| `estimate_respects_cancel` | A canceled estimate stops and reports nothing, so a stale total never replaces a newer one |
 | `the_arithmetic_adds_up_to_the_estimate` | "Included − excluded = total" holds exactly; each excluded folder is sized, nested ones count once towards the total, and what only a pattern removes is reported apart |
 
 ### Storage through rclone (`tests/rclone.rs`, `src/engine/rclone.rs`)
@@ -252,7 +270,7 @@ if it is not; CI installs it.
 | --- | --- |
 | `backup_through_rclone_round_trips` | Create, back up and restore through rclone; the restored file matches, and no rclone is left running once the repositories are closed |
 | `rclone_probe_classifies_like_a_folder` | A missing folder, a folder of other files and a repository are told apart exactly as for a local folder |
-| `rclone_delete_leaves_foreign_files` | Deleting through rclone removes the repository's entries and leaves a neighbouring `report.odt` byte-for-byte intact |
+| `rclone_delete_leaves_foreign_files` | Deleting through rclone removes the repository's entries and leaves a neighboring `report.odt` byte-for-byte intact |
 | `rclone_delete_refuses_a_folder_that_is_not_a_repository` | Nothing is deleted from a folder that is not a repository |
 | `an_unreachable_remote_is_unavailable` | An undefined remote is `DestinationUnavailable`, not a crash or "not a repository" |
 | `sftp_remotes_check_host_keys` | Every SFTP remote carries `known_hosts_file`, so host keys are always checked |

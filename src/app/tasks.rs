@@ -11,6 +11,7 @@ use cosmic::dialog::file_chooser;
 use cosmic::iced::futures::{SinkExt, Stream, channel::mpsc};
 
 use crate::app::portal::url_to_path;
+use crate::app::wizard::browse;
 use crate::app::wizard::{EstimateEvent, Mode};
 use crate::debug::UI;
 use crate::debug_log;
@@ -27,7 +28,7 @@ pub async fn blocking<T: Send + 'static>(
         .unwrap_or_else(|err| Err(EngineError::new(ErrorKind::Internal, err.to_string())))
 }
 
-/// Ask for one or more folders. Cancelling returns an empty list.
+/// Ask for one or more folders. Canceling returns an empty list.
 pub async fn pick_folders(title: String) -> Vec<PathBuf> {
     match file_chooser::open::Dialog::new()
         .title(title)
@@ -115,7 +116,7 @@ pub async fn export_settings(profiles: Vec<Profile>) -> Result<String, String> {
 }
 
 /// Ask where to save an export, with `title` for the dialog. `Ok(None)` if
-/// the user cancelled.
+/// the user canceled.
 pub async fn choose_export_path(title: String) -> Option<PathBuf> {
     match file_chooser::save::Dialog::new()
         .title(title)
@@ -132,7 +133,7 @@ pub async fn choose_export_path(title: String) -> Option<PathBuf> {
 }
 
 /// Ask for a file to import, with `title` for the dialog. `Ok(None)` if the
-/// user cancelled.
+/// user canceled.
 pub async fn choose_import_path(title: String) -> Option<PathBuf> {
     match file_chooser::open::Dialog::new()
         .title(title)
@@ -147,11 +148,19 @@ pub async fn choose_import_path(title: String) -> Option<PathBuf> {
     }
 }
 
-/// Write `text` to `path`, off the UI thread.
+/// Write `text` to `path`, off the UI thread. Atomic and fsynced (see
+/// `schedule::write_if_changed`'s own doc comment for why a plain
+/// `fs::write` is not enough), so an interrupted export leaves either the
+/// old file or the new one, never an empty one.
 pub async fn write_file(path: PathBuf, text: String) -> Result<(), String> {
-    tokio::task::spawn_blocking(move || std::fs::write(&path, text).map_err(|err| err.to_string()))
-        .await
-        .map_err(|err| err.to_string())?
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        atomicwrites::AtomicFile::new(&path, atomicwrites::AllowOverwrite)
+            .write(|file| file.write_all(text.as_bytes()))
+            .map_err(|err| std::io::Error::from(err).to_string())
+    })
+    .await
+    .map_err(|err| err.to_string())?
 }
 
 /// Read and parse a settings export, off the UI thread.
@@ -197,7 +206,7 @@ pub async fn finish(
             // trusting the wizard's own toggle, which only exists for
             // `Mode::Create` — opening one made append-only by another
             // Stellarshot, or by `rustic`/`restic` directly, must still be
-            // recognised as such, or Clean Up Now and pinning would be
+            // recognized as such, or Clean Up Now and pinning would be
             // offered and then refused by rustic itself, and a schedule
             // would keep attempting a forget that can never succeed.
             let (append_only, snapshots) = blocking(move || {
@@ -267,6 +276,43 @@ pub fn estimate(
         }
         let _ = worker.await;
     })
+}
+
+/// List `dir`'s immediate children with their sizes, as a stream of wizard
+/// browse events. `cancel` stops the walk early, the same as `estimate`'s
+/// own, though nothing currently sets it — each request is for one
+/// directory's children, not a long-running walk expected to need
+/// interrupting, so this exists for the same reason `estimate`'s does
+/// rather than because it has been needed yet.
+pub fn browse_folder(dir: PathBuf, cancel: Arc<AtomicBool>) -> impl Stream<Item = browse::Message> {
+    cosmic::iced::stream::channel(
+        16,
+        move |mut out: mpsc::Sender<browse::Message>| async move {
+            let (progress_tx, mut progress_rx) = mpsc::channel::<browse::Message>(16);
+            let worker = tokio::task::spawn_blocking(move || {
+                let mut scanned = 0usize;
+                let mut tx = progress_tx.clone();
+                let result = engine::list_with_sizes(&dir, &cancel, &mut |_entry| {
+                    scanned += 1;
+                    let _ = tx.try_send(browse::Message::Progress(dir.clone(), scanned));
+                });
+                let mut tx = progress_tx;
+                let mut deliver = |event| {
+                    let _ = cosmic::iced::futures::executor::block_on(tx.send(event));
+                };
+                match result {
+                    Ok(Some(entries)) => deliver(browse::Message::Listed(dir, entries)),
+                    Ok(None) => {}
+                    Err(err) => deliver(browse::Message::Failed(dir, err.detail)),
+                }
+            });
+            use cosmic::iced::futures::StreamExt;
+            while let Some(event) = progress_rx.next().await {
+                let _ = out.send(event).await;
+            }
+            let _ = worker.await;
+        },
+    )
 }
 
 #[cfg(test)]

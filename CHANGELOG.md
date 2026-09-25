@@ -5,6 +5,41 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Browse folders with their sizes**: a "Browse…" button on each included
+  folder in the wizard's What step opens a disk-usage tree rooted there,
+  sizing each row on demand as it is expanded, with a mark for whether a
+  folder is going in whole, left out, or partly one and partly the other,
+  and a button to flip it.
+
+### Fixed
+
+- **"Delete backup and all data" no longer refuses a backup whose data was
+  already removed by hand** (directly at the storage, outside Stellarshot):
+  that used to be treated the same as "this is not a repository" and
+  refused outright, with no way past it to forget the backup locally.
+  Deleting something already gone now succeeds as a no-op.
+- **A crash or power loss during a write could leave a systemd unit file
+  empty**, silently breaking that backup's schedule until it was saved
+  again: writing one now goes to a temporary file, fsynced, then renamed
+  into place and the directory fsynced too, rather than a plain write with
+  neither step. The same fix applies to writing a settings export.
+- **Every typed destination path (an SSH server, a Google Drive folder, a
+  custom rclone remote, a REST server URL) now checks itself when you press
+  Enter**, not only when Check or Next is explicitly clicked: a folder
+  picker or a drive selection already checked themselves the moment
+  something was chosen, but a typed path stayed silent about what was
+  already there — a backup already at that path, or files left over from
+  an earlier interrupted one — until a button was found and pressed.
+- **The wizard's Google sign-in button now reads as acting on the
+  credentials above it**: entering a client ID and secret used to sit
+  below the Sign In button rather than above it, so nothing connected the
+  two, and it was easy to enter credentials and never realize Sign In was
+  the next step.
+
 ## [0.4.0] - 2026-09-25
 
 What is backed up, its history, and getting it back, and storage and
@@ -17,7 +52,7 @@ per backup, and append-only mode.
 - **Global exclusions**, under **Settings**: glob patterns such as
   `node_modules` or `target`, left out of every backup at once instead of
   added to each one.
-- **Leave out cache folders and honour `.gitignore`**, as two toggles in the
+- **Leave out cache folders and honor `.gitignore`**, as two toggles in the
   wizard's Advanced section.
 - **Skip empty backups**: a toggle so a backup records no snapshot when
   nothing has changed since the last one.
@@ -65,7 +100,7 @@ per backup, and append-only mode.
   keys. A keyring update that then fails is reported instead of silently
   leaving the keyring with the old, now-wrong password.
 - **An append-only repository opened rather than created by Stellarshot is
-  now recognised as one**, read back from the repository itself instead of
+  now recognized as one**, read back from the repository itself instead of
   assumed `false`; Clean Up Now, pinning and deleting a single snapshot are
   hidden for such a backup rather than offered and then refused by rustic.
 - **A settings export no longer includes a REST destination's credentials**,
@@ -211,7 +246,7 @@ checks and notifications.
   files.** The folder must be empty, not yet exist, or already be a
   repository.
 - **A wrong password never re-initialises an existing repository.** Upstream
-  initialised whenever opening failed, for any reason.
+  initialized whenever opening failed, for any reason.
 
 ### Added
 
@@ -258,7 +293,7 @@ checks and notifications.
   in the session's runtime directory, without restoring it.
 - **A "Restore Files" launcher action** (`stellarshot --restore`) that opens
   the selected backup's restore page as soon as it is unlocked.
-- **More places to keep a backup:** removable drives recognised by their
+- **More places to keep a backup:** removable drives recognized by their
   filesystem ID wherever they are mounted, SSH servers (through rclone, with
   host keys checked against `~/.ssh/known_hosts`), Google Drive with sign-in
   from Stellarshot, and any of the user's own rclone remotes. Stellarshot keeps
@@ -296,7 +331,7 @@ checks and notifications.
   with demo data.
 - **A new backup engine** on rustic 0.13 (from 0.2), in one module that is
   the only code touching rustic. Errors are typed (wrong password, not a
-  repository, destination unreachable, busy, cancelled, damaged) and each has
+  repository, destination unreachable, busy, canceled, damaged) and each has
   its own localized message.
 - **Backups run in the background, with progress and Cancel.** Each write runs
   in a `stellarshot --run` child process, so the window never freezes and a
@@ -313,7 +348,7 @@ checks and notifications.
   overwritten.
 - Error dialogs. Failures to create a repository, take or delete a snapshot, or
   delete a repository used to be logged and otherwise ignored.
-- The About page reads its version, licence and links from the package
+- The About page reads its version, license and links from the package
   manifest, and credits the original authors.
 - `install.sh`, the single path for building, installing and packaging
   (`.deb`, `.rpm`, tarball).

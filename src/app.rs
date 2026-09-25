@@ -118,11 +118,11 @@ pub enum Message {
     Dialog(DialogMessage),
     Noop,
     ExportSettings,
-    /// Chose where to save, or cancelled.
+    /// Chose where to save, or canceled.
     ExportChosen(Option<PathBuf>),
     ExportSaved(Result<(), String>),
     ImportSettings,
-    /// Chose a file to import, or cancelled.
+    /// Chose a file to import, or canceled.
     ImportChosen(Option<PathBuf>),
     ImportRead(Result<settings_export::Export, String>),
     /// The home screen's own way to switch to one backup's page.
@@ -711,6 +711,7 @@ impl App {
                     })
                 }
                 wizard::Effect::Place(effect) => self.run_place_effect(effect),
+                wizard::Effect::Browse(effect) => self.run_browse_effect(effect),
                 wizard::Effect::Estimate {
                     generation,
                     request,
@@ -795,6 +796,21 @@ impl App {
                     to_wizard(place::Message::Probed(probed.clone(), result))
                 })
             }
+        }
+    }
+
+    fn run_browse_effect(&mut self, effect: wizard::browse::Effect) -> Task<Message> {
+        match effect {
+            wizard::browse::Effect::List(dir) => Task::run(
+                tasks::browse_folder(
+                    dir,
+                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                ),
+                |message| app(Message::Wizard(wizard::Message::Browse(message))),
+            ),
+            // Applied directly in `Wizard::update`, not here: see its own
+            // comment for why.
+            wizard::browse::Effect::SetExcluded(..) => Task::none(),
         }
     }
 

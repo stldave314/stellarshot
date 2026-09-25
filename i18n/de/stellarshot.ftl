@@ -75,6 +75,14 @@ wizard-include = Einschließen
 wizard-exclude = Ausschließen
 wizard-exclude-outside = Liegt in keinem eingeschlossenen Ordner und ändert daher nichts
 wizard-add-folders = Ordner hinzufügen …
+browse-open = Durchsuchen …
+browse-close = Schließen
+browse-scanning = Wird gescannt … bisher { $count } gefunden
+browse-mark-included = Eingeschlossen
+browse-mark-partial = Teilweise eingeschlossen
+browse-mark-excluded = Ausgeschlossen
+browse-include = Diesen Ordner einschließen
+browse-exclude = Diesen Ordner ausschließen
 wizard-pick-sources = Zu sichernde Ordner wählen
 wizard-pick-excludes = Auszulassende Ordner wählen
 wizard-advanced = Erweitert
@@ -135,7 +143,7 @@ error-not-a-repository = Unter { $path } gibt es kein Archiv.
 error-already-exists = { $path } enthält bereits ein Archiv.
 error-destination-unavailable = { $path } ist nicht erreichbar. Wenn es sich auf einem Wechseldatenträger oder einer Netzwerkfreigabe befindet, prüfe, ob es verbunden ist.
 error-locked = Eine andere Sicherung verwendet dieses Archiv bereits. Versuche es erneut, wenn sie abgeschlossen ist.
-error-cancelled = Der Vorgang wurde abgebrochen. Es wurde nichts verändert.
+error-canceled = Der Vorgang wurde abgebrochen. Es wurde nichts verändert.
 error-repository-damaged = Die Prüfung des Archivs hat Probleme gefunden. Lösche keine anderen Kopien deiner Daten, bis das behoben ist.
 
 # About

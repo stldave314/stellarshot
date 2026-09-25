@@ -22,7 +22,7 @@ easier, or less useful than they looked. The design behind it is in
 ## M0 — Foundation (done)
 
 The project can be built, tested, packaged and released on its own, and the
-dangerous behaviour inherited from upstream is gone.
+dangerous behavior inherited from upstream is gone.
 
 - [x] Own application ID, desktop entry, AppStream metadata and icons, with the
       original authors credited
@@ -31,7 +31,7 @@ dangerous behaviour inherited from upstream is gone.
 - [x] **Safe repository deletion**: only the repository's own entries are
       removed, never the folder around them
 - [x] **Safe repository creation**: a folder holding other files is refused; an
-      existing repository is opened, never re-initialised
+      existing repository is opened, never re-initialized
 - [x] Folder names with spaces handled correctly (file-chooser URLs decoded)
 - [x] Errors shown to the user instead of being logged and dropped
 - [x] Developer logging to a file, compiled out of every release build, and a
@@ -49,7 +49,7 @@ A new backup engine behind one module, on the current rustic release.
 - [x] rustic 0.2 → 0.13, isolated in `src/engine/` so no other code touches it
 - [x] Reads (listing, browsing) on background threads; writes (backup, restore,
       maintenance) in a child process, `stellarshot --run`, so a backup can be
-      cancelled and a crash cannot take the window with it
+      canceled and a crash cannot take the window with it
 - [x] Progress reporting: phase, bytes done and total
 - [x] A per-repository lock shared by the window and scheduled runs
 - [x] Typed errors, each mapped to a message and an action
@@ -158,7 +158,7 @@ A new backup engine behind one module, on the current rustic release.
       the real size in storage, the compression ratio, and how much space
       could still be reclaimed, calculated on request since both read the
       whole repository
-- [x] **A home screen**, labelled **Overview** in the sidebar rather than
+- [x] **A home screen**, labeled **Overview** in the sidebar rather than
       "Home" so it is never confused with a backup a user has named that
       (an entirely plausible name for a home-folder backup): every backup
       with its status and a **View** button, every folder backed up on this
@@ -200,14 +200,25 @@ A new backup engine behind one module, on the current rustic release.
 
 ## 0.3 — What is backed up, its history, and getting it back
 
-- [ ] **Browse folders with their sizes** to include and exclude, like a disk
-      usage tree: sizes on every row, and clear marks for "this folder",
-      "everything inside" and "partly". Not started; the wizard's existing
-      estimate already sizes whole folders, but there is no drill-down tree
+- [x] **Browse folders with their sizes** to include and exclude, like a disk
+      usage tree: a "Browse…" button on each included folder in the wizard's
+      What step opens it, rooted there, with every row sized on demand as it
+      is expanded — a folder's size is everything under it, computed the
+      first time it is opened rather than the whole tree up front, so
+      browsing a large home folder does not mean walking all of it first.
+      Each folder shows **Included**, **Excluded**, or **Partly included**
+      (something inside it is excluded), and a button to flip that. Rooted
+      at an already-chosen source, not anywhere on disk: browsing only ever
+      adds or removes entries in the exclude list, never adds a new source,
+      so a folder already marked excluded can still be opened to see what
+      is being left out, but nothing under it can be individually
+      re-included — there is no way in Stellarshot's own exclude list to
+      say "this whole folder, except this one thing inside it", so the tree
+      does not offer a control that would quietly do nothing
 - [x] **Global exclusions** (`node_modules`, `.cache`, Rust `target`, …)
       applied to every backup, set once, under **Settings**
 - [x] **Exclusions that maintain themselves**: skip any folder marked as a
-      cache with a `CACHEDIR.TAG` file (`exclude_if_present`), and honour each
+      cache with a `CACHEDIR.TAG` file (`exclude_if_present`), and honor each
       project's `.gitignore` (`git_ignore`, and `no_require_git` so a
       `.gitignore` works even outside an actual git repository), both as
       toggles in the wizard's Advanced section
@@ -221,7 +232,7 @@ A new backup engine behind one module, on the current rustic release.
 - [x] **No empty snapshots**: when nothing changed, a backup records nothing
       (`skip_if_unchanged`), as a wizard toggle
 - [x] **Extended attributes** saved and restored (`set_xattrs`): already
-      rustic's own default behaviour, confirmed with a round-trip test rather
+      rustic's own default behavior, confirmed with a round-trip test rather
       than assumed; no Stellarshot code was needed
 - [ ] **Application settings instead of all of `~/.config`**: offer the
       settings of installed applications by name, and game saves (Proton,
@@ -386,7 +397,7 @@ A new backup engine behind one module, on the current rustic release.
       guarantee against someone with that password, only against
       Stellarshot's own tools never doing it by themselves. Opening an
       existing append-only repository (rather than creating one) still
-      recognises it as one, read back from the repository itself rather
+      recognizes it as one, read back from the repository itself rather
       than assumed. Forget and Prune are skipped for an append-only backup
       rather than attempted and failing every run, since rustic already
       refuses both against it; Clean Up Now, and pinning or deleting a
@@ -447,7 +458,7 @@ A new backup engine behind one module, on the current rustic release.
       and size but different content points at a failing disk
 - [ ] **A COSMIC applet**, optional and addable from the app or COSMIC
       Settings: running backups, last backup, errors, live through a D-Bus
-      bridge to the app. It also covers "minimise to the panel"
+      bridge to the app. It also covers "minimize to the panel"
 
 ## 1.0 — Hardening
 
@@ -468,7 +479,7 @@ A new backup engine behind one module, on the current rustic release.
       now set both. Attempted to confirm this live against a running
       instance's AT-SPI tree; the attempt itself failed on this machine (the
       accessibility bus could not be reached with the environment a demo
-      instance needs), not yet retried. Not attempted: colour contrast,
+      instance needs), not yet retried. Not attempted: color contrast,
       keyboard tab order through the wizard's own multi-step flow, and a
       real screen reader read-through
 - [x] **Screenshots**, regenerated for this release (`scripts/screenshots.sh`):
@@ -536,14 +547,14 @@ Questions to answer before anything is built.
   container, and finding the machines on the network, each with its own
   permissions
 - **Other desktops and systems**: GNOME, KDE, Windows, macOS, Android and
-  iOS, under the same licence where possible. libcosmic targets COSMIC first
+  iOS, under the same license where possible. libcosmic targets COSMIC first
 - **Tiered storage**: a snapshot lives in one repository, so "small files here,
   big files there" in one job is really two backups with complementary
   filters. rustic's hot/cold repositories (metadata kept fast, data in cheap
   storage) may give most of the saving more simply, with rustic's warm-up
   options (`warm_up_command`, `warm_up_wait`) for restoring from archive
   tiers such as Glacier that must be thawed first
-- **The licence**: moving away from GPL-3.0 would mean replacing everything
+- **The license**: moving away from GPL-3.0 would mean replacing everything
   the original authors and translators contributed, or their consent. The
   rustic crates are MIT or Apache-2.0 and libcosmic is MPL-2.0, so the
   dependencies do not force the choice

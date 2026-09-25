@@ -22,6 +22,7 @@ use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secre
 use crate::fl;
 use crate::profile::{Destination, Profile, Retention, Schedule, default_excludes};
 
+pub mod browse;
 pub mod place;
 
 /// What the wizard is for.
@@ -106,12 +107,13 @@ pub struct Wizard {
     name_chosen: bool,
     pub sources: Vec<PathBuf>,
     pub excludes: Vec<PathBuf>,
+    pub browse: browse::Browse,
     pub patterns: Vec<String>,
     pub pattern_input: String,
     pub one_file_system: bool,
     /// Leave out any folder containing a `CACHEDIR.TAG` file.
     pub exclude_caches: bool,
-    /// Honour each project's own `.gitignore`.
+    /// Honor each project's own `.gitignore`.
     pub git_ignore: bool,
     /// Write no snapshot when nothing changed since the last one.
     pub skip_if_unchanged: bool,
@@ -168,6 +170,7 @@ pub enum Message {
     Estimate(u64, EstimateEvent),
     Name(String),
     Place(place::Message),
+    Browse(browse::Message),
     Password(String),
     Confirm(String),
     TogglePasswordVisible,
@@ -190,6 +193,7 @@ pub enum Effect {
         excludes: bool,
     },
     Place(place::Effect),
+    Browse(browse::Effect),
     /// Walk what `request` covers, and size `exclude_folders`, reporting under
     /// `generation`.
     Estimate {
@@ -226,6 +230,7 @@ impl Wizard {
             name_chosen: false,
             sources: Vec::new(),
             excludes: Vec::new(),
+            browse: browse::Browse::default(),
             patterns: Vec::new(),
             pattern_input: String::new(),
             one_file_system: true,
@@ -576,7 +581,7 @@ impl Wizard {
         // stays at its default `false` for `Mode::Open`, which shows no
         // toggle for it; `tasks::finish` overwrites this with the truth
         // read back from the repository itself once it is opened, so an
-        // existing append-only repository is still recognised as one.
+        // existing append-only repository is still recognized as one.
         if new {
             profile.append_only = self.append_only;
         }
@@ -699,6 +704,26 @@ impl Wizard {
                     }
                 }
                 effects
+            }
+            Message::Browse(message) => {
+                let effects = self.browse.update(message);
+                let mut result = Vec::new();
+                for effect in effects {
+                    match effect {
+                        // A plain wizard-state change, not an async task:
+                        // handled here rather than bubbled to the
+                        // application, the same as `RemoveExclude` above.
+                        browse::Effect::SetExcluded(path, exclude) => {
+                            self.excludes.retain(|existing| *existing != path);
+                            if exclude {
+                                self.excludes.push(path);
+                            }
+                            result.extend(self.restart_estimate());
+                        }
+                        other => result.push(Effect::Browse(other)),
+                    }
+                }
+                result
             }
             Message::Password(password) => {
                 self.password = password;
@@ -874,10 +899,13 @@ impl Wizard {
                 .and_then(|sizes| sizes.get(index))
                 .map(|bytes| format::bytes(*bytes))
                 .unwrap_or_default();
-            include = include.add(path_row(source, size, Message::RemoveSource(index)));
+            include = include.add(source_row(source, size, index));
         }
         include = include
             .add(widget::button::text(fl!("wizard-add-folders")).on_press(Message::AddSources));
+        if let Some(tree) = self.browse.view(&self.excludes) {
+            include = include.add(tree.map(Message::Browse));
+        }
 
         let mut exclude = widget::settings::section().title(fl!("wizard-exclude"));
         for (index, path) in self.excludes.iter().enumerate() {
@@ -1170,6 +1198,29 @@ fn path_row(path: &Path, detail: String, remove: Message) -> Element<'_, Message
                 .tooltip(fl!("remove"))
                 .name(fl!("remove"))
                 .on_press(remove),
+        )
+        .into()
+}
+
+/// A source's row: the same as [`path_row`], with an added button to
+/// browse into it by size and mark subfolders excluded.
+fn source_row(path: &Path, detail: String, index: usize) -> Element<'_, Message> {
+    let spacing = theme::active().cosmic().spacing;
+    widget::settings::item::builder(format::path(path))
+        .description(detail)
+        .control(
+            widget::row::with_capacity(2)
+                .spacing(spacing.space_xxs)
+                .push(
+                    widget::button::standard(fl!("browse-open"))
+                        .on_press(Message::Browse(browse::Message::Open(path.to_path_buf()))),
+                )
+                .push(
+                    widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                        .tooltip(fl!("remove"))
+                        .name(fl!("remove"))
+                        .on_press(Message::RemoveSource(index)),
+                ),
         )
         .into()
 }

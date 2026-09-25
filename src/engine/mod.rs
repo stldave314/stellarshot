@@ -10,6 +10,7 @@
 mod backup;
 pub mod browse;
 pub mod cache_settings;
+pub mod disk_tree;
 mod error;
 mod estimate;
 mod keys;
@@ -26,6 +27,7 @@ mod uploads;
 
 pub use backup::{BackupReport, BackupRequest};
 pub use browse::{Browser, Change, DiffEntry, EntryKind, FileVersion, MissingEntry, TreeEntry};
+pub use disk_tree::{DiskEntry, list_with_sizes};
 pub use error::{EngineError, ErrorKind};
 pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdown};
 pub use keys::KeySummary;

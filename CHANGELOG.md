@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Download…" button on every row of the Browse tab saves a file as it was
   backed up, or a folder as a `.tar.gz`; the same button on an older version
   of a file downloads that version specifically.
+- **Conditions for a scheduled backup**: only on mains power, only above a
+  battery level, not on a metered connection, only on a trusted Wi-Fi
+  network or a VPN. A scheduled run that finds a condition unmet is skipped
+  quietly, the same way an unreachable destination already was; the next
+  slot tries again.
 
 ### Fixed
 

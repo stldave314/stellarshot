@@ -7,6 +7,7 @@
 //! drive the engine and the child process directly.
 
 pub mod app;
+pub mod conditions;
 pub mod constants;
 pub mod core;
 pub mod debug;

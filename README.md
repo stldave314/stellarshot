@@ -227,6 +227,13 @@ right-click menu).
    It is on for folders and drives on this computer and off for servers and
    cloud storage, which another computer may be backing up to at the same
    time.
+
+   While automatic backups are on, a **Conditions** section lets a laptop
+   skip a slot rather than run in a state you would not want it to: only on
+   mains power, only above a battery level, not on a connection marked
+   metered, or only on a trusted Wi-Fi network or a VPN (Tailscale,
+   WireGuard, or another). A slot skipped this way is quiet, the same as a
+   destination that is not reachable; the next one tries again.
 4. **Password.** Choose one and confirm it. **Remember password** keeps it in
    your keyring. Automatic backups need it remembered: they run when nobody
    is there to type it. While the backup is being created the button counts
@@ -437,7 +444,7 @@ next to it keeps one however old it gets, until unpinned.
 | `stellarshot --new-backup` | Open the window straight into the setup wizard (the launcher's **New Backup** action) |
 | `stellarshot --restore` | Open the selected backup's restore page as soon as it is unlocked (the launcher's **Restore Files** action) |
 | `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
-| `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable |
+| `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable or a laptop condition is not met |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
 ### Reading your backups without Stellarshot

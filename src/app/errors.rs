@@ -47,6 +47,9 @@ pub fn explain(error: &EngineError) -> String {
         ErrorKind::DeleteUnsupported => fl!("error-delete-unsupported"),
         ErrorKind::AuthFailed => fl!("error-auth-failed", details = error.detail.clone()),
         ErrorKind::TimedOut => fl!("error-timed-out", seconds = error.detail.clone()),
+        ErrorKind::ConditionsNotMet => {
+            fl!("error-conditions-not-met", reason = error.detail.clone())
+        }
         ErrorKind::Io | ErrorKind::Internal => {
             fl!("error-details", details = error.detail.clone())
         }

@@ -66,7 +66,7 @@ impl Plan {
 fn is_quiet(error: &EngineError) -> bool {
     matches!(
         error.kind,
-        ErrorKind::DestinationUnavailable | ErrorKind::Locked
+        ErrorKind::DestinationUnavailable | ErrorKind::Locked | ErrorKind::ConditionsNotMet
     )
 }
 
@@ -243,6 +243,19 @@ pub fn main(args: &[String]) -> ExitCode {
         }
     };
 
+    if let Err(reason) = runtime.block_on(crate::conditions::check(&profile.conditions)) {
+        debug_log!(SCHED, "{id} skipped: {reason}");
+        event_log::record(
+            id,
+            now(),
+            event_log::EventKind::Skipped {
+                kind: ErrorKind::ConditionsNotMet,
+            },
+        );
+        notify_if_overdue(&profile, &runtime);
+        return ExitCode::SUCCESS;
+    }
+
     let result = profile
         .location()
         .map_err(|err| Failed(Stage::Backup, err))
@@ -394,10 +407,11 @@ mod tests {
     }
 
     #[test]
-    fn only_unreachable_and_busy_repositories_are_skipped_quietly() {
+    fn only_unreachable_busy_or_condition_skipped_repositories_are_skipped_quietly() {
         let error = |kind| EngineError::new(kind, "");
         assert!(is_quiet(&error(ErrorKind::DestinationUnavailable)));
         assert!(is_quiet(&error(ErrorKind::Locked)));
+        assert!(is_quiet(&error(ErrorKind::ConditionsNotMet)));
         for kind in [
             ErrorKind::WrongPassword,
             ErrorKind::PasswordNotRemembered,

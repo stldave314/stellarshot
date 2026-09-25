@@ -49,6 +49,9 @@ pub enum ErrorKind {
     /// The storage did not answer in time. The detail is the limit, in
     /// seconds.
     TimedOut,
+    /// A scheduled backup's conditions (power, battery, network) were not
+    /// met. The detail says which.
+    ConditionsNotMet,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }

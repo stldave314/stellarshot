@@ -20,7 +20,7 @@ use cosmic::{Apply, Element, theme, widget};
 use crate::app::format;
 use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secret, SizeEstimate};
 use crate::fl;
-use crate::profile::{Destination, Profile, Retention, Schedule, default_excludes};
+use crate::profile::{Conditions, Destination, Profile, Retention, Schedule, default_excludes};
 
 pub mod browse;
 pub mod place;
@@ -73,6 +73,10 @@ const KEEP_CHOICES: [Retention; 5] = [
     Retention::KeepFor { days: 365 },
     Retention::KeepForever,
 ];
+
+/// The minimum battery level a scheduled backup can require, in the order
+/// the list shows them.
+const BATTERY_CHOICES: [Option<u8>; 5] = [None, Some(20), Some(30), Some(50), Some(80)];
 
 /// The size estimate as the wizard shows it.
 #[derive(Debug, Default)]
@@ -129,6 +133,11 @@ pub struct Wizard {
     /// Free up space automatically; `None` until the user chooses, which
     /// means the default for the destination.
     pub prune: Option<bool>,
+    /// When a scheduled run is allowed to actually run; see
+    /// [`crate::conditions`].
+    pub conditions: Conditions,
+    /// The trusted-network field's own text box.
+    pub network_input: String,
     /// rustic's own append-only mode. Only offered when creating a new
     /// backup: rustic's `config` command, the only way to change it,
     /// refuses every other change to an append-only repository, and
@@ -137,6 +146,7 @@ pub struct Wizard {
     pub append_only: bool,
     frequency_labels: Vec<String>,
     keep_labels: Vec<String>,
+    battery_labels: Vec<String>,
     pub password: String,
     pub confirm: String,
     pub password_hidden: bool,
@@ -180,6 +190,13 @@ pub enum Message {
     Keep(usize),
     Prune(bool),
     AppendOnly(bool),
+    RequireAc(bool),
+    MinBattery(usize),
+    BlockMetered(bool),
+    RequireTrustedNetwork(bool),
+    NetworkInput(String),
+    AddTrustedNetwork,
+    RemoveTrustedNetwork(usize),
     Back,
     Next,
     Cancel,
@@ -245,6 +262,8 @@ impl Wizard {
             frequency: Schedule::Daily,
             retention: Retention::Smart,
             prune: None,
+            conditions: Conditions::default(),
+            network_input: String::new(),
             append_only: false,
             frequency_labels: vec![
                 fl!("frequency-hourly"),
@@ -252,6 +271,7 @@ impl Wizard {
                 fl!("frequency-weekly"),
             ],
             keep_labels: Vec::new(),
+            battery_labels: BATTERY_CHOICES.iter().map(|c| battery_label(*c)).collect(),
             password: String::new(),
             confirm: String::new(),
             password_hidden: true,
@@ -355,6 +375,7 @@ impl Wizard {
         wizard.set_schedule(profile.schedule);
         wizard.retention = profile.retention;
         wizard.prune = profile.prune;
+        wizard.conditions = profile.conditions.clone();
         wizard.base = Some(profile.clone());
         wizard
     }
@@ -574,6 +595,7 @@ impl Wizard {
             profile.schedule = self.schedule;
             profile.retention = self.retention;
             profile.prune = self.prune;
+            profile.conditions = self.conditions.clone();
         }
         // Create-time only: Stellarshot exposes no way to change this once
         // set (see `Wizard::append_only`'s own doc comment), so it is never
@@ -763,6 +785,43 @@ impl Wizard {
             }
             Message::AppendOnly(on) => {
                 self.append_only = on;
+                Vec::new()
+            }
+            Message::RequireAc(on) => {
+                self.conditions.require_ac = on;
+                Vec::new()
+            }
+            Message::MinBattery(index) => {
+                if let Some(choice) = BATTERY_CHOICES.get(index) {
+                    self.conditions.min_battery_percent = *choice;
+                }
+                Vec::new()
+            }
+            Message::BlockMetered(on) => {
+                self.conditions.block_metered = on;
+                Vec::new()
+            }
+            Message::RequireTrustedNetwork(on) => {
+                self.conditions.require_trusted_network = on;
+                Vec::new()
+            }
+            Message::NetworkInput(text) => {
+                self.network_input = text;
+                Vec::new()
+            }
+            Message::AddTrustedNetwork => {
+                let network = self.network_input.trim().to_owned();
+                self.network_input.clear();
+                if network.is_empty() || self.conditions.trusted_networks.contains(&network) {
+                    return Vec::new();
+                }
+                self.conditions.trusted_networks.push(network);
+                Vec::new()
+            }
+            Message::RemoveTrustedNetwork(index) => {
+                if index < self.conditions.trusted_networks.len() {
+                    self.conditions.trusted_networks.remove(index);
+                }
                 Vec::new()
             }
             Message::Back => {
@@ -1101,12 +1160,74 @@ impl Wizard {
             );
         }
 
-        widget::column::with_capacity(3)
+        let mut column = widget::column::with_capacity(4)
             .spacing(spacing.space_m)
             .push(widget::text::body(fl!("wizard-when-intro")))
             .push(when)
-            .push(keep)
-            .into()
+            .push(keep);
+        if automatic {
+            column = column.push(self.conditions_view());
+        }
+        column.into()
+    }
+
+    fn conditions_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let battery_selected = BATTERY_CHOICES
+            .iter()
+            .position(|c| *c == self.conditions.min_battery_percent);
+        let mut section = widget::settings::section()
+            .title(fl!("wizard-conditions"))
+            .add(
+                widget::settings::item::builder(fl!("wizard-require-ac"))
+                    .description(fl!("wizard-require-ac-description"))
+                    .toggler(self.conditions.require_ac, Message::RequireAc),
+            )
+            .add(
+                widget::settings::item::builder(fl!("wizard-min-battery")).control(
+                    widget::dropdown(&self.battery_labels, battery_selected, Message::MinBattery),
+                ),
+            )
+            .add(
+                widget::settings::item::builder(fl!("wizard-block-metered"))
+                    .description(fl!("wizard-block-metered-description"))
+                    .toggler(self.conditions.block_metered, Message::BlockMetered),
+            )
+            .add(
+                widget::settings::item::builder(fl!("wizard-require-trusted-network"))
+                    .description(fl!("wizard-require-trusted-network-description"))
+                    .toggler(
+                        self.conditions.require_trusted_network,
+                        Message::RequireTrustedNetwork,
+                    ),
+            );
+        if self.conditions.require_trusted_network {
+            for (index, network) in self.conditions.trusted_networks.iter().enumerate() {
+                section = section.add(
+                    widget::settings::item::builder(network.clone()).control(
+                        widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                            .tooltip(fl!("remove"))
+                            .name(fl!("remove"))
+                            .on_press(Message::RemoveTrustedNetwork(index)),
+                    ),
+                );
+            }
+            section = section.add(
+                widget::row::with_capacity(2)
+                    .spacing(spacing.space_xs)
+                    .align_y(Alignment::Center)
+                    .push(
+                        widget::text_input(fl!("wizard-network-placeholder"), &self.network_input)
+                            .on_input(Message::NetworkInput)
+                            .on_submit(|_| Message::AddTrustedNetwork)
+                            .width(Length::Fill),
+                    )
+                    .push(
+                        widget::button::standard(fl!("add")).on_press(Message::AddTrustedNetwork),
+                    ),
+            );
+        }
+        section.into()
     }
 
     fn secure_view(&self) -> Element<'_, Message> {
@@ -1186,6 +1307,13 @@ pub fn retention_description(retention: Retention) -> String {
         Retention::Smart => fl!("keep-smart-description"),
         Retention::KeepForever => fl!("keep-forever-description"),
         Retention::KeepFor { days } => fl!("keep-for-description", days = (days as i64)),
+    }
+}
+
+fn battery_label(choice: Option<u8>) -> String {
+    match choice {
+        None => fl!("wizard-battery-none"),
+        Some(percent) => fl!("wizard-battery-percent", percent = (percent as i64)),
     }
 }
 
@@ -1661,5 +1789,65 @@ mod tests {
         );
         wizard.update(Message::Prune(false));
         assert!(!wizard.prune_enabled());
+    }
+
+    #[test]
+    fn a_new_backup_has_no_conditions() {
+        let (wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        assert_eq!(wizard.conditions, Conditions::default());
+    }
+
+    #[test]
+    fn conditions_round_trip_through_editing() {
+        let mut profile = scheduled_profile();
+        profile.conditions = Conditions {
+            require_ac: true,
+            min_battery_percent: Some(30),
+            block_metered: true,
+            require_trusted_network: true,
+            trusted_networks: vec!["Home".to_owned()],
+        };
+        let (mut wizard, _) = Wizard::schedule(&profile);
+        assert_eq!(wizard.conditions, profile.conditions);
+
+        let effects = wizard.update(Message::Next);
+        let saved = &finish_effect(&effects).expect("saving finishes").profile;
+        assert_eq!(saved.conditions, profile.conditions);
+    }
+
+    #[test]
+    fn setting_conditions_updates_them_one_at_a_time() {
+        let (mut wizard, _) = Wizard::schedule(&scheduled_profile());
+        wizard.update(Message::RequireAc(true));
+        assert!(wizard.conditions.require_ac);
+
+        let fifty = BATTERY_CHOICES.iter().position(|c| *c == Some(50)).unwrap();
+        wizard.update(Message::MinBattery(fifty));
+        assert_eq!(wizard.conditions.min_battery_percent, Some(50));
+
+        wizard.update(Message::BlockMetered(true));
+        assert!(wizard.conditions.block_metered);
+
+        wizard.update(Message::RequireTrustedNetwork(true));
+        assert!(wizard.conditions.require_trusted_network);
+    }
+
+    #[test]
+    fn trusted_networks_can_be_added_and_removed() {
+        let (mut wizard, _) = Wizard::schedule(&scheduled_profile());
+        wizard.update(Message::NetworkInput("Home".to_owned()));
+        wizard.update(Message::AddTrustedNetwork);
+        assert_eq!(wizard.conditions.trusted_networks, vec!["Home".to_owned()]);
+        assert_eq!(wizard.network_input, "", "the field clears after adding");
+
+        // Blank and duplicate entries are not added.
+        wizard.update(Message::NetworkInput("   ".to_owned()));
+        wizard.update(Message::AddTrustedNetwork);
+        wizard.update(Message::NetworkInput("Home".to_owned()));
+        wizard.update(Message::AddTrustedNetwork);
+        assert_eq!(wizard.conditions.trusted_networks, vec!["Home".to_owned()]);
+
+        wizard.update(Message::RemoveTrustedNetwork(0));
+        assert!(wizard.conditions.trusted_networks.is_empty());
     }
 }

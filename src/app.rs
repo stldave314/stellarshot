@@ -112,7 +112,7 @@ pub enum Message {
     /// A second passed while something shows a running time.
     WaitingTick,
     RestorePage(restore::Message),
-    WizardFinished(Result<tasks::Finished, EngineError>),
+    WizardFinished(Box<Result<tasks::Finished, EngineError>>),
     /// Installing or removing a backup's timer failed.
     ScheduleFailed(String),
     Dialog(DialogMessage),
@@ -727,7 +727,7 @@ impl App {
                 ),
                 wizard::Effect::Finish(finish) => Task::perform(
                     tasks::finish(finish.mode, finish.profile, finish.secret, finish.remember),
-                    |result| app(Message::WizardFinished(result)),
+                    |result| app(Message::WizardFinished(Box::new(result))),
                 ),
                 wizard::Effect::Close => {
                     self.wizard = None;
@@ -1976,7 +1976,7 @@ impl Application for App {
                 let effects = wizard.update(message);
                 return self.run_wizard_effects(effects);
             }
-            Message::WizardFinished(result) => return self.on_wizard_finished(result),
+            Message::WizardFinished(result) => return self.on_wizard_finished(*result),
             Message::RestorePage(message) => {
                 let Some((page, _)) = self.restore.as_mut() else {
                     return Task::none();

@@ -204,6 +204,39 @@ impl Retention {
     }
 }
 
+/// When a scheduled backup is allowed to actually run, beyond its time
+/// slot. Checked only for a run the timer starts; **Back Up Now** always
+/// runs regardless. See [`crate::conditions`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Conditions {
+    /// Skip while running on battery.
+    #[serde(default)]
+    pub require_ac: bool,
+    /// Skip below this battery percentage. `None` means no minimum.
+    #[serde(default)]
+    pub min_battery_percent: Option<u8>,
+    /// Skip on a connection the system has marked metered.
+    #[serde(default)]
+    pub block_metered: bool,
+    /// Skip unless connected to one of `trusted_networks` by name, or a VPN
+    /// interface (Tailscale, WireGuard, or any other) is up.
+    #[serde(default)]
+    pub require_trusted_network: bool,
+    #[serde(default)]
+    pub trusted_networks: Vec<String>,
+}
+
+impl Conditions {
+    /// Whether every condition is off: the common case, and the one where
+    /// a scheduled run should read no system state at all.
+    pub fn is_empty(&self) -> bool {
+        !self.require_ac
+            && self.min_battery_percent.is_none()
+            && !self.block_metered
+            && !self.require_trusted_network
+    }
+}
+
 /// One backup the user has set up.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -266,6 +299,8 @@ pub struct Profile {
     #[serde(default)]
     pub schedule: Schedule,
     #[serde(default)]
+    pub conditions: Conditions,
+    #[serde(default)]
     pub retention: Retention,
     /// Delete data no snapshot needs any more after forgetting. `None` means
     /// the default for the destination: see [`Profile::prune_enabled`].
@@ -302,6 +337,7 @@ impl Profile {
             password_command: String::new(),
             append_only: false,
             schedule: Schedule::Manual,
+            conditions: Conditions::default(),
             retention: Retention::KeepForever,
             prune: None,
             last_success: None,

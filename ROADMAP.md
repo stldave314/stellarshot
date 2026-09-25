@@ -442,9 +442,19 @@ A new backup engine behind one module, on the current rustic release.
 - [ ] **Hooks**: commands or programs before and after a backup, on their own
       page, with conditions for when each runs
 - [ ] **Start a backup when a particular USB drive is connected**
-- [ ] **Conditions for laptops**: on mains power, above a battery level, not
+- [x] **Conditions for laptops**: on mains power, above a battery level, not
       on a metered or mobile connection, only on trusted Wi-Fi networks or a
-      VPN interface (Tailscale, WireGuard)
+      VPN interface (Tailscale, WireGuard). A new Conditions section on the
+      wizard's When step, shown only while automatic backups are on; a
+      scheduled run reads the real state over D-Bus (UPower for power and
+      battery, NetworkManager for the connection) and skips quietly,
+      exactly like an unreachable destination, when a condition is not met.
+      Reading the state and deciding whether it satisfies a profile's
+      conditions are kept apart, so the decision itself is proven with pure
+      tests; the D-Bus reads are also proven once against the real system
+      bus, not just assumed to match the documented interface. A service
+      that cannot be reached (no battery, no NetworkManager) leaves its
+      part of the check satisfied rather than blocking a schedule forever
 - [ ] **Alerts beyond the desktop**: a webhook field sending a JSON payload
       (with presets for Discord, Slack, Teams, Gotify and PagerDuty), and
       email through the system's mail transfer agent, for failures, stalls

@@ -123,6 +123,19 @@ fn rclone_delete_refuses_a_folder_that_is_not_a_repository() {
     assert!(dir.join("notes.txt").exists());
 }
 
+/// A backup whose data was already removed by hand (directly at the cloud
+/// storage, outside Stellarshot) used to be stuck: deleting it from the app
+/// refused with "not a repository", and there was no way past that to
+/// forget the backup locally.
+#[test]
+fn rclone_delete_succeeds_as_a_no_op_when_nothing_is_there_at_all() {
+    require_rclone();
+    let scratch = TempDir::new().unwrap();
+    let location = through_rclone(scratch.path(), &scratch.path().join("never-existed"));
+
+    engine::delete_repository(&location).unwrap();
+}
+
 #[test]
 fn an_unreachable_remote_is_unavailable() {
     require_rclone();
@@ -226,12 +239,12 @@ fn cancelling_a_backup_through_rclone_ends_it_and_stops_rclone() {
         };
         tokio::time::timeout(std::time::Duration::from_secs(30), run)
             .await
-            .expect("the backup must end promptly once cancelled")
+            .expect("the backup must end promptly once canceled")
     });
 
     match last {
-        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, engine::ErrorKind::Cancelled),
-        other => panic!("expected the backup to end cancelled, got {other:?}"),
+        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, engine::ErrorKind::Canceled),
+        other => panic!("expected the backup to end canceled, got {other:?}"),
     }
     // rclone is stopped with the backup, not left serving the repository.
     let repo = repo.display().to_string();

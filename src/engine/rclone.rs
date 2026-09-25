@@ -192,13 +192,20 @@ fn classify(entries: &[&str]) -> Probe {
 
 /// Delete a repository at `remote:path`: only the entries the repository
 /// format creates, then the folder if it is left empty. Refuses a location
-/// that is not a repository.
+/// that holds something else, not a repository. Succeeds as a no-op if
+/// there is nothing there at all — the data could already have been
+/// removed by hand outside Stellarshot, and the state being asked for (no
+/// repository at this location) is already true.
 pub fn delete_repository(config: &Path, remote: &str, path: &str) -> Result<(), EngineError> {
-    if probe(config, remote, path)? != Probe::Repository {
-        return Err(EngineError::new(
-            ErrorKind::NotARepository,
-            target(remote, path),
-        ));
+    match probe(config, remote, path)? {
+        Probe::Empty => return Ok(()),
+        Probe::Repository => {}
+        Probe::NotEmpty => {
+            return Err(EngineError::new(
+                ErrorKind::NotARepository,
+                target(remote, path),
+            ));
+        }
     }
     for name in REPOSITORY_ENTRIES {
         let entry = target(remote, &join(path, name));

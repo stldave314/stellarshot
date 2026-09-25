@@ -4,7 +4,7 @@
 //!
 //! A repository is a handful of entries at the root of a folder. Upstream
 //! Stellarshot let a user pick any folder — including their home directory —
-//! initialised the repository *into* it, and then deleted a repository with
+//! initialized the repository *into* it, and then deleted a repository with
 //! `remove_dir_all` on that folder. Picking `~` and pressing Delete would have
 //! erased the home directory. Everything here exists to make that impossible:
 //! creation refuses a folder that already holds other things, and deletion only
@@ -53,14 +53,21 @@ pub fn check_init_location(path: &Path) -> io::Result<InitCheck> {
 /// empty.
 ///
 /// Returns the entries that were left in place because they are not part of
-/// the repository. Fails without touching anything if `path` is not a
-/// repository.
+/// the repository. Fails without touching anything if `path` holds
+/// something else, not a repository. Succeeds as a no-op if there is
+/// nothing there at all: the state the caller wants (no repository at
+/// `path`) is already true, so this is not a failure — the data could
+/// already have been removed by hand outside Stellarshot.
 pub fn delete_repository(path: &Path) -> io::Result<Vec<PathBuf>> {
-    if !is_repository(path) {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("{} is not a repository", path.display()),
-        ));
+    match check_init_location(path)? {
+        InitCheck::Empty => return Ok(Vec::new()),
+        InitCheck::ExistingRepository => {}
+        InitCheck::NotEmpty => {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} is not a repository", path.display()),
+            ));
+        }
     }
 
     for name in REPOSITORY_ENTRIES {
@@ -177,6 +184,28 @@ mod tests {
 
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
         assert!(tmp.path().join("notes.txt").exists());
+    }
+
+    /// A backup whose data was already removed by hand (outside
+    /// Stellarshot, directly at the storage) used to be stuck: "Delete
+    /// backup and all data" refused it as "not a repository", the same
+    /// error as for a folder holding someone else's unrelated files, with
+    /// no way to get past it and forget the backup locally.
+    #[test]
+    fn delete_succeeds_as_a_no_op_when_nothing_is_there_at_all() {
+        let tmp = TempDir::new().unwrap();
+        let gone = tmp.path().join("never-existed");
+
+        assert_eq!(delete_repository(&gone).unwrap(), Vec::<PathBuf>::new());
+
+        let repo = tmp.path().join("repo");
+        fake_repository(&repo);
+        delete_repository(&repo).unwrap();
+        assert!(!repo.exists(), "the first delete already removed it");
+
+        // A second delete of the same, now-empty location is not a failure
+        // either: the state asked for was already true.
+        assert_eq!(delete_repository(&repo).unwrap(), Vec::<PathBuf>::new());
     }
 
     #[cfg(unix)]

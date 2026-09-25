@@ -73,6 +73,10 @@ impl Mode {
 /// How often automatic backups run, in the order the list shows them.
 const FREQUENCIES: [Schedule; 3] = [Schedule::Hourly, Schedule::Daily, Schedule::Weekly];
 
+/// Shown after [`FREQUENCIES`], only when the destination is a removable
+/// drive: a backup triggered by connecting it has no fixed period.
+const ON_CONNECT: Schedule = Schedule::OnConnect;
+
 /// What to keep, in the order the list shows them: Déjà Dup's choices, with
 /// Smart first.
 const KEEP_CHOICES: [Retention; 5] = [
@@ -299,10 +303,15 @@ impl Wizard {
             hook_command_input: String::new(),
             hook_timing_input: HookTiming::default(),
             append_only: false,
+            // The 4th, "when the drive connects", is only ever shown once
+            // the destination is a removable drive, but is always here so
+            // `when_view` can slice into a stable, self-owned list rather
+            // than building one on every render.
             frequency_labels: vec![
                 fl!("frequency-hourly"),
                 fl!("frequency-daily"),
                 fl!("frequency-weekly"),
+                fl!("frequency-on-connect"),
             ],
             keep_labels: Vec::new(),
             battery_labels: BATTERY_CHOICES.iter().map(|c| battery_label(*c)).collect(),
@@ -600,6 +609,17 @@ impl Wizard {
             Step::Where => self.place_effects(self.place.enter()),
             Step::When => {
                 self.keep_labels = self.keep_labels();
+                // "When the drive connects" only makes sense for a
+                // removable-drive destination; a step back to "Where" could
+                // have changed it to something else since it was chosen.
+                if self.frequency == Schedule::OnConnect
+                    && !matches!(self.destination(), Some(Destination::Removable { .. }))
+                {
+                    self.frequency = Schedule::Hourly;
+                    if self.schedule == Schedule::OnConnect {
+                        self.schedule = Schedule::Hourly;
+                    }
+                }
                 Vec::new()
             }
             _ => Vec::new(),
@@ -816,7 +836,12 @@ impl Wizard {
                 Vec::new()
             }
             Message::Frequency(index) => {
-                if let Some(frequency) = FREQUENCIES.get(index) {
+                let removable = matches!(self.destination(), Some(Destination::Removable { .. }));
+                if let Some(frequency) = FREQUENCIES
+                    .iter()
+                    .chain(removable.then_some(&ON_CONNECT))
+                    .nth(index)
+                {
                     self.set_schedule(*frequency);
                 }
                 Vec::new()
@@ -1217,13 +1242,23 @@ impl Wizard {
                 .toggler(automatic, Message::Automatic),
         );
         if automatic {
-            let selected = FREQUENCIES.iter().position(|f| *f == self.frequency);
-            when =
-                when.add(
-                    widget::settings::item::builder(fl!("wizard-frequency")).control(
-                        widget::dropdown(&self.frequency_labels, selected, Message::Frequency),
-                    ),
-                );
+            let removable = matches!(self.destination(), Some(Destination::Removable { .. }));
+            let shown = if removable {
+                self.frequency_labels.len()
+            } else {
+                FREQUENCIES.len()
+            };
+            let selected = FREQUENCIES
+                .iter()
+                .chain(removable.then_some(&ON_CONNECT))
+                .position(|f| *f == self.frequency);
+            when = when.add(
+                widget::settings::item::builder(fl!("wizard-frequency")).control(widget::dropdown(
+                    &self.frequency_labels[..shown],
+                    selected,
+                    Message::Frequency,
+                )),
+            );
         }
 
         let selected = KEEP_CHOICES
@@ -2095,5 +2130,61 @@ mod tests {
         let effects = wizard.update(Message::Next);
         let saved = &finish_effect(&effects).expect("saving finishes").profile;
         assert_eq!(saved.hooks, profile.hooks);
+    }
+
+    fn removable_profile() -> Profile {
+        let mut profile = Profile::new(
+            "USB backup".into(),
+            Destination::Removable {
+                uuid: "1111-AAAA".into(),
+                relative_path: "backup".into(),
+                label: "Backup".into(),
+            },
+            vec!["/home/alex".into()],
+        );
+        profile.schedule = Schedule::Daily;
+        profile
+    }
+
+    #[test]
+    fn on_connect_is_only_offered_for_a_removable_destination() {
+        let (mut wizard, _) = Wizard::schedule(&removable_profile());
+        wizard.update(Message::Frequency(FREQUENCIES.len()));
+        assert_eq!(wizard.schedule, Schedule::OnConnect);
+
+        let (mut not_removable, _) = Wizard::schedule(&scheduled_profile());
+        not_removable.update(Message::Frequency(FREQUENCIES.len()));
+        assert_ne!(
+            not_removable.schedule,
+            Schedule::OnConnect,
+            "there is no 4th choice to select without a removable destination"
+        );
+    }
+
+    #[test]
+    fn on_connect_round_trips_through_editing_a_removable_backup() {
+        let mut profile = removable_profile();
+        profile.schedule = Schedule::OnConnect;
+        let (mut wizard, _) = Wizard::schedule(&profile);
+        assert_eq!(wizard.schedule, Schedule::OnConnect);
+
+        let effects = wizard.update(Message::Next);
+        let saved = &finish_effect(&effects).expect("saving finishes").profile;
+        assert_eq!(saved.schedule, Schedule::OnConnect);
+    }
+
+    #[test]
+    fn leaving_a_removable_destination_falls_back_off_on_connect() {
+        // Simulates stepping back to "Where" and changing the destination
+        // after choosing "when the drive connects": `advance` is what runs
+        // on entering "When", regardless of how the destination got there.
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
+        wizard.set_schedule(Schedule::OnConnect);
+        wizard.step = Step::Where;
+
+        wizard.advance();
+
+        assert_ne!(wizard.schedule, Schedule::OnConnect);
+        assert_ne!(wizard.frequency, Schedule::OnConnect);
     }
 }

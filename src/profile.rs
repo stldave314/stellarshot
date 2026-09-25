@@ -147,7 +147,7 @@ impl Destination {
     }
 }
 
-/// When backups run on their own, through a systemd user timer.
+/// When backups run on their own, through a systemd user timer or path unit.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Schedule {
     #[default]
@@ -155,15 +155,21 @@ pub enum Schedule {
     Hourly,
     Daily,
     Weekly,
+    /// As soon as the destination drive is connected, rather than on a
+    /// fixed timer. Only meaningful for a [`Destination::Removable`]
+    /// destination.
+    OnConnect,
 }
 
 impl Schedule {
     /// How often a backup on this schedule is expected, for judging whether
-    /// one has fallen overdue. `None` for `Manual`, which has no expectation.
+    /// one has fallen overdue. `None` for `Manual`, which has no
+    /// expectation, and for `OnConnect`, which depends on a drive being
+    /// plugged in rather than anything on a clock.
     pub fn period(self) -> Option<i64> {
         const HOUR: i64 = 3600;
         match self {
-            Self::Manual => None,
+            Self::Manual | Self::OnConnect => None,
             Self::Hourly => Some(HOUR),
             Self::Daily => Some(24 * HOUR),
             Self::Weekly => Some(7 * 24 * HOUR),
@@ -745,5 +751,13 @@ mod tests {
         let profile: Profile = ron::from_str(saved).unwrap();
         assert!(profile.one_file_system);
         assert_eq!(profile.schedule, Schedule::Manual);
+        assert!(profile.hooks.is_empty());
+    }
+
+    #[test]
+    fn on_connect_has_no_fixed_period() {
+        // Unlike a timer, there is nothing to be "overdue" against: it runs
+        // whenever the drive is next connected, not on a clock.
+        assert_eq!(Schedule::OnConnect.period(), None);
     }
 }

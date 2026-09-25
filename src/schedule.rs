@@ -16,7 +16,7 @@ use std::process::Command;
 use atomicwrites::{AllowOverwrite, AtomicFile};
 
 use crate::debug::SCHED;
-use crate::profile::{Profile, Schedule};
+use crate::profile::{Destination, Profile, Schedule};
 use crate::{debug_log, error_log};
 
 const PREFIX: &str = "stellarshot-backup-";
@@ -35,6 +35,15 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+/// A filesystem UUID safe to put in a unit file's `PathExists=` line. Real
+/// ones (the 8-4-4-4-12 hex form ext4, btrfs and xfs use; the shorter hex
+/// forms exFAT and NTFS use) all fit this shape.
+fn valid_uuid(uuid: &str) -> bool {
+    !uuid.is_empty()
+        && uuid.len() <= 64
+        && uuid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 pub fn service_name(id: &str) -> String {
     format!("{PREFIX}{id}.service")
 }
@@ -43,9 +52,16 @@ pub fn timer_name(id: &str) -> String {
     format!("{PREFIX}{id}.timer")
 }
 
+/// A path unit's own name: systemd starts the identically-named `.service`
+/// when the path it watches starts existing, the same as a `.timer` does on
+/// its own schedule.
+pub fn path_name(id: &str) -> String {
+    format!("{PREFIX}{id}.path")
+}
+
 fn on_calendar(schedule: Schedule) -> Option<&'static str> {
     match schedule {
-        Schedule::Manual => None,
+        Schedule::Manual | Schedule::OnConnect => None,
         Schedule::Hourly => Some("hourly"),
         Schedule::Daily => Some("daily"),
         Schedule::Weekly => Some("weekly"),
@@ -105,6 +121,26 @@ pub fn timer_text(id: &str, schedule: Schedule) -> Option<String> {
     ))
 }
 
+/// A `Persistent`-less path unit: unlike a timer, there is nothing to catch
+/// up on if the computer was off when the drive would have been connected —
+/// the next time it actually is, this fires.
+pub fn path_text(id: &str, uuid: &str) -> Option<String> {
+    if !valid_id(id) || !valid_uuid(uuid) {
+        return None;
+    }
+    Some(format!(
+        "# Written by Stellarshot; changes are overwritten.\n\
+         [Unit]\n\
+         Description=Stellarshot backup when its drive is connected\n\
+         \n\
+         [Path]\n\
+         PathExists=/dev/disk/by-uuid/{uuid}\n\
+         \n\
+         [Install]\n\
+         WantedBy=paths.target\n"
+    ))
+}
+
 /// This program's path, for the service to run. After a package upgrade
 /// replaces the binary, Linux reports the old one as "… (deleted)"; the
 /// path itself is still where the new one is.
@@ -155,50 +191,89 @@ fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Make the timer match the profile's schedule: installed and running, or
-/// gone.
+/// Write `unit_name`'s file (a timer or a path unit) and the service it
+/// triggers, and make sure it is enabled and running. `changed` decides
+/// whether to actually reload and restart it, or just make sure it is on:
+/// the same no-op-avoidance `write_if_changed` itself exists for.
+fn install(dir: &Path, id: &str, unit_name: &str, unit_text: &str) -> Result<(), String> {
+    let service = service_text(&executable()?, id)
+        .ok_or("the program's path or the backup's ID cannot go in a systemd unit")?;
+    let changed = write_if_changed(&dir.join(service_name(id)), &service)?
+        | write_if_changed(&dir.join(unit_name), unit_text)?;
+    if changed {
+        debug_log!(SCHED, "installed {unit_name}");
+        systemctl(&["daemon-reload"])?;
+        systemctl(&["enable", unit_name])?;
+        systemctl(&["restart", unit_name])
+    } else {
+        systemctl(&["enable", "--now", unit_name])
+    }
+}
+
+/// Stop and delete one leftover unit file, from a schedule this profile no
+/// longer uses (switched from a timer to a path unit, or back). Quiet if it
+/// was never there.
+fn remove_stale(dir: &Path, unit_name: &str) -> Result<(), String> {
+    let path = dir.join(unit_name);
+    if !path.exists() {
+        return Ok(());
+    }
+    if let Err(err) = systemctl(&["disable", "--now", unit_name]) {
+        debug_log!(SCHED, "disabling {unit_name}: {err}");
+    }
+    std::fs::remove_file(&path).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+/// Make the timer or path unit match the profile's schedule: installed and
+/// running, or gone.
 pub fn apply(profile: &Profile) -> Result<(), String> {
     if profile.schedule == Schedule::Manual {
         return remove(&profile.id);
     }
     let dir = unit_dir().ok_or("no configuration directory")?;
-    let service = service_text(&executable()?, &profile.id)
-        .ok_or("the program's path or the backup's ID cannot go in a systemd unit")?;
-    let timer = timer_text(&profile.id, profile.schedule).ok_or("the backup's ID is not usable")?;
     std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    let changed = write_if_changed(&dir.join(service_name(&profile.id)), &service)?
-        | write_if_changed(&dir.join(timer_name(&profile.id)), &timer)?;
-    let timer_unit = timer_name(&profile.id);
-    if changed {
-        debug_log!(SCHED, "installed {timer_unit} ({:?})", profile.schedule);
-        systemctl(&["daemon-reload"])?;
-        systemctl(&["enable", &timer_unit])?;
-        systemctl(&["restart", &timer_unit])
+    if profile.schedule == Schedule::OnConnect {
+        let Destination::Removable { uuid, .. } = &profile.destination else {
+            return Err(
+                "a schedule of \"when the drive connects\" needs a removable drive destination"
+                    .to_owned(),
+            );
+        };
+        let unit =
+            path_text(&profile.id, uuid).ok_or("the backup's ID or its drive is not usable")?;
+        remove_stale(&dir, &timer_name(&profile.id))?;
+        install(&dir, &profile.id, &path_name(&profile.id), &unit)
     } else {
-        systemctl(&["enable", "--now", &timer_unit])
+        let unit =
+            timer_text(&profile.id, profile.schedule).ok_or("the backup's ID is not usable")?;
+        remove_stale(&dir, &path_name(&profile.id))?;
+        install(&dir, &profile.id, &timer_name(&profile.id), &unit)
     }
 }
 
-/// Stop and delete a profile's timer and service. Succeeds if there were
-/// none.
+/// Stop and delete a profile's timer, path unit and service. Succeeds if
+/// there were none.
 pub fn remove(id: &str) -> Result<(), String> {
     let Some(dir) = unit_dir() else {
         return Ok(());
     };
     let timer = dir.join(timer_name(id));
+    let path_unit = dir.join(path_name(id));
     let service = dir.join(service_name(id));
-    if !timer.exists() && !service.exists() {
+    if !timer.exists() && !path_unit.exists() && !service.exists() {
         return Ok(());
     }
     // Disabling fails if systemd never loaded the unit; the files still go.
-    if let Err(err) = systemctl(&["disable", "--now", &timer_name(id)]) {
-        debug_log!(SCHED, "disabling {id}: {err}");
+    for unit_name in [timer_name(id), path_name(id)] {
+        if let Err(err) = systemctl(&["disable", "--now", &unit_name]) {
+            debug_log!(SCHED, "disabling {unit_name}: {err}");
+        }
     }
-    for path in [&timer, &service] {
-        match std::fs::remove_file(path) {
+    for file in [&timer, &path_unit, &service] {
+        match std::fs::remove_file(file) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(format!("{}: {err}", path.display())),
+            Err(err) => return Err(format!("{}: {err}", file.display())),
         }
     }
     debug_log!(SCHED, "removed the timer for {id}");
@@ -290,10 +365,10 @@ pub fn reconcile(profiles: &[Profile]) -> Vec<String> {
     };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(id) = name
-            .strip_prefix(PREFIX)
-            .and_then(|rest| rest.strip_suffix(".timer"))
-        else {
+        let Some(id) = name.strip_prefix(PREFIX).and_then(|rest| {
+            rest.strip_suffix(".timer")
+                .or_else(|| rest.strip_suffix(".path"))
+        }) else {
             continue;
         };
         let wanted = profiles
@@ -371,6 +446,26 @@ mod tests {
         for id in ["", "../../etc", "a b", "x;rm", &"a".repeat(65)] {
             assert_eq!(service_text(Path::new("/usr/bin/stellarshot"), id), None);
             assert_eq!(timer_text(id, Schedule::Daily), None, "{id:?}");
+            assert_eq!(path_text(id, "1111-AAAA"), None, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn a_path_unit_watches_the_drives_uuid() {
+        let unit = path_text(ID, "1111-AAAA-2222-BBBB").unwrap();
+        assert!(unit.contains("PathExists=/dev/disk/by-uuid/1111-AAAA-2222-BBBB\n"));
+        assert!(unit.contains("WantedBy=paths.target\n"));
+        assert_eq!(
+            timer_text(ID, Schedule::OnConnect),
+            None,
+            "no calendar makes sense for it"
+        );
+    }
+
+    #[test]
+    fn only_plain_uuids_go_into_path_units() {
+        for uuid in ["", "../../etc/passwd", "a b", "x;rm", &"a".repeat(65)] {
+            assert_eq!(path_text(ID, uuid), None, "{uuid:?}");
         }
     }
 

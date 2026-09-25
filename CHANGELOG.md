@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new page reached through Manage → Hooks. Before the backup, after a
   success, after a failure, or after either. A failing `Before` hook stops
   the backup from running.
+- **Start a backup when its drive is connected**: a 4th frequency choice
+  for a backup whose destination is a removable drive, alongside hourly,
+  daily and weekly. No fixed schedule to miss and catch up on — it just
+  runs the next time the drive is plugged in.
 
 ### Fixed
 

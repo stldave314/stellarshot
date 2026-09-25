@@ -449,7 +449,16 @@ A new backup engine behind one module, on the current rustic release.
       all; an `After` hook's failure is logged but does not undo an
       already-finished backup. Proven against the real `--run` child
       process, not only the pure hook-running logic in isolation
-- [ ] **Start a backup when a particular USB drive is connected**
+- [x] **Start a backup when a particular USB drive is connected**: a 4th
+      frequency choice, "When its drive is connected," offered only when
+      the backup's own destination is a removable drive. Reuses
+      `schedule.rs`'s existing systemd unit machinery: a `.path` unit
+      (`PathExists=/dev/disk/by-uuid/<uuid>`) in place of a `.timer`,
+      triggering the identical `stellarshot-backup-<id>.service` a
+      time-based schedule already uses, so nothing about `scheduled.rs`'s
+      own run logic needed to change. No udev rule and no root needed: a
+      user systemd path unit watching a `/dev/disk/by-uuid/` symlink, the
+      same permission level the existing timers already run at
 - [x] **Conditions for laptops**: on mains power, above a battery level, not
       on a metered or mobile connection, only on trusted Wi-Fi networks or a
       VPN interface (Tailscale, WireGuard). A new Conditions section on the

@@ -214,8 +214,10 @@ right-click menu).
    location that already holds other files is refused; one that already
    holds a backup is pointed out, so you can open it instead.
 3. **When.** **Back up automatically** is on, daily, by default; choose
-   hourly or weekly, or turn it off. **Keep** decides which old snapshots are
-   forgotten:
+   hourly or weekly, or turn it off. Backing up to a removable drive offers a
+   4th choice instead: **When its drive is connected**, which runs as soon as
+   the drive is plugged in rather than on a fixed schedule. **Keep** decides
+   which old snapshots are forgotten:
 
    | Keep | What stays |
    | --- | --- |
@@ -346,13 +348,16 @@ makes it read-only, and opens it with its usual application.
 ### Automatic backups
 
 A scheduled backup runs `stellarshot --scheduled <id>` from a systemd user
-timer, in the background and at low priority, whether or not the window is
-open. It backs up, forgets old snapshots under the **Keep** setting, checks
-the repository if the last check was 30 days ago or more, and then frees
-space if that is turned on.
+timer (or, for **When its drive is connected**, a systemd path unit watching
+for the drive instead), in the background and at low priority, whether or not
+the window is open. It backs up, forgets old snapshots under the **Keep**
+setting, checks the repository if the last check was 30 days ago or more, and
+then frees space if that is turned on.
 
-- **Missed runs catch up.** If the computer was off or asleep, the backup runs
-  shortly after you log in.
+- **Missed runs catch up.** If the computer was off or asleep, an hourly,
+  daily or weekly backup runs shortly after you log in. A drive-connected
+  backup has nothing to catch up on; it simply runs the next time the drive
+  is plugged in.
 - **An unplugged drive or no network** is not an error: the run is skipped and
   the next slot tries again. The page shows how long ago the last backup was.
 - **A laptop condition that is not met** (on battery, a metered connection, an
@@ -723,7 +728,7 @@ running as you can read.
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
 | `hooks` | Runs a backup's hooks: a `Before` failure stops the backup, an `After` failure is only logged |
 | `engine::maintenance` | Checks, forgetting by retention rules (this computer's snapshots only) and pruning |
-| `schedule` | Writing, enabling and removing each scheduled backup's systemd timer, and keeping them in line with the settings |
+| `schedule` | Writing, enabling and removing each scheduled backup's systemd timer or path unit, and keeping them in line with the settings |
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
 | `conditions` | Whether a laptop's power, battery and network state satisfy a scheduled backup's conditions; reading the real state (UPower, NetworkManager) and deciding are kept apart |
 | `run_state` | What happened when each backup last ran on its own, in cosmic-config's state store |

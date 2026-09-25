@@ -993,6 +993,7 @@ pub fn schedule_summary(schedule: Schedule) -> String {
         Schedule::Hourly => fl!("schedule-hourly"),
         Schedule::Daily => fl!("schedule-daily"),
         Schedule::Weekly => fl!("schedule-weekly"),
+        Schedule::OnConnect => fl!("schedule-on-connect"),
     }
 }
 

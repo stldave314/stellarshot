@@ -73,6 +73,13 @@ pub const WAITING_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 /// "not remembered" instead of a request that never ends.
 pub const KEYRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Longest wait for a `password_command`. Long enough for a password
+/// manager CLI to unlock a vault interactively once; short enough that one
+/// left stuck waiting on a prompt nobody can see (a GUI pinentry, a device
+/// that never got plugged in) fails instead of hanging a `--scheduled` run
+/// forever, silently skipping every timer fire after it.
+pub const PASSWORD_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// How often a scheduled backup also checks the repository for damage. A
 /// check reads every index and tree, which is slow on a large backup behind
 /// a slow connection, so it runs after a backup at most this often.

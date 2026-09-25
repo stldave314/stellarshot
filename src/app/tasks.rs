@@ -193,7 +193,19 @@ pub async fn finish(
         (Mode::Open, Some(secret)) => {
             let location = profile.location()?;
             let key = secret.clone();
-            let snapshots = blocking(move || engine::open(&location, &key)?.snapshots()).await?;
+            // Read back whether the repository is append-only rather than
+            // trusting the wizard's own toggle, which only exists for
+            // `Mode::Create` — opening one made append-only by another
+            // Stellarshot, or by `rustic`/`restic` directly, must still be
+            // recognised as such, or Clean Up Now and pinning would be
+            // offered and then refused by rustic itself, and a schedule
+            // would keep attempting a forget that can never succeed.
+            let (append_only, snapshots) = blocking(move || {
+                let repo = engine::open(&location, &key)?;
+                Ok((repo.is_append_only(), repo.snapshots()?))
+            })
+            .await?;
+            profile.append_only = append_only;
             if let Some(latest) = snapshots.first() {
                 profile.sources = latest.paths.iter().map(PathBuf::from).collect();
                 profile.last_success = Some(latest.time);
@@ -211,24 +223,6 @@ pub async fn finish(
         secret,
         snapshots,
     })
-}
-
-/// Change a backup's password: add a key for `new_password`, then remove
-/// the one `secret` opened it with. If the old password was remembered in
-/// the keyring, replaces it there with the new one, so a scheduled backup
-/// keeps working; otherwise leaves it unremembered, as it was.
-pub async fn change_password(
-    profile: Profile,
-    secret: Secret,
-    new_password: Secret,
-) -> Result<Secret, EngineError> {
-    let location = profile.location()?;
-    let key = new_password.clone();
-    blocking(move || engine::open(&location, &secret)?.change_password(key.expose())).await?;
-    if keyring::load(&profile.id).await.is_some() {
-        let _ = keyring::store(&profile.id, &profile.name, &new_password).await;
-    }
-    Ok(new_password)
 }
 
 /// Size what `request` covers, then what its exclusions take out, including

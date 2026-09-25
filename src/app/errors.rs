@@ -11,7 +11,10 @@ use crate::fl;
 /// translated, under a localized heading.
 pub fn describe(context: &str, error: &EngineError) -> String {
     match error.kind {
-        ErrorKind::Cancelled => explain(error),
+        // Both already say everything there is to say on their own: prefixing
+        // "X failed" ahead of "the password changed, but..." or "cancelled"
+        // would read as contradicting itself.
+        ErrorKind::Cancelled | ErrorKind::KeyringUnavailable => explain(error),
         _ => format!("{context}\n\n{}", explain(error)),
     }
 }
@@ -38,6 +41,10 @@ pub fn explain(error: &EngineError) -> String {
         ErrorKind::RepositoryDamaged => fl!("error-repository-damaged"),
         ErrorKind::RcloneMissing => fl!("error-rclone-missing"),
         ErrorKind::PasswordNotRemembered => fl!("error-password-not-remembered"),
+        ErrorKind::KeyringUnavailable => {
+            fl!("error-keyring-unavailable", details = error.detail.clone())
+        }
+        ErrorKind::DeleteUnsupported => fl!("error-delete-unsupported"),
         ErrorKind::AuthFailed => fl!("error-auth-failed", details = error.detail.clone()),
         ErrorKind::TimedOut => fl!("error-timed-out", seconds = error.detail.clone()),
         ErrorKind::Io | ErrorKind::Internal => {

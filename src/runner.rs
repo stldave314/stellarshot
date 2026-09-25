@@ -286,13 +286,18 @@ pub fn run(
 /// Entry point for `stellarshot --run <operation>`. `args` are the arguments
 /// after `--run`.
 pub fn main(args: &[String]) -> ExitCode {
+    // Every real backup, restore or clean-up runs here, never in the
+    // window's own process, so this is what actually needs rustic's and
+    // rclone's own diagnostics to reach the log, not just the window seeing
+    // them for in-process reads.
+    crate::app::settings::set_logger_for_child();
     // Applies the cache location preference to every repository this
     // process opens; the rest of the app's settings go unused here.
     let _ = crate::app::config::StellarshotConfig::config();
 
     let Some(operation) = args.first().and_then(|arg| Operation::from_arg(arg)) else {
         eprintln!(
-            "usage: stellarshot --run <backup|restore|check|delete-snapshots|maintain> < job.json"
+            "usage: stellarshot --run <backup|restore|check|delete-snapshots|set-pinned|maintain|change-password> < job.json"
         );
         return ExitCode::from(2);
     };

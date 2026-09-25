@@ -10,6 +10,7 @@
 //! cost of not supporting pipes or other shell operators directly. A small
 //! wrapper script covers that if it is ever needed.
 
+use crate::constants::PASSWORD_COMMAND_TIMEOUT;
 use crate::engine::{EngineError, ErrorKind, Secret};
 
 /// Run `command` and use its standard output, with one trailing newline
@@ -17,6 +18,16 @@ use crate::engine::{EngineError, ErrorKind, Secret};
 /// as the password. Never logs the command's output, only whether it
 /// succeeded.
 pub async fn run(command: &str) -> Result<Secret, EngineError> {
+    run_with_timeout(command, PASSWORD_COMMAND_TIMEOUT).await
+}
+
+/// [`run`], with the timeout given explicitly so a test can use one far
+/// shorter than [`PASSWORD_COMMAND_TIMEOUT`] against a command that never
+/// finishes, rather than actually waiting out the real one.
+async fn run_with_timeout(
+    command: &str,
+    timeout: std::time::Duration,
+) -> Result<Secret, EngineError> {
     let args = shell_words::split(command)
         .map_err(|err| EngineError::new(ErrorKind::Internal, format!("password command: {err}")))?;
     let Some((program, args)) = args.split_first() else {
@@ -25,11 +36,22 @@ pub async fn run(command: &str) -> Result<Secret, EngineError> {
             "the password command is empty",
         ));
     };
-    let output = tokio::process::Command::new(program)
-        .args(args)
-        .output()
-        .await
-        .map_err(|err| EngineError::new(ErrorKind::Internal, format!("password command: {err}")))?;
+    // `kill_on_drop` plus wrapping the whole run in a timeout: a command
+    // stuck waiting on a prompt nobody can see (a GUI pinentry, a hardware
+    // key never plugged in) fails cleanly instead of hanging whatever
+    // called this forever — a `--scheduled` run especially, which would
+    // otherwise leave its systemd unit "active" and silently skip every
+    // later timer fire rather than ever trying again.
+    let output = tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(program)
+            .args(args)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| EngineError::new(ErrorKind::TimedOut, timeout.as_secs().to_string()))?
+    .map_err(|err| EngineError::new(ErrorKind::Internal, format!("password command: {err}")))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(EngineError::new(
@@ -94,5 +116,13 @@ mod tests {
     async fn unmatched_quoting_is_reported_rather_than_run_incorrectly() {
         let err = run("echo '").await.unwrap_err();
         assert!(err.detail.contains("password command"));
+    }
+
+    #[tokio::test]
+    async fn a_command_that_never_finishes_times_out_rather_than_hanging_forever() {
+        let err = run_with_timeout("sleep 120", std::time::Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::TimedOut);
     }
 }

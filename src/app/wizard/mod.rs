@@ -128,9 +128,10 @@ pub struct Wizard {
     /// means the default for the destination.
     pub prune: Option<bool>,
     /// rustic's own append-only mode. Only offered when creating a new
-    /// backup: it cannot be turned on later, since rustic's `config`
-    /// command, the only way to change it, itself stops working once it
-    /// is set.
+    /// backup: rustic's `config` command, the only way to change it,
+    /// refuses every other change to an append-only repository, and
+    /// Stellarshot offers no way to run the one change it still allows
+    /// (turning append-only back off), so from here there is no way back.
     pub append_only: bool,
     frequency_labels: Vec<String>,
     keep_labels: Vec<String>,
@@ -569,9 +570,13 @@ impl Wizard {
             profile.retention = self.retention;
             profile.prune = self.prune;
         }
-        // Create-time only: rustic's `config` command, the only way to
-        // change this later, stops working once it is set, so it is never
-        // revisited through `Step::When` on an existing profile.
+        // Create-time only: Stellarshot exposes no way to change this once
+        // set (see `Wizard::append_only`'s own doc comment), so it is never
+        // revisited through `Step::When` on an existing profile. `self.append_only`
+        // stays at its default `false` for `Mode::Open`, which shows no
+        // toggle for it; `tasks::finish` overwrites this with the truth
+        // read back from the repository itself once it is opened, so an
+        // existing append-only repository is still recognised as one.
         if new {
             profile.append_only = self.append_only;
         }

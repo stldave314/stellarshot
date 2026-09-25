@@ -253,10 +253,14 @@ pub struct Profile {
     /// word "password" appear in it at all, matching a plain empty backup.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password_command: String,
-    /// Set once, at creation: rustic's own append-only mode, so a
-    /// compromised account cannot delete this backup's history. Guarded by
-    /// rustic itself, not just Stellarshot's own UI; see
-    /// [`Profile::prune_enabled`] and the wizard's Where step.
+    /// Set once, at creation: rustic's own append-only mode, a guard against
+    /// Stellarshot itself (or a scheduled run) mistakenly deleting this
+    /// backup's history, not against an attacker with the repository's own
+    /// password — `rustic`'s own `config` command can still turn this back
+    /// off with nothing more than that same password, which is also all a
+    /// compromised account would need. Guarded by rustic itself, not just
+    /// Stellarshot's own UI; see [`Profile::prune_enabled`] and the wizard's
+    /// When step.
     #[serde(default)]
     pub append_only: bool,
     #[serde(default)]
@@ -325,15 +329,20 @@ impl Profile {
     }
 
     /// The password to open this backup's repository with, right now: from
-    /// `password_command` if one is set, the keyring otherwise. `None` means
-    /// neither had one — the same as an unremembered password today, so a
-    /// caller with an existing "ask for it" fallback needs no change.
-    pub async fn password(&self) -> Option<Secret> {
+    /// `password_command` if one is set, the keyring otherwise. `Ok(None)`
+    /// means neither had one — the same as an unremembered password today,
+    /// so a caller with an existing "ask for it" fallback needs no change.
+    /// `Err` means a `password_command` was set and actually ran, but
+    /// failed (a locked vault, a wrong command) — kept distinct from
+    /// `Ok(None)` so a caller can say what really happened rather than
+    /// reporting every one of these the same misleading way, as a
+    /// scheduled run repeatedly would if this were silently swallowed here.
+    pub async fn password(&self) -> Result<Option<Secret>, EngineError> {
         let command = self.password_command.trim();
         if command.is_empty() {
-            keyring::load(&self.id).await
+            Ok(keyring::load(&self.id).await)
         } else {
-            password_command::run(command).await.ok()
+            password_command::run(command).await.map(Some)
         }
     }
 
@@ -433,9 +442,23 @@ mod tests {
         let mut profile = Profile::new("Home".into(), local("/mnt/backup"), Vec::new());
         profile.password_command = "printf hunter2".into();
 
-        let secret = profile.password().await.unwrap();
+        let secret = profile.password().await.unwrap().unwrap();
 
         assert_eq!(secret.expose(), "hunter2");
+    }
+
+    #[tokio::test]
+    async fn a_failing_password_command_is_reported_rather_than_treated_as_unremembered() {
+        let mut profile = Profile::new("Home".into(), local("/mnt/backup"), Vec::new());
+        profile.password_command = "sh -c 'echo vault is locked 1>&2; exit 1'".into();
+
+        let err = profile.password().await.unwrap_err();
+
+        assert_eq!(
+            err.detail, "vault is locked",
+            "the command's own reason must survive, not be flattened into a generic \
+             'not remembered' outcome: {err:?}"
+        );
     }
 
     #[test]

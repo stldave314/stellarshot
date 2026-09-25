@@ -215,6 +215,11 @@ pub fn main(args: &[String]) -> ExitCode {
         eprintln!("usage: stellarshot --scheduled <backup-id>");
         return ExitCode::from(2);
     };
+    // Every real backup runs here or in a `--run` child, never in the
+    // window's own process, so this is what actually needs rustic's and
+    // rclone's own diagnostics to reach the log, not just the window seeing
+    // them for in-process reads.
+    crate::app::settings::set_logger_for_child();
     crate::core::localization::init();
     let config = StellarshotConfig::config();
     let Some(profile) = config.profile(id).cloned() else {
@@ -242,12 +247,19 @@ pub fn main(args: &[String]) -> ExitCode {
         .location()
         .map_err(|err| Failed(Stage::Backup, err))
         .and_then(|location| {
-            let secret = runtime.block_on(profile.password()).ok_or_else(|| {
-                Failed(
-                    Stage::Backup,
-                    EngineError::new(ErrorKind::PasswordNotRemembered, ""),
-                )
-            })?;
+            let secret = match runtime.block_on(profile.password()) {
+                Ok(Some(secret)) => secret,
+                Ok(None) => {
+                    return Err(Failed(
+                        Stage::Backup,
+                        EngineError::new(ErrorKind::PasswordNotRemembered, ""),
+                    ));
+                }
+                // A password command was set and actually ran, but failed:
+                // report why, rather than the generic "not remembered"
+                // above, which would be actively misleading here.
+                Err(err) => return Err(Failed(Stage::Backup, err)),
+            };
             run(&profile, &config.global_exclude_patterns, location, secret)
         });
     let Err(Failed(stage, error)) = result else {

@@ -169,7 +169,7 @@ fn walk(
         return Ok(true);
     }
     let sources = existing.path_list()?.paths();
-    let options = existing.options();
+    let options = existing.options()?;
     let source = LocalSource::new(
         LocalSourceSaveOptions::default(),
         &options.excludes,

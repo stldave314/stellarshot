@@ -71,8 +71,9 @@ impl BackupRequest {
     /// sources: where `/home` is a symlink to `/var/home`, the walk sees
     /// `/var/home/dave/.cache`, and an exclude written as `/home/dave/.cache`
     /// would silently never match.
-    pub(crate) fn globs(&self) -> Vec<String> {
-        self.excludes
+    pub(crate) fn globs(&self) -> Result<Vec<String>, EngineError> {
+        Ok(self
+            .excludes
             .iter()
             .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
             .map(|path| format!("!{}", path.display()))
@@ -81,8 +82,12 @@ impl BackupRequest {
                     .iter()
                     .map(|pattern| format!("!{pattern}")),
             )
-            .chain(self.pattern_file_lines().map(|line| format!("!{line}")))
-            .collect()
+            .chain(
+                self.pattern_file_lines()?
+                    .into_iter()
+                    .map(|line| format!("!{line}")),
+            )
+            .collect())
     }
 
     /// Same as `globs`, but for `exclude_patterns_ignoring_case`: matched
@@ -100,17 +105,24 @@ impl BackupRequest {
     /// are exclusions only with a leading `!` rustic never adds — passing
     /// the files straight through would silently restrict the backup to
     /// them instead of leaving them out.
-    fn pattern_file_lines(&self) -> impl Iterator<Item = String> {
-        self.exclude_pattern_files
-            .iter()
-            .flat_map(|path| {
-                std::fs::read_to_string(path)
-                    .unwrap_or_default()
-                    .lines()
+    ///
+    /// Fails rather than skipping a file that cannot be read: a moved,
+    /// deleted, or briefly unreachable exclude file would otherwise make a
+    /// backup silently include whatever it was meant to leave out, possibly
+    /// something private, with nothing to show for it.
+    fn pattern_file_lines(&self) -> Result<Vec<String>, EngineError> {
+        let mut lines = Vec::new();
+        for path in &self.exclude_pattern_files {
+            let text = std::fs::read_to_string(path).map_err(|err| {
+                EngineError::new(ErrorKind::Io, format!("{}: {err}", path.display()))
+            })?;
+            lines.extend(
+                text.lines()
                     .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#'))
+                    .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with('#')),
+            );
+        }
+        Ok(lines)
     }
 
     /// The sources as the backup walks them: canonical, with nested paths
@@ -124,9 +136,9 @@ impl BackupRequest {
             .map_err(|err| EngineError::new(ErrorKind::Io, err.to_string()))
     }
 
-    pub(crate) fn options(&self) -> BackupOptions {
+    pub(crate) fn options(&self) -> Result<BackupOptions, EngineError> {
         let mut options = BackupOptions::default();
-        options.excludes.globs = self.globs();
+        options.excludes.globs = self.globs()?;
         options.excludes.iglobs = self.iglobs();
         options.ignore_filter_opts.one_file_system = self.one_file_system;
         options.ignore_filter_opts.exclude_larger_than = self.exclude_larger_than.map(ByteSize::b);
@@ -141,7 +153,7 @@ impl BackupRequest {
         }
         options.parent_opts.skip_if_unchanged = self.skip_if_unchanged;
         options.dry_run = self.dry_run;
-        options
+        Ok(options)
     }
 }
 
@@ -173,7 +185,7 @@ impl Repo {
             options.time = Some(time.to_zoned(jiff::tz::TimeZone::system()));
         }
         let snapshot = options.to_snapshot()?;
-        let snapshot = repo.backup(&request.options(), &sources, snapshot)?;
+        let snapshot = repo.backup(&request.options()?, &sources, snapshot)?;
         debug_log!(ENGINE, "created snapshot {}", snapshot.id);
         Ok(BackupReport {
             snapshot: SnapshotSummary::from(&snapshot),

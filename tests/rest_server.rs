@@ -182,7 +182,7 @@ fn deleting_a_rest_repository_is_refused_rather_than_attempted() {
 
     let err = engine::delete_repository(&location).unwrap_err();
 
-    assert_eq!(err.kind, engine::ErrorKind::Internal);
+    assert_eq!(err.kind, engine::ErrorKind::DeleteUnsupported);
     // The repository itself must be untouched: still there afterwards.
     assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
 }

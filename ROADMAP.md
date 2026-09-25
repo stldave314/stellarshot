@@ -371,19 +371,28 @@ A new backup engine behind one module, on the current rustic release.
       already applies to scheduled runs (see `src/schedule.rs`), a manual
       **Back Up Now** does not yet get the same treatment
 - [x] **Append-only destinations**: rustic's own append-only setting
-      (`set_append_only`), offered as a toggle on the wizard's Where step
+      (`set_append_only`), offered as a toggle on the wizard's When step
       when creating a backup, explained in its own description as a guard
       against mistakes rather than attacks, since other tools do not have to
-      obey it. Cannot be turned on for an existing backup, or off again once
-      set, since rustic's `config` command — the only way to change it —
-      itself stops working once append-only is on; Forget and Prune are
-      skipped for such a backup rather than attempted and failing every run,
-      since rustic already refuses both against it. What is not built: a
-      rest-server or rustic-server run in its *own* append-only mode, or
-      storage with object lock — those guard the server side even against a
-      compromised Stellarshot; this setting only guards against Stellarshot
-      itself misbehaving or being told to by a compromised account with no
-      other write access
+      obey it. Only offered at creation, and Stellarshot exposes no way to
+      turn it off again: rustic's `config` command — the only way to change
+      it — refuses every other change to an append-only repository, but
+      still allows turning append-only itself back off with nothing more
+      than the repository's own password, after which `config` works
+      normally again (including turning it back on). So this is not a
+      guarantee against someone with that password, only against
+      Stellarshot's own tools never doing it by themselves. Opening an
+      existing append-only repository (rather than creating one) still
+      recognises it as one, read back from the repository itself rather
+      than assumed. Forget and Prune are skipped for an append-only backup
+      rather than attempted and failing every run, since rustic already
+      refuses both against it; Clean Up Now, and pinning or deleting a
+      single snapshot, are hidden in the profile page for the same reason.
+      What is not built: a rest-server or rustic-server run in its *own*
+      append-only mode, or storage with object lock — those guard the
+      server side even against a compromised Stellarshot; this setting only
+      guards against Stellarshot itself misbehaving or being told to by a
+      compromised account with no other write access
 - [ ] **A recovery sheet** when a backup is created: a second repository key
       (rustic's `add_key`) printed as a QR code and text, for when the
       password is forgotten. `Repo::add_key` itself exists and is tested;

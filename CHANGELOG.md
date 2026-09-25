@@ -41,9 +41,8 @@ still to come.
   section. If the old password was remembered, the keyring entry is
   replaced with the new one rather than left stale.
 - **Append-only mode**, offered as a toggle when creating a backup: rustic
-  itself then refuses to delete a snapshot from it. Cannot be changed once
-  the backup exists — rustic's own `config` command, the only way to change
-  it later, stops working entirely once it is on.
+  itself then refuses to delete a snapshot from it. Stellarshot offers no
+  way to turn it off again once the backup exists.
 
 ### Fixed
 
@@ -55,6 +54,27 @@ still to come.
   rclone itself prints when a backup to it fails, went nowhere. Found this
   way: a real first backup to Google Drive failed with "Backoff failed,
   please check the logs for more information", and there were none to check.
+  The first version of this fix only reached the window's own process; every
+  real backup runs in a `--run` child or a `--scheduled` run instead, found
+  during this release's own code review, so both now install the bridge too.
+- **A backup's password, changed from the profile page, now goes through
+  the same write lock and child process as every other change to a
+  repository**, rather than running in the window's own process unlocked —
+  it could otherwise race a scheduled backup also touching the repository's
+  keys. A keyring update that then fails is reported instead of silently
+  leaving the keyring with the old, now-wrong password.
+- **An append-only repository opened rather than created by Stellarshot is
+  now recognised as one**, read back from the repository itself instead of
+  assumed `false`; Clean Up Now, pinning and deleting a single snapshot are
+  hidden for such a backup rather than offered and then refused by rustic.
+- **A settings export no longer includes a REST destination's credentials**,
+  matching the export's own promise never to include a password.
+- **A missing or unreadable exclude-pattern file now fails the backup**
+  instead of silently backing up everything it was meant to leave out.
+- **A failing password command is now reported as itself**, not flattened
+  into the same "password not remembered" message as never having set one,
+  and runs under a timeout so one stuck waiting on an unseen prompt cannot
+  hang a scheduled backup forever.
 - **The debug log and the new one above can no longer be tricked into
   overwriting an arbitrary file.** Both sit at a fixed, predictable path
   under `/tmp`; opening either now refuses to follow a symlink already there

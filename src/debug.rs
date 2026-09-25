@@ -43,17 +43,27 @@ pub const CONFIG: &str = "CONFIG";
 /// Scheduled backups: systemd units, the `--scheduled` run, notifications.
 pub const SCHED: &str = "SCHED";
 
-/// Opens (or creates) `path` as a private log file: `0600`, truncated, and
-/// refusing to follow a symlink already at that name.
+/// Opens (or creates) `path` as a private log file: `0600`, and refusing to
+/// follow a symlink already at that name. Truncated if `truncate`, appended
+/// to otherwise — several short-lived processes (a `--run` child, a
+/// `--scheduled` run) can share one log file with the long-lived window,
+/// and only the one that owns the file for its whole lifetime should ever
+/// truncate it; the others would otherwise race to clobber each other's
+/// lines, or the window's.
 ///
 /// These paths are fixed and predictable (`/tmp/stellarshot-*.log`), so
 /// without this, another user on a shared machine could plant a symlink
 /// there first and have Stellarshot truncate or write into a file it does
 /// not otherwise have reason to touch, or read a log meant to be private.
-pub(crate) fn open_private_log_file(path: &str) -> Option<File> {
+pub(crate) fn open_private_log_file(path: &str, truncate: bool) -> Option<File> {
+    let mode_flag = if truncate {
+        OFlags::TRUNC
+    } else {
+        OFlags::APPEND
+    };
     open(
         path,
-        OFlags::CREATE | OFlags::WRONLY | OFlags::TRUNC | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::CREATE | OFlags::WRONLY | mode_flag | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::RUSR | Mode::WUSR,
     )
     .ok()
@@ -70,7 +80,7 @@ static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
 fn sink() -> &'static Mutex<Sink> {
     SINK.get_or_init(|| {
         // Truncate once per process launch.
-        let file = open_private_log_file(PATH);
+        let file = open_private_log_file(PATH, true);
         Mutex::new(Sink {
             file,
             start: Instant::now(),
@@ -140,7 +150,7 @@ mod tests {
         let link = dir.path().join("log");
         symlink(&target, &link).unwrap();
 
-        let opened = open_private_log_file(link.to_str().unwrap());
+        let opened = open_private_log_file(link.to_str().unwrap(), true);
 
         assert!(
             opened.is_none(),
@@ -158,9 +168,21 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("log");
 
-        let file = open_private_log_file(path.to_str().unwrap()).unwrap();
+        let file = open_private_log_file(path.to_str().unwrap(), true).unwrap();
 
         let mode = file.metadata().unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "the log file must be readable by no one else");
+    }
+
+    #[test]
+    fn truncate_false_appends_instead_of_overwriting() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("log");
+        std::fs::write(&path, b"first\n").unwrap();
+
+        let mut file = open_private_log_file(path.to_str().unwrap(), false).unwrap();
+        writeln!(file, "second").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\nsecond\n");
     }
 }

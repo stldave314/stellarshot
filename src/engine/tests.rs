@@ -340,6 +340,33 @@ fn patterns_kept_in_a_file_are_applied() {
 }
 
 #[test]
+fn a_missing_pattern_file_fails_the_backup_rather_than_including_everything() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("secret.txt"), b"x").unwrap();
+    let request = BackupRequest {
+        exclude_pattern_files: vec![fixture.work.join("does-not-exist.txt")],
+        ..sources(&fixture.source)
+    };
+
+    let err = open(&fixture.repo, &secret())
+        .unwrap()
+        .backup(&request, Arc::new(NoProgress))
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Io);
+    assert_eq!(
+        open(&fixture.repo, &secret())
+            .unwrap()
+            .snapshots()
+            .unwrap()
+            .len(),
+        0,
+        "nothing must have been backed up with the exclusion silently missing"
+    );
+}
+
+#[test]
 fn an_unchanged_backup_is_skipped_when_asked() {
     let fixture = fixture();
     awkward_tree(&fixture.source);

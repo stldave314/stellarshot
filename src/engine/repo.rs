@@ -154,15 +154,21 @@ impl Location {
                 // rustic starts `rclone serve restic` itself; this is how it
                 // is told to use Stellarshot's configuration and nothing else,
                 // and how rclone is tuned for backups (see `RCLONE_SERVE_FLAGS`).
+                // rustic re-splits this whole string with `shell_words`, not a
+                // real shell, but that still means a value containing a quote
+                // can end its own argument and start a new one — quoted with
+                // `shell_words::quote` rather than a hand-written `'...'`, so
+                // whatever `bandwidth_limit` contains can never do that.
                 let mut command = format!(
-                    "rclone serve restic --addr localhost:0 --config '{}' {}",
-                    config.display(),
+                    "rclone serve restic --addr localhost:0 --config {} {}",
+                    shell_words::quote(&config.display().to_string()),
                     RCLONE_SERVE_FLAGS.join(" ")
                 );
                 if !bandwidth_limit.is_empty() {
-                    // Single-quoted like `--config` above: rclone's own
-                    // syntax (`1M`, `8M:2M`) never contains a quote itself.
-                    command.push_str(&format!(" --bwlimit '{bandwidth_limit}'"));
+                    command.push_str(&format!(
+                        " --bwlimit {}",
+                        shell_words::quote(bandwidth_limit)
+                    ));
                 }
                 let mut options = BTreeMap::new();
                 options.insert("rclone-command".to_owned(), command);
@@ -194,11 +200,15 @@ impl Location {
 }
 
 /// `url` with any embedded HTTP basic auth (`user:pass@`) removed, for
-/// showing in messages and logs. Returned unchanged if it does not parse as
-/// a URL at all, rather than hiding a typo.
-fn redact_url(url: &str) -> String {
+/// showing in messages, logs, and a settings export.
+pub fn redact_url(url: &str) -> String {
     let Ok(mut parsed) = url::Url::parse(url) else {
-        return url.to_owned();
+        // A URL that fails to parse at all is typically one whose password
+        // contains a character (`/`, `?`, `#`) the URL syntax does not
+        // allow unescaped there — which also means there is no reliable way
+        // to tell by hand where credentials would end. Showing the raw text
+        // risks showing them, so this fails closed instead of open.
+        return "(a URL that could not be parsed, redacted)".to_owned();
     };
     if parsed.username().is_empty() && parsed.password().is_none() {
         return url.to_owned();
@@ -267,10 +277,11 @@ pub fn delete_repository(location: &Location) -> Result<(), EngineError> {
         // exposes no public API for that against a REST server. "Remove
         // from Stellarshot" (forgetting it here, leaving the data) still
         // works; only wiping it from here does not.
-        Location::Rest { .. } => Err(EngineError::new(
-            ErrorKind::Internal,
-            "Stellarshot cannot delete a REST server repository's data; remove it on the server, or use Remove from Stellarshot to forget it here",
-        )),
+        // The user-facing explanation lives with the other localized error
+        // text (`app::errors::explain`), not here: this is a written
+        // sentence for a person to read, not rustic's own technical detail,
+        // so it goes through `fl!()` rather than being hardcoded in English.
+        Location::Rest { .. } => Err(EngineError::new(ErrorKind::DeleteUnsupported, "")),
     }
 }
 
@@ -331,10 +342,13 @@ pub fn init(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
 
 /// Create a repository, optionally in append-only mode from the start.
 ///
-/// Append-only cannot be turned on later through this project's own tools:
-/// rustic's `config` command, the only way to change it, itself stops
-/// working once it is set (append-only commands are all that work any
-/// longer), so it can only be chosen here, at creation.
+/// Append-only can only be chosen here, at creation, through Stellarshot's
+/// own tools: rustic's `config` command, the only way to change it, refuses
+/// every change to an append-only repository except turning append-only
+/// back off, which Stellarshot exposes no UI for. (Once off, `config` works
+/// normally again, including turning it back on — so this is not a
+/// guarantee against someone with the repository's own password, only
+/// against Stellarshot's own tools never doing it by themselves.)
 pub fn init_with(
     location: &Location,
     secret: &Secret,
@@ -404,24 +418,34 @@ mod tests {
         Location::rclone(":local", "/tmp/somewhere").with_bandwidth_limit(bandwidth_limit)
     }
 
+    /// The value of `--bwlimit` in the built command, split the same way
+    /// rustic itself re-splits the whole string (`shell_words`, not a real
+    /// shell) rather than a substring check, so a test cannot pass just
+    /// because the raw text happens to look right.
+    fn bwlimit_argument(command: &str) -> Option<String> {
+        let args = shell_words::split(command).unwrap();
+        args.iter()
+            .position(|arg| arg == "--bwlimit")
+            .and_then(|i| args.get(i + 1).cloned())
+    }
+
     #[test]
     fn a_bandwidth_limit_is_passed_to_rclone() {
-        if !super::super::rclone::available() {
-            return;
-        }
+        assert!(
+            super::super::rclone::available(),
+            "rclone must be installed for this test"
+        );
         let options = rclone_location("1M").backend_options().unwrap();
         let command = options.options.get("rclone-command").unwrap();
-        assert!(
-            command.contains("--bwlimit '1M'"),
-            "the command must carry the limit: {command}"
-        );
+        assert_eq!(bwlimit_argument(command).as_deref(), Some("1M"));
     }
 
     #[test]
     fn no_bandwidth_limit_adds_no_flag() {
-        if !super::super::rclone::available() {
-            return;
-        }
+        assert!(
+            super::super::rclone::available(),
+            "rclone must be installed for this test"
+        );
         let options = rclone_location("").backend_options().unwrap();
         let command = options.options.get("rclone-command").unwrap();
         assert!(
@@ -431,8 +455,56 @@ mod tests {
     }
 
     #[test]
+    fn a_bandwidth_limit_cannot_inject_a_second_rclone_argument() {
+        assert!(
+            super::super::rclone::available(),
+            "rclone must be installed for this test"
+        );
+        let hostile = "1M' --password-command 'evil";
+        let options = rclone_location(hostile).backend_options().unwrap();
+        let command = options.options.get("rclone-command").unwrap();
+        assert_eq!(
+            bwlimit_argument(command).as_deref(),
+            Some(hostile),
+            "the whole hostile value must survive as one argument, not split into several"
+        );
+        assert!(
+            !shell_words::split(command)
+                .unwrap()
+                .contains(&"--password-command".to_owned()),
+            "quoting must stop it from ever becoming its own argument: {command}"
+        );
+    }
+
+    #[test]
     fn a_local_location_ignores_a_bandwidth_limit() {
         let location = Location::local("/tmp/somewhere").with_bandwidth_limit("1M");
         assert_eq!(location, Location::local("/tmp/somewhere"));
+    }
+
+    #[test]
+    fn redact_url_removes_a_parseable_urls_credentials() {
+        let redacted = redact_url("http://alex:s3cret@nas:8000/repo/");
+        assert!(!redacted.contains("s3cret"));
+        assert!(!redacted.contains("alex"));
+        assert!(redacted.contains("nas:8000/repo/"));
+    }
+
+    #[test]
+    fn redact_url_leaves_a_credential_free_url_alone() {
+        assert_eq!(redact_url("http://nas:8000/repo/"), "http://nas:8000/repo/");
+    }
+
+    #[test]
+    fn redact_url_shows_nothing_of_a_url_it_cannot_parse() {
+        // A password containing an unescaped `/` makes this fail to parse
+        // at all (there is no reliable way to tell where credentials end
+        // without a working parse) — it must still not show the password.
+        let redacted = redact_url("http://alex:p/ss@nas:8000/repo/");
+        assert!(
+            !redacted.contains("s@nas"),
+            "must not fail open: {redacted}"
+        );
+        assert!(!redacted.contains("p/ss"), "must not fail open: {redacted}");
     }
 }

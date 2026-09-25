@@ -74,7 +74,10 @@ const RUSTIC_LOG_PATH: &str = "/tmp/stellarshot-backend.log";
 
 /// Route `log` output (what rustic_core, rustic_backend and the rclone
 /// process they run all use) into `tracing`, then to stderr and
-/// [`RUSTIC_LOG_PATH`], at `warn` unless `RUST_LOG` says otherwise.
+/// [`RUSTIC_LOG_PATH`], at `warn` unless `RUST_LOG` says otherwise. Call once
+/// from the window's own startup, which owns the file for its whole run and
+/// truncates it fresh; see [`set_logger_for_child`] for everything else that
+/// can write to the same repository.
 ///
 /// `rustic_core` and `rustic_backend` never call the `tracing` macros this
 /// otherwise sets up for — only `log`'s. Without
@@ -83,17 +86,28 @@ const RUSTIC_LOG_PATH: &str = "/tmp/stellarshot-backend.log";
 /// backup to it fails, went nowhere: an error dialog could say "check the
 /// logs" while there were none to check.
 pub fn set_logger() {
-    init_tracing(RUSTIC_LOG_PATH);
+    init_tracing(RUSTIC_LOG_PATH, true);
+}
+
+/// [`set_logger`], for a `--run` child or a `--scheduled` run: every real
+/// backup happens in one of these, never in the window's own process (see
+/// `runner.rs`), so without this call the fix above never actually reached a
+/// real backup's own diagnostics, only ones read back or probed in-process.
+/// Appends rather than truncates, since several of these can run over a
+/// window's lifetime, or with no window open at all, and none of them owns
+/// the file the way the window does.
+pub fn set_logger_for_child() {
+    init_tracing(RUSTIC_LOG_PATH, false);
 }
 
 /// The actual setup, taking the log path as an argument so a test can point
 /// it somewhere private instead of [`RUSTIC_LOG_PATH`].
-fn init_tracing(log_path: &str) {
+fn init_tracing(log_path: &str, truncate: bool) {
     let _ = tracing_log::LogTracer::init();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("stellarshot=warn,rustic_core=warn,rustic_backend=info")
     });
-    let log_file = crate::debug::open_private_log_file(log_path);
+    let log_file = crate::debug::open_private_log_file(log_path, truncate);
     let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(log_file.map(|file| fmt::layer().with_writer(Mutex::new(file)).with_ansi(false)))
@@ -127,7 +141,7 @@ mod tests {
             "stellarshot-backend-log-test-{}.log",
             std::process::id()
         ));
-        init_tracing(path.to_str().unwrap());
+        init_tracing(path.to_str().unwrap(), true);
         log::warn!(target: "rustic_backend::rclone", "a marker line for the bridge test");
 
         let contents = std::fs::read_to_string(&path).unwrap_or_default();
@@ -138,4 +152,13 @@ mod tests {
             "the log file must contain what rustic_backend logged: {contents:?}"
         );
     }
+
+    // `set_logger_for_child` is `init_tracing` with `truncate: false`; the
+    // truncate/append difference itself is `open_private_log_file`'s own
+    // concern and is proven in `debug.rs`'s tests
+    // (`truncate_false_appends_instead_of_overwriting`), not here.
+    // `tracing_subscriber::registry().try_init()` can only ever succeed once
+    // per process, so a second test in this file calling `init_tracing`
+    // again would silently no-op and pass or fail depending on which of the
+    // two tests happened to run first — not a real test of either behavior.
 }

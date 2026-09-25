@@ -27,7 +27,7 @@ use crate::engine::{self, EngineError, Secret};
 use crate::event_log;
 use crate::profile::Profile;
 use crate::run_state::{self, RunState};
-use crate::runner::{Job, Operation};
+use crate::runner::{Event as RunnerEvent, Job, Operation};
 use crate::schedule;
 use crate::settings_export;
 use crate::{debug_log, error_log, fl};
@@ -218,7 +218,12 @@ pub enum DialogMessage {
     DiscardWizard,
     NewPassword(String),
     ConfirmPassword(String),
-    PasswordChanged(String, Result<Secret, EngineError>),
+    /// One line from the `change-password` child; see [`profile::Message::Pinned`]
+    /// for why the raw event, not just the outcome, is threaded through.
+    PasswordChanged(String, child::ChildEvent),
+    /// The repository password changed. `Some` when the keyring entry that
+    /// remembered the old one could not be replaced with the new one.
+    KeyringUpdateFailed(Option<String>),
 }
 
 #[derive(Clone, Debug)]
@@ -950,10 +955,10 @@ impl App {
             let task = match effect {
                 profile::Effect::LoadKeyring => {
                     let profile = profile.clone();
-                    Task::perform(async move { profile.password().await }, move |secret| {
+                    Task::perform(async move { profile.password().await }, move |result| {
                         app(Message::Profile(
                             id.clone(),
-                            profile::Message::KeyringLoaded(secret),
+                            profile::Message::KeyringLoaded(result),
                         ))
                     })
                 }
@@ -1402,22 +1407,37 @@ impl App {
                         ) else {
                             return Task::none();
                         };
+                        let repository = match profile.location() {
+                            Ok(location) => location,
+                            Err(err) => {
+                                self.dialog = None;
+                                self.show_error(&fl!("change-password-failed"), &err);
+                                return Task::none();
+                            }
+                        };
                         self.dialog = Some(Dialog::ChangePassword {
                             id: id.clone(),
                             password,
                             confirm: confirm.clone(),
                             busy: true,
                         });
-                        let new_password = engine::Secret::new(confirm);
-                        Task::perform(
-                            tasks::change_password(profile, secret, new_password),
-                            move |result| {
-                                app(Message::Dialog(DialogMessage::PasswordChanged(
-                                    id.clone(),
-                                    result,
-                                )))
-                            },
-                        )
+                        // Through the same `--run` child every other write
+                        // goes through, not called in-process: it needs the
+                        // cross-process write lock too, so it cannot race a
+                        // scheduled backup also touching the repository's
+                        // keys, and it needs the child's own diagnostic
+                        // logging (see `runner::main`), which an in-process
+                        // call never reached.
+                        let job = Job {
+                            new_password: Some(engine::Secret::new(confirm)),
+                            ..Job::new(repository, secret)
+                        };
+                        Task::run(child::run(Operation::ChangePassword, job), move |event| {
+                            app(Message::Dialog(DialogMessage::PasswordChanged(
+                                id.clone(),
+                                event,
+                            )))
+                        })
                     }
                 }
             }
@@ -1436,21 +1456,56 @@ impl App {
                     Task::none()
                 }
             },
-            DialogMessage::PasswordChanged(id, result) => match result {
-                Ok(new_password) => {
-                    self.dialog = None;
+            DialogMessage::PasswordChanged(id, event) => match event {
+                child::ChildEvent::Event(RunnerEvent::Done { .. }) => {
+                    let Some(Dialog::ChangePassword { confirm, .. }) = self.dialog.take() else {
+                        return Task::none();
+                    };
+                    let new_password = engine::Secret::new(confirm);
                     if let Some(page) = self.pages.get_mut(&id) {
-                        page.set_secret(new_password);
+                        page.set_secret(new_password.clone());
                     }
                     debug_log!(ENGINE, "changed the password of profile {id}");
-                    Task::none()
+                    let Some(profile) = self.config.profile(&id).cloned() else {
+                        return Task::none();
+                    };
+                    // The repository itself is already changed at this
+                    // point; a keyring failure here does not undo that, so
+                    // it is reported separately rather than as this whole
+                    // operation having failed.
+                    Task::perform(
+                        async move {
+                            if crate::keyring::load(&profile.id).await.is_some() {
+                                crate::keyring::store(&profile.id, &profile.name, &new_password)
+                                    .await
+                            } else {
+                                Ok(())
+                            }
+                        },
+                        |result| {
+                            app(Message::Dialog(DialogMessage::KeyringUpdateFailed(
+                                result.err(),
+                            )))
+                        },
+                    )
                 }
-                Err(err) => {
+                child::ChildEvent::Event(RunnerEvent::Error { error })
+                | child::ChildEvent::Ended(error) => {
                     self.dialog = None;
-                    self.show_error(&fl!("change-password-failed"), &err);
+                    self.show_error(&fl!("change-password-failed"), &error);
                     Task::none()
                 }
+                child::ChildEvent::Started(_)
+                | child::ChildEvent::Event(RunnerEvent::Progress { .. }) => Task::none(),
             },
+            DialogMessage::KeyringUpdateFailed(None) => Task::none(),
+            DialogMessage::KeyringUpdateFailed(Some(detail)) => {
+                self.show_error(
+                    &fl!("change-password-title"),
+                    &EngineError::new(engine::ErrorKind::KeyringUnavailable, detail),
+                );
+                Task::none()
+            }
         }
     }
 }
@@ -1698,12 +1753,17 @@ impl Application for App {
                 .primary_action(widget::button::suggested(fl!("save")).on_press_maybe(confirm))
                 .secondary_action(cancel),
             Dialog::ChangePassword {
+                id,
                 password,
                 confirm: confirm_password,
                 ..
             } => {
                 let confirm_action = confirm;
                 let mismatch = !confirm_password.is_empty() && password != confirm_password;
+                let uses_password_command = self
+                    .config
+                    .profile(id)
+                    .is_some_and(|profile| !profile.password_command.is_empty());
                 let mut fields = widget::column::with_capacity(3)
                     .spacing(theme::active().cosmic().spacing.space_xs)
                     .push(
@@ -1724,9 +1784,13 @@ impl Application for App {
                 if mismatch {
                     fields = fields.push(widget::text::caption(fl!("wizard-mismatch")));
                 }
+                let mut body = fl!("change-password-body");
+                if uses_password_command {
+                    body = format!("{body}\n\n{}", fl!("change-password-command-note"));
+                }
                 widget::dialog()
                     .title(fl!("change-password-title"))
-                    .body(fl!("change-password-body"))
+                    .body(body)
                     .control(fields)
                     .primary_action(
                         widget::button::suggested(fl!("save")).on_press_maybe(confirm_action),

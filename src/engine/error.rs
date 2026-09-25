@@ -41,6 +41,11 @@ pub enum ErrorKind {
     /// A scheduled backup found no remembered password to open the
     /// repository with.
     PasswordNotRemembered,
+    /// A change that needed the keyring could not reach or write to it.
+    KeyringUnavailable,
+    /// This kind of destination does not support deleting a repository's
+    /// data from Stellarshot: see `Location::delete_repository`'s `Rest` arm.
+    DeleteUnsupported,
     /// The storage did not answer in time. The detail is the limit, in
     /// seconds.
     TimedOut,

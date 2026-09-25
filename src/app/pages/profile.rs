@@ -31,6 +31,10 @@ pub enum Work {
     Backup,
     Check,
     CleanUp,
+    /// Pinning, unpinning or deleting a single snapshot: quick, but still a
+    /// repository write, so it takes the same single-flight slot as the
+    /// others rather than being clickable again mid-flight.
+    Modify,
 }
 
 /// A write running in a child process. Only one runs at a time.
@@ -99,7 +103,7 @@ pub struct ProfileState {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    KeyringLoaded(Option<Secret>),
+    KeyringLoaded(Result<Option<Secret>, EngineError>),
     UnlockPassword(String),
     UnlockRemember(bool),
     Unlock,
@@ -289,14 +293,17 @@ impl ProfileState {
 
     pub fn update(&mut self, message: Message, profile: &Profile) -> Vec<Effect> {
         match message {
-            Message::KeyringLoaded(Some(secret)) => {
+            Message::KeyringLoaded(Ok(Some(secret))) => {
                 self.unlocking = true;
                 vec![Effect::Open {
                     secret,
                     remember: false,
                 }]
             }
-            Message::KeyringLoaded(None) => Vec::new(),
+            Message::KeyringLoaded(Ok(None)) => Vec::new(),
+            Message::KeyringLoaded(Err(error)) => {
+                vec![Effect::ShowError(fl!("password-command-failed"), error)]
+            }
             Message::UnlockPassword(password) => {
                 self.unlock_password = password;
                 Vec::new()
@@ -416,36 +423,38 @@ impl ProfileState {
             Message::EditSchedule => vec![Effect::EditSchedule],
             Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
             Message::ChangePassword => vec![Effect::ChangePassword],
-            Message::DeleteSnapshot(id) => match &self.secret {
-                Some(secret) if self.work.is_none() => {
-                    vec![Effect::DeleteSnapshots(secret.clone(), vec![id])]
-                }
-                _ => Vec::new(),
-            },
-            Message::SnapshotsDeleted(event) => match event {
-                ChildEvent::Event(Event::Done { .. }) => self.fetch(),
-                ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
-                    let mut effects = vec![Effect::ShowError(fl!("delete-snapshot-failed"), error)];
-                    effects.extend(self.fetch());
+            Message::DeleteSnapshot(id) => self
+                .start(Work::Modify)
+                .map(|secret| Effect::DeleteSnapshots(secret, vec![id]))
+                .into_iter()
+                .collect(),
+            Message::SnapshotsDeleted(event) => {
+                let secret = self.secret.clone();
+                self.on_work(event, move |outcome| {
+                    let mut effects = match outcome {
+                        Ok(_) => Vec::new(),
+                        Err(error) => vec![Effect::ShowError(fl!("delete-snapshot-failed"), error)],
+                    };
+                    effects.extend(secret.map(Effect::Fetch));
                     effects
-                }
-                ChildEvent::Started(_) | ChildEvent::Event(Event::Progress { .. }) => Vec::new(),
-            },
-            Message::TogglePinned(id, pinned) => match &self.secret {
-                Some(secret) if self.work.is_none() => {
-                    vec![Effect::SetPinned(secret.clone(), id, pinned)]
-                }
-                _ => Vec::new(),
-            },
-            Message::Pinned(event) => match event {
-                ChildEvent::Event(Event::Done { .. }) => self.fetch(),
-                ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
-                    let mut effects = vec![Effect::ShowError(fl!("pin-snapshot-failed"), error)];
-                    effects.extend(self.fetch());
+                })
+            }
+            Message::TogglePinned(id, pinned) => self
+                .start(Work::Modify)
+                .map(|secret| Effect::SetPinned(secret, id, pinned))
+                .into_iter()
+                .collect(),
+            Message::Pinned(event) => {
+                let secret = self.secret.clone();
+                self.on_work(event, move |outcome| {
+                    let mut effects = match outcome {
+                        Ok(_) => Vec::new(),
+                        Err(error) => vec![Effect::ShowError(fl!("pin-snapshot-failed"), error)],
+                    };
+                    effects.extend(secret.map(Effect::Fetch));
                     effects
-                }
-                ChildEvent::Started(_) | ChildEvent::Event(Event::Progress { .. }) => Vec::new(),
-            },
+                })
+            }
             Message::ShowAll => {
                 self.show_all = true;
                 Vec::new()
@@ -585,7 +594,7 @@ impl ProfileState {
         if !self.is_unlocked() {
             page = page.push(self.unlock_card());
         } else if let Some(snapshots) = &self.snapshots {
-            page = page.push(self.snapshot_list(snapshots));
+            page = page.push(self.snapshot_list(snapshots, profile.append_only));
         }
 
         page = page.push(self.summary_section(profile, run));
@@ -625,8 +634,10 @@ impl ProfileState {
                     widget::settings::item::builder(fl!("clean-up-row"))
                         .description(fl!("clean-up-row-description"))
                         .control(
-                            widget::button::standard(fl!("clean-up-now"))
-                                .on_press_maybe(self.can_work().then_some(Message::CleanUpNow)),
+                            widget::button::standard(fl!("clean-up-now")).on_press_maybe(
+                                (self.can_work() && !profile.append_only)
+                                    .then_some(Message::CleanUpNow),
+                            ),
                         ),
                 )
                 .add(
@@ -766,7 +777,11 @@ impl ProfileState {
         )
     }
 
-    fn snapshot_list<'a>(&'a self, snapshots: &'a [SnapshotSummary]) -> Element<'a, Message> {
+    fn snapshot_list<'a>(
+        &'a self,
+        snapshots: &'a [SnapshotSummary],
+        append_only: bool,
+    ) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
         if snapshots.is_empty() {
             return widget::text::body(fl!("no-snapshots-yet")).into();
@@ -785,16 +800,19 @@ impl ProfileState {
             };
             let pinned = snapshot.pinned;
             let id = snapshot.id.clone();
+            // rustic itself refuses both against an append-only repository
+            // (pinning rewrites the snapshot, which needs the same
+            // forget-the-old-one step as an ordinary delete); offering
+            // either here would just be a button that always fails.
+            let can_modify = !self.is_busy() && !append_only;
             let pin = widget::button::icon(widget::icon::from_name("pin-symbolic"))
                 .padding(spacing.space_xxs)
                 .selected(pinned)
                 .tooltip(pin_label)
-                .on_press_maybe(
-                    (!self.is_busy()).then(|| Message::TogglePinned(id.clone(), !pinned)),
-                );
+                .on_press_maybe(can_modify.then(|| Message::TogglePinned(id.clone(), !pinned)));
             let delete = widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                 .padding(spacing.space_xxs)
-                .on_press_maybe((!self.is_busy()).then(|| Message::DeleteSnapshot(id.clone())));
+                .on_press_maybe(can_modify.then(|| Message::DeleteSnapshot(id.clone())));
             section = section.add(
                 widget::settings::item::builder(format::local_time(snapshot.time))
                     .description(fl!(
@@ -1221,7 +1239,10 @@ mod tests {
     #[test]
     fn a_remembered_password_opens_without_asking_to_store_it_again() {
         let mut state = ProfileState::new();
-        let effects = state.update(Message::KeyringLoaded(Some(Secret::new("pw"))), &profile());
+        let effects = state.update(
+            Message::KeyringLoaded(Ok(Some(Secret::new("pw")))),
+            &profile(),
+        );
         assert!(matches!(
             effects.as_slice(),
             [Effect::Open {

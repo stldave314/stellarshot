@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Exporting and importing Stellarshot's own settings: every backup and its
-//! history, never a password.
+//! history, never a password or a command that prints one.
 //!
 //! A [`Profile`] never holds a password itself — it lives in the keyring,
-//! or nowhere. `password_command`, a command that prints one, is the one
-//! field that comes close: `Export::collect` clears it, the same as if it
-//! were a password, since an export is more likely to be shared or copied
-//! somewhere less careful than the settings themselves. An event's detail
-//! text (`event_log::EventKind::Failed`) is the same wording already shown
-//! in a dialog or a notification; exporting it exposes nothing new.
+//! or nowhere. Two fields come close, and both are stripped by
+//! `Export::collect`, the same as if they were a password, since an export
+//! is more likely to be shared or copied somewhere less careful than the
+//! settings themselves: `password_command`, a command that prints one; and
+//! a REST destination's own URL, which can carry HTTP basic auth
+//! (`http://user:pass@host/repo/`). `merge` (import) clears
+//! `password_command` again on whatever it adds, as a second line of
+//! defence against a hand-edited or otherwise untrusted export file rather
+//! than trusting the exporting installation to have behaved — a
+//! `password_command` from an untrusted file would otherwise run whatever
+//! it says, unprompted, the first time its backup's schedule fires. An
+//! event's detail text (`event_log::EventKind::Failed`) is the same wording
+//! already shown in a dialog or a notification; exporting it exposes
+//! nothing new.
 
 use serde::{Deserialize, Serialize};
 
+use crate::engine::redact_url;
 use crate::event_log::{self, Event};
-use crate::profile::Profile;
+use crate::profile::{Destination, Profile};
 
 /// The file format's version, bumped only if a change could not otherwise
 /// be read by an older Stellarshot.
@@ -43,6 +52,9 @@ impl Export {
             .cloned()
             .map(|mut profile| {
                 profile.password_command.clear();
+                if let Destination::Rest { url } = &mut profile.destination {
+                    *url = redact_url(url);
+                }
                 profile
             })
             .collect();
@@ -97,8 +109,14 @@ pub fn merge(existing: &[Profile], export: &Export) -> Merged {
         if existing.iter().any(|kept| kept.id == profile.id) {
             counts.skipped += 1;
         } else {
+            let mut profile = profile.clone();
+            // A well-behaved export already cleared this; an untrusted or
+            // hand-edited file might not have, and a `password_command`
+            // taken on faith would run unprompted the first time this
+            // backup's schedule fires.
+            profile.password_command.clear();
             profiles.push(profile.clone());
-            added.push(profile.clone());
+            added.push(profile);
             counts.added += 1;
         }
     }
@@ -116,7 +134,6 @@ pub fn merge(existing: &[Profile], export: &Export) -> Merged {
 mod tests {
     use super::*;
     use crate::event_log::EventKind;
-    use crate::profile::Destination;
 
     fn profile(id: &str) -> Profile {
         let mut profile = Profile::new(
@@ -139,6 +156,48 @@ mod tests {
 
         assert_eq!(read_back, export);
         assert!(!text.contains("password"), "nothing password-shaped in it");
+    }
+
+    #[test]
+    fn a_rest_destinations_credentials_are_stripped_on_export() {
+        let mut with_credentials = profile("rest-backup");
+        with_credentials.destination = Destination::Rest {
+            url: "http://alex:s3cret@nas:8000/repo/".into(),
+        };
+
+        let export = Export::collect(&[with_credentials]);
+
+        let text = export.to_text().unwrap();
+        assert!(
+            !text.contains("s3cret"),
+            "a REST URL's password must not survive an export: {text}"
+        );
+        let Destination::Rest { url } = &export.profiles[0].destination else {
+            panic!("expected a Rest destination");
+        };
+        assert!(
+            url.contains("nas:8000/repo/"),
+            "the rest of the URL is still useful: {url}"
+        );
+    }
+
+    #[test]
+    fn a_password_command_from_an_untrusted_export_is_cleared_on_import() {
+        // Simulates a hand-edited or otherwise untrusted export file, not
+        // one this version of Stellarshot actually produced (which already
+        // clears this field itself) — `merge` must not take it on faith.
+        let mut smuggled = profile("smuggled-command");
+        smuggled.password_command = "sh -c 'evil'".into();
+        let export = Export {
+            version: 1,
+            profiles: vec![smuggled],
+            history: Vec::new(),
+        };
+
+        let merged = merge(&[], &export);
+
+        assert_eq!(merged.profiles[0].password_command, "");
+        assert_eq!(merged.added[0].password_command, "");
     }
 
     #[test]

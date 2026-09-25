@@ -66,6 +66,20 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.0" date="2026-09-24">
+      <description>
+        <p>Seeing what is going on: status, history, and repository statistics.</p>
+        <ul>
+          <li>A status icon for every backup in the sidebar, and the time of its next scheduled run</li>
+          <li>An Overview screen: every backup, folder and storage location at a glance</li>
+          <li>Repository statistics on request, and a history of every run, failure, check and clean-up</li>
+          <li>A notification when a destination stays unreachable, instead of silence</li>
+          <li>Export and import of every backup's settings and history, never a password</li>
+          <li>The wizard sits beside the backup list and is resumable: Cancel offers Finish Later or Discard</li>
+          <li>Sign in to Google Drive with your own OAuth client instead of the one rclone shares with everyone</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.1" date="2026-09-24">
       <description>
         <p>Fixes from testing the first release.</p>

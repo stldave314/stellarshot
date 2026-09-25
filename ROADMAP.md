@@ -297,12 +297,15 @@ A new backup engine behind one module, on the current rustic release.
       rclone destinations do (only ever removing the repository format's own
       entries), needs a generic directory listing rustic_core exposes no
       public API for against a REST server; "Remove from Stellarshot" still
-      works. A real backup and restore against a local `rustic-server`
-      passes by hand but is not yet a reliable automated test: some of a
-      backup's later requests intermittently fail with a connection error
-      rather than an HTTP status even once the server is confirmed actually
-      serving requests, not yet root-caused (see `tests/rest_server.rs`,
-      where the round trip is marked `#[ignore]`; `rustic-server`'s own
+      works. Every test against a real local `rustic-server` passes reliably
+      by hand but fails in CI specifically, always the same way — a
+      connection error on a write shortly after the server confirms itself
+      ready, even once a timing race and CPU contention between the tests
+      were each tried and disproven for real (not just reasoned about) by
+      pushing a fix and reading CI's own logs. All three are marked
+      `#[ignore]` for now (see `tests/rest_server.rs`, which also captures
+      the server's own output on a future failure instead of discarding it,
+      so the next attempt has more to go on); `rustic-server`'s own
       `private-repos` ACL default was also found to not actually respect
       being turned off from the command line or its environment variables,
       worked around with a repository-specific ACL section instead of the

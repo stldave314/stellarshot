@@ -66,6 +66,21 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.5.0" date="2026-09-25">
+      <description>
+        <p>Automation: conditions for when a scheduled backup runs, hooks
+        before and after one, starting one when its drive connects, and a
+        panel applet to keep an eye on it all.</p>
+        <ul>
+          <li>Browse a folder by size to choose what to include or exclude, like a disk usage tree</li>
+          <li>Download a file or folder straight from a snapshot, without restoring anything</li>
+          <li>Conditions for a scheduled backup: mains power, a battery level, not a metered connection, only a trusted Wi-Fi network or a VPN</li>
+          <li>A COSMIC panel applet with a status icon; closing the window now minimizes to it instead of quitting</li>
+          <li>Hooks: run a command or program before and after a backup</li>
+          <li>Start a backup as soon as its destination drive is connected, instead of on a fixed schedule</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-09-25">
       <description>
         <p>What is backed up, its history, and getting it back, and storage

@@ -604,32 +604,46 @@ impl Place {
                     .push(
                         widget::text_input(fl!("place-folder-on-drive"), &self.drive_folder)
                             .label(fl!("place-folder-on-drive"))
-                            .on_input(Message::DriveFolder),
+                            .on_input(Message::DriveFolder)
+                            .on_submit(|_| Message::Check),
                     )
                     .push(check)
                     .into()
             }
+            // Unlike a folder picker or a drive selection, which check
+            // themselves the moment something is actually chosen, a typed
+            // path only checks on Enter or Next: checking on every
+            // keystroke would mean a request per character. Pressing Enter
+            // is the one still discoverable without reading a hint —
+            // without it, this field looked at nothing typed into it says
+            // nothing back until Next is pressed too, so leaving what
+            // already exists there (another backup, or files left over
+            // from an earlier interrupted one) silently unexplained.
             Kind::Server => widget::column::with_capacity(6)
                 .spacing(spacing.space_xs)
                 .push(
                     widget::text_input("nas.local", &self.host)
                         .label(fl!("place-host"))
-                        .on_input(Message::Host),
+                        .on_input(Message::Host)
+                        .on_submit(|_| Message::Check),
                 )
                 .push(
                     widget::text_input(fl!("place-user-placeholder"), &self.user)
                         .label(fl!("place-user"))
-                        .on_input(Message::User),
+                        .on_input(Message::User)
+                        .on_submit(|_| Message::Check),
                 )
                 .push(
                     widget::text_input("22", &self.port)
                         .label(fl!("place-port"))
-                        .on_input(Message::Port),
+                        .on_input(Message::Port)
+                        .on_submit(|_| Message::Check),
                 )
                 .push(
                     widget::text_input("backups/laptop", &self.server_path)
                         .label(fl!("place-server-path"))
-                        .on_input(Message::ServerPath),
+                        .on_input(Message::ServerPath)
+                        .on_submit(|_| Message::Check),
                 )
                 .push(widget::text::caption(fl!("place-server-note")))
                 .push(check)
@@ -639,12 +653,14 @@ impl Place {
                 column = match (&self.google_remote, self.signing_in) {
                     (_, true) => column.push(widget::text::body(fl!("place-signing-in"))),
                     (None, false) => {
+                        // The credentials fields (when shown) come before
+                        // Sign In, not after: Sign In reads whatever is
+                        // currently in them, so it needs to visually read as
+                        // acting on what is above it, not as a separate,
+                        // unrelated first step above an "advanced" section
+                        // someone would only expand afterward.
                         let mut section = column
                             .push(widget::text::body(fl!("place-google-intro")))
-                            .push(
-                                widget::button::suggested(fl!("place-sign-in"))
-                                    .on_press(Message::SignIn),
-                            )
                             .push(
                                 widget::button::link(fl!("place-google-advanced"))
                                     .on_press(Message::ToggleGoogleAdvanced),
@@ -671,7 +687,10 @@ impl Place {
                                     .on_input(Message::GoogleClientSecret),
                                 );
                         }
-                        section
+                        section.push(
+                            widget::button::suggested(fl!("place-sign-in"))
+                                .on_press(Message::SignIn),
+                        )
                     }
                     (Some(_), false) => column.push(widget::text::body(fl!("place-signed-in"))),
                 };
@@ -680,7 +699,8 @@ impl Place {
                         .push(
                             widget::text_input(fl!("place-cloud-folder"), &self.cloud_path)
                                 .label(fl!("place-cloud-folder"))
-                                .on_input(Message::CloudPath),
+                                .on_input(Message::CloudPath)
+                                .on_submit(|_| Message::Check),
                         )
                         .push(check);
                 }
@@ -705,7 +725,8 @@ impl Place {
                     .push(
                         widget::text_input(fl!("place-cloud-folder"), &self.remote_path)
                             .label(fl!("place-cloud-folder"))
-                            .on_input(Message::RemotePath),
+                            .on_input(Message::RemotePath)
+                            .on_submit(|_| Message::Check),
                     )
                     .push(check)
                     .into()
@@ -715,7 +736,8 @@ impl Place {
                 .push(
                     widget::text_input(fl!("place-rest-url-placeholder"), &self.rest_url)
                         .label(fl!("place-rest-url"))
-                        .on_input(Message::RestUrl),
+                        .on_input(Message::RestUrl)
+                        .on_submit(|_| Message::Check),
                 )
                 .push(check)
                 .into(),

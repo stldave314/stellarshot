@@ -240,6 +240,7 @@ versions-same = { $count ->
 }
 open-copy = Öppna kopia
 download = Ladda ned…
+restore-mount = Montera som mapp…
 restore-this-version = Återställ den här versionen…
 deleted-scope = Filer i { $folder } som finns i säkerhetskopior från de senaste { $days } dagarna men inte längre finns på disken.
 deleted-change-folder = Byt mapp…
@@ -305,6 +306,11 @@ download-title = Spara en kopia från den här säkerhetskopian
 download-failed = Det gick inte att spara en kopia från säkerhetskopian.
 select-scope-folder = Välj en mapp att leta i
 select-restore-folder = Välj vart du vill återställa
+select-mount-folder = Välj en tom mapp att montera i
+mount-active = Monterad vid { $folder }
+mount-open-folder = Öppna mapp
+unmount = Avmontera
+mount-failed = Den här säkerhetskopian kunde inte monteras som mapp.
 
 # Automation
 error-password-not-remembered = Schemalagda säkerhetskopieringar behöver lösenordet sparat i nyckelringen. Öppna säkerhetskopian, ange lösenordet med ”Kom ihåg lösenordet” påslaget, så körs nästa schemalagda säkerhetskopiering.

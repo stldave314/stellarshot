@@ -208,6 +208,19 @@ Not covered by an automated test, and not yet tried against the real, rendered w
 
 Not built: the benchmark against this machine's own speed that the original idea for this included, only a curated three-way choice (Default, Fast, Best) in place of zstd's full -7 to 22 range.
 
+### Mounting a snapshot as a folder through FUSE (`src/engine/mount.rs`, `src/app/pages/restore.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `a_mounted_snapshot_can_be_read_with_plain_filesystem_calls` (`src/engine/tests.rs`) | Against a real FUSE mount in this sandbox (not a mock filesystem): a plain file, a nested folder, a symlink and a file with a non-default mode (`0600`) all read correctly through ordinary `std::fs` calls once mounted |
+| `a_mounted_file_cannot_be_written_to` (`src/engine/tests.rs`) | Writing to a mounted file fails, since the mount is read-only both by mount option and because `SnapshotFs` implements no write operation at all |
+| `a_new_inode_table_starts_with_only_the_root`, `the_same_path_always_gets_the_same_inode` (`src/engine/mount.rs`) | Inode numbering is stable for as long as a path has been seen, and the reserved root inode (1) is never reassigned |
+| `a_folder_defaults_to_read_only_permissions_without_a_recorded_mode`, `a_files_recorded_mode_is_kept_masked_to_permission_bits`, `an_unrecorded_mode_defaults_to_read_only_for_a_file`, `attr_reports_the_mounting_user_as_owner` (`src/engine/mount.rs`) | Reported permissions and ownership match what a real read-only mount should show, including a recorded mode's file-type bits never leaking into `perm` |
+
+Found only by running the real end-to-end test, not by reading the code: an early version turned on `MountOption::DefaultPermissions` and reported every entry as owned by root, which had the kernel enforce permission checks against that fake ownership — reading `private.txt` (backed up at `0600`) came back `EACCES`, since the kernel compared its own real, unprivileged uid against the reported root owner and refused. Fixed by dropping `DefaultPermissions` and reporting the real mounting user's uid/gid instead (`rustix::process::getuid()`/`getgid()`), since FUSE already restricts the mount to that one user; the same test then passed.
+
+Not covered by an automated test: the "Mount as Folder…"/"Open Folder"/"Unmount" buttons themselves in `src/app/pages/restore.rs`, or the folder-choosing dialog they open — UI wiring, not new logic, following the same `Effect`/blocking-task pattern already proven for **Download** and **Open Copy**. Also not proven: behavior with `allow_other` or multi-user access — not offered, since only the user who authenticated with the repository's password can see the mount at all, which is the intended scope.
+
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 
 Three more changes from watching the app actually get used, none of them logic a unit test would catch:

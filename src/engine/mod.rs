@@ -17,6 +17,7 @@ mod keys;
 pub mod location;
 pub mod lock;
 mod maintenance;
+pub mod mount;
 pub mod progress;
 pub mod rclone;
 mod repo;
@@ -26,7 +27,9 @@ mod statistics;
 mod uploads;
 
 pub use backup::{BackupReport, BackupRequest};
-pub use browse::{Browser, Change, DiffEntry, EntryKind, FileVersion, MissingEntry, TreeEntry};
+pub use browse::{
+    Browser, Change, DiffEntry, EntryKind, FileVersion, MissingEntry, MountEntry, TreeEntry,
+};
 pub use disk_tree::{DiskEntry, list_with_sizes};
 pub use error::{EngineError, ErrorKind};
 pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdown};

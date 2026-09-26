@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Compression level**, chosen when a backup is created: Default, Fast or
   Best.
+- **Mount a snapshot as a folder**, through FUSE: browse and open it with any
+  application, without restoring or downloading anything first. A "Mount as
+  Folder…" button on the Browse tab; "Open Folder" and "Unmount" while it is
+  live.
 
 ### Fixed
 

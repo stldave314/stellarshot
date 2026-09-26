@@ -996,6 +996,33 @@ impl App {
                         })
                     },
                 ),
+                restore::Effect::PickMountPoint => Task::perform(
+                    tasks::pick_folder(fl!("select-mount-folder")),
+                    move |path| match path {
+                        Some(point) => to_page(restore::Message::MountPointChosen(point)),
+                        None => app(Message::Noop),
+                    },
+                ),
+                restore::Effect::Mount { snapshot, point } => Task::perform(
+                    tasks::blocking(move || {
+                        let browser = browsing(browser)?;
+                        Ok(engine::mount::mount(browser, snapshot, &point)?.into())
+                    }),
+                    move |result| to_page(restore::Message::Mounted(result)),
+                ),
+                restore::Effect::OpenMounted(path) => {
+                    if let Err(err) = open::that_detached(&path) {
+                        error_log!(UI, "failed to open mounted folder {path:?}: {err}");
+                    }
+                    Task::none()
+                }
+                restore::Effect::Unmount(handle) => Task::perform(
+                    tasks::blocking(move || {
+                        drop(handle);
+                        Ok(())
+                    }),
+                    |_: Result<(), EngineError>| app(Message::Noop),
+                ),
                 restore::Effect::ShowError(context, error) => {
                     self.show_error(&context, &error);
                     Task::none()

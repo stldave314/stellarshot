@@ -84,6 +84,11 @@ rustix = { version = "1", features = ["process", "fs"] }
 # Already pulled in transitively by libcosmic; this is a direct dependency
 # on the exact same fork and revision, not a second copy.
 atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
+# Mounting a snapshot as a read-only folder: rustic_core exposes no vfs or
+# mount feature of its own (unlike the separate `rustic` CLI, which uses
+# libfuse directly), so this is a small filesystem of Stellarshot's own,
+# backed by the same `Browser` the restore page already reads through.
+fuser = "0.18"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

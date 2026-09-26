@@ -279,6 +279,27 @@ A new backup engine behind one module, on the current rustic release.
       button on the Browse tab, and on each older version of a file; proven
       with a test that downloads a folder and confirms the extracted tree
       matches the original byte-for-byte, permission-for-permission
+- [x] **Mount a snapshot as a folder through FUSE**: a whole snapshot, browsed
+      and opened with any application, without restoring or downloading
+      anything first. rustic_core has no mount feature of its own to build
+      on (unlike the separate `rustic` command-line tool, which links
+      `libfuse` directly), so this is a small read-only filesystem of
+      Stellarshot's own (the `fuser` crate), reading through the same
+      browser the Browse tab already does. A "Mount as Folder…" button on
+      the Browse tab asks for an empty folder, mounts into it, and shows
+      "Open Folder" and "Unmount" while it is live; closing the page
+      unmounts automatically. Proven with a test that mounts a snapshot and
+      reads a file, a symlink and a nested folder back through ordinary
+      filesystem calls, and a test that a write through the mount is
+      refused. One real bug was found and fixed this way: an early version
+      turned on the kernel's own permission enforcement and reported every
+      entry as owned by root, which locked the mounting user out of their
+      own private files (the kernel checked the fake root ownership against
+      the real, unprivileged mounting user, and refused). Fixed by turning
+      that enforcement off and reporting every entry as owned by whoever
+      mounted the snapshot instead, since FUSE already limits the mount to
+      that one user and the point of a read-only mount is to look, not to
+      reproduce the original owner's access rules
 - [x] **Restore checks existing files by content**, not only by size and date
       (`verify_existing`), as a toggle in the restore sheet's Advanced
       section; proven with a test that corrupts a file without changing its
@@ -548,7 +569,6 @@ A new backup engine behind one module, on the current rustic release.
 
 ## After 1.0
 
-- **Mount a snapshot** as a folder through FUSE (rustic_core's `vfs`)
 - **Search across every snapshot** at once, over time
 - **A side-by-side comparison** of a file in a snapshot against the file on
   disk, before restoring over it

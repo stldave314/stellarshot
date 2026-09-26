@@ -40,6 +40,20 @@ pub struct TreeEntry {
     pub modified: Option<i64>,
 }
 
+/// One entry's metadata for mounting a snapshot as a filesystem
+/// ([`crate::engine::mount`]): like [`TreeEntry`], but with what a real
+/// filesystem needs and the tree browser does not — a symlink's target,
+/// and the original Unix permission bits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountEntry {
+    pub name: String,
+    pub kind: EntryKind,
+    pub size: u64,
+    pub modified: Option<i64>,
+    pub mode: Option<u32>,
+    pub symlink_target: Option<PathBuf>,
+}
+
 /// One version of a file: its state in one snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileVersion {
@@ -110,6 +124,19 @@ fn entry(path: PathBuf, node: &rustic_core::repofile::Node) -> TreeEntry {
         kind: kind_of(node),
         size: node.meta.size,
         modified: node.meta.mtime.map(|time| time.as_second()),
+    }
+}
+
+fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
+    MountEntry {
+        name: node.name().to_string_lossy().into_owned(),
+        kind: kind_of(node),
+        size: node.meta.size,
+        modified: node.meta.mtime.map(|time| time.as_second()),
+        mode: node.meta.mode,
+        symlink_target: node
+            .is_symlink()
+            .then(|| node.node_type.to_link().to_path_buf()),
     }
 }
 
@@ -196,6 +223,48 @@ impl Browser {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         Ok(entries)
+    }
+
+    /// `path`'s own metadata, for mounting the snapshot as a filesystem:
+    /// unlike `list`, this resolves one path directly rather than listing
+    /// its parent, and carries a symlink's target and its Unix permission
+    /// bits, which [`TreeEntry`] does not.
+    pub fn mount_stat(&self, snapshot: &str, path: &Path) -> Result<MountEntry, EngineError> {
+        let (file, _) = self.snapshot(snapshot)?;
+        let repo = self.repo()?;
+        let node = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        Ok(mount_entry(&node))
+    }
+
+    /// `dir`'s entries, for mounting the snapshot as a filesystem; see
+    /// [`Self::mount_stat`] for why this is not just `list`.
+    pub fn mount_list(&self, snapshot: &str, dir: &Path) -> Result<Vec<MountEntry>, EngineError> {
+        let (file, _) = self.snapshot(snapshot)?;
+        let repo = self.repo()?;
+        let node = repo.node_from_snapshot_and_path(file, &dir.to_string_lossy())?;
+        let subtree = node
+            .subtree
+            .ok_or_else(|| not_found(&dir.display().to_string()))?;
+        let tree = repo.get_tree(&subtree)?;
+        Ok(tree.nodes.iter().map(mount_entry).collect())
+    }
+
+    /// `path`'s whole content, for mounting the snapshot as a filesystem: a
+    /// filesystem reads by byte range, which rustic's own `dump` does not
+    /// support directly, so a mounted file is read once into memory on
+    /// open and served from there — fine for the documents and archives
+    /// this is for, less so for something huge, which is read whole into
+    /// memory regardless of how much of it is actually opened.
+    pub fn read_file(&self, snapshot: &str, path: &Path) -> Result<Vec<u8>, EngineError> {
+        let (file, _) = self.snapshot(snapshot)?;
+        let repo = self.repo()?;
+        let node = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        if !node.is_file() {
+            return Err(wrong_kind(path, "file"));
+        }
+        let mut buffer = Vec::new();
+        repo.dump(&node, &mut buffer)?;
+        Ok(buffer)
     }
 
     /// Write `path`'s content, as it was in `snapshot`, to `destination`,

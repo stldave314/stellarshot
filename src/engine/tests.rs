@@ -959,6 +959,82 @@ fn archive_folder_refuses_a_file() {
 }
 
 // ---------------------------------------------------------------------------
+// Mounting a snapshot through FUSE
+// ---------------------------------------------------------------------------
+
+/// `read_dir` on `path`, retrying briefly: the mount point is registered
+/// with the kernel before `mount::mount` returns, but the background
+/// thread that actually answers FUSE requests may not have serviced its
+/// first one yet.
+fn read_mounted_dir(path: &Path) -> Vec<fs::DirEntry> {
+    let mut last = None;
+    for _ in 0..50 {
+        match fs::read_dir(path) {
+            Ok(entries) => return entries.collect::<Result<Vec<_>, _>>().unwrap(),
+            Err(err) => {
+                last = Some(err);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
+    panic!("{} never became readable: {last:?}", path.display());
+}
+
+#[test]
+fn a_mounted_snapshot_can_be_read_with_plain_filesystem_calls() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let mount_point = fixture.work.join("mnt");
+    fs::create_dir_all(&mount_point).unwrap();
+    let browser = Arc::new(browser(&fixture));
+    let _mount = mount::mount(browser, "latest".to_owned(), &mount_point).unwrap();
+
+    let root = restored(&mount_point, &fixture.source);
+    let names: Vec<String> = read_mounted_dir(&root)
+        .iter()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(names.contains(&"plain.txt".to_owned()));
+    assert!(names.contains(&"nested".to_owned()));
+
+    assert_eq!(fs::read(root.join("plain.txt")).unwrap(), b"plain");
+    assert_eq!(
+        fs::symlink_metadata(root.join("private.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600,
+        "the file's own recorded mode, not a default"
+    );
+    assert_eq!(
+        fs::read_link(root.join("link-to-plain")).unwrap(),
+        PathBuf::from("plain.txt")
+    );
+
+    let data = fs::read(root.join("nested/deeper/data.bin")).unwrap();
+    assert_eq!(data, pseudo_random(64 * 1024, 1));
+}
+
+#[test]
+fn a_mounted_file_cannot_be_written_to() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+
+    let mount_point = fixture.work.join("mnt");
+    fs::create_dir_all(&mount_point).unwrap();
+    let browser = Arc::new(browser(&fixture));
+    let _mount = mount::mount(browser, "latest".to_owned(), &mount_point).unwrap();
+
+    let root = restored(&mount_point, &fixture.source);
+    read_mounted_dir(&root);
+    assert!(fs::write(root.join("plain.txt"), b"tampered").is_err());
+}
+
+// ---------------------------------------------------------------------------
 // Selective restore
 // ---------------------------------------------------------------------------
 

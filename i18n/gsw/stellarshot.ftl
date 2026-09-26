@@ -240,6 +240,7 @@ versions-same = { $count ->
 }
 open-copy = Kopie öffne
 download = Abelade …
+restore-mount = Als Ordner ischbinde …
 restore-this-version = Die Version widerherstelle …
 deleted-scope = Dateie i { $folder }, wo i Sicherige vo de letschte { $days } Täg drin sind, aber nüme vorhande.
 deleted-change-folder = Ordner ändere …
@@ -305,6 +306,11 @@ download-title = Kopie us dere Sicherig spichere
 download-failed = Es hät kei Kopie us dere Sicherig chöne gspeichert wärde.
 select-scope-folder = Wähl en Ordner zum Durchsueche
 select-restore-folder = Wähl, wohi widerhergstellt werde söll
+select-mount-folder = Wähl en leere Ordner zum Ischbinde
+mount-active = Ischbunde bi { $folder }
+mount-open-folder = Ordner öffne
+unmount = Ushänke
+mount-failed = Die Sicherig het nid als Ordner ischbunde werde chönne.
 
 # Automation
 error-password-not-remembered = Planti Sicherige bruuched s Passwort im Schlüsselbund. Öffne d Sicherig, gib ihres Passwort mit «Passwort merke» ii, denn lauft di nächst plant Sicherig.

@@ -8,6 +8,7 @@
 //! is testable without a window.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
+use crate::engine::mount::Mount;
 use crate::engine::{
     Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, MissingEntry,
     Ownership, ProgressEvent, RestorePreview, RestoreRequest, SnapshotSummary, Target, TreeEntry,
@@ -89,6 +91,31 @@ struct Running {
     queue: VecDeque<RestoreRequest>,
 }
 
+/// A live FUSE mount of a snapshot. Unmounting happens when the last handle
+/// is dropped, so this is dropped through `Effect::Unmount` on a blocking
+/// thread rather than here directly: the same reasoning as [`ChildHandle`],
+/// whose cheap `Clone` this otherwise mirrors.
+#[derive(Clone)]
+pub struct MountHandle(Arc<Mount>);
+
+impl fmt::Debug for MountHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("MountHandle")
+    }
+}
+
+impl MountHandle {
+    fn point(&self) -> &Path {
+        self.0.point()
+    }
+}
+
+impl From<Mount> for MountHandle {
+    fn from(mount: Mount) -> Self {
+        Self(Arc::new(mount))
+    }
+}
+
 pub struct RestorePage {
     pub profile_id: String,
     browser: Option<Arc<Browser>>,
@@ -118,6 +145,8 @@ pub struct RestorePage {
     running: Option<Running>,
     busy: bool,
     labels: Vec<String>,
+    // Mounting
+    mounted: Option<MountHandle>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +195,12 @@ pub enum Message {
     StartRestore,
     Restore(ChildEvent),
     CancelRestore,
+    /// Mount the current snapshot as a read-only folder.
+    Mount,
+    MountPointChosen(PathBuf),
+    Mounted(Result<MountHandle, EngineError>),
+    OpenMountedFolder,
+    Unmount,
     Close,
 }
 
@@ -205,6 +240,17 @@ pub enum Effect {
     ShowError(String, EngineError),
     /// A restore finished: tell the user where their files are.
     Restored(RestorePreview),
+    /// Ask for an empty folder to mount the current snapshot into.
+    PickMountPoint,
+    /// Mount `snapshot` read-only at `point`.
+    Mount {
+        snapshot: String,
+        point: PathBuf,
+    },
+    /// Open the mounted folder in the file manager.
+    OpenMounted(PathBuf),
+    /// Drop a mount (which unmounts it) off the UI thread.
+    Unmount(MountHandle),
     Close,
 }
 
@@ -236,6 +282,7 @@ impl RestorePage {
             running: None,
             busy: false,
             labels: Vec::new(),
+            mounted: None,
         };
         (page, vec![Effect::Load])
     }
@@ -660,7 +707,35 @@ impl RestorePage {
                 }
                 Vec::new()
             }
-            Message::Close => vec![Effect::Close],
+            Message::Mount => vec![Effect::PickMountPoint],
+            Message::MountPointChosen(point) => self
+                .snapshot_id()
+                .map(|snapshot| vec![Effect::Mount { snapshot, point }])
+                .unwrap_or_default(),
+            Message::Mounted(Ok(handle)) => {
+                self.mounted = Some(handle);
+                Vec::new()
+            }
+            Message::Mounted(Err(err)) => vec![Effect::ShowError(fl!("mount-failed"), err)],
+            Message::OpenMountedFolder => self
+                .mounted
+                .as_ref()
+                .map(|handle| vec![Effect::OpenMounted(handle.point().to_path_buf())])
+                .unwrap_or_default(),
+            Message::Unmount => self
+                .mounted
+                .take()
+                .map(|handle| vec![Effect::Unmount(handle)])
+                .unwrap_or_default(),
+            Message::Close => {
+                let mut effects: Vec<Effect> = self
+                    .mounted
+                    .take()
+                    .map(|handle| vec![Effect::Unmount(handle)])
+                    .unwrap_or_default();
+                effects.push(Effect::Close);
+                effects
+            }
         }
     }
 
@@ -821,11 +896,34 @@ impl RestorePage {
                 list = list.push(self.versions_view(&entry.path, &snapshot));
             }
         }
-        widget::column::with_capacity(2)
+        widget::column::with_capacity(3)
             .spacing(spacing.space_s)
             .push(top)
+            .push(self.mount_row())
             .push(widget::scrollable(list).height(Length::Fill))
             .into()
+    }
+
+    fn mount_row(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        match &self.mounted {
+            Some(handle) => widget::row::with_capacity(3)
+                .spacing(spacing.space_xs)
+                .align_y(Alignment::Center)
+                .push(widget::text::caption(fl!(
+                    "mount-active",
+                    folder = format::path(handle.point())
+                )))
+                .push(
+                    widget::button::standard(fl!("mount-open-folder"))
+                        .on_press(Message::OpenMountedFolder),
+                )
+                .push(widget::button::destructive(fl!("unmount")).on_press(Message::Unmount))
+                .into(),
+            None => widget::button::standard(fl!("restore-mount"))
+                .on_press(Message::Mount)
+                .into(),
+        }
     }
 
     fn entry_row<'a>(&'a self, entry: &'a TreeEntry) -> Element<'a, Message> {

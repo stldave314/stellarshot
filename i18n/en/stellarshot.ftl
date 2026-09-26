@@ -250,6 +250,7 @@ versions-same = { $count ->
 }
 open-copy = Open Copy
 download = Download…
+restore-mount = Mount as Folder…
 restore-this-version = Restore This Version…
 deleted-scope = Files in { $folder } that are in backups from the last { $days } days but no longer on disk.
 deleted-change-folder = Change Folder…
@@ -321,6 +322,11 @@ download-title = Save a copy from this backup
 download-failed = Could not save a copy from this backup.
 select-scope-folder = Choose a folder to look in
 select-restore-folder = Choose where to restore to
+select-mount-folder = Choose an empty folder to mount into
+mount-active = Mounted at { $folder }
+mount-open-folder = Open Folder
+unmount = Unmount
+mount-failed = Could not mount this backup as a folder.
 
 # Automation
 error-password-not-remembered = Scheduled backups need the password remembered in your keyring. Open the backup, enter its password with “Remember password” on, and the next scheduled backup will run.

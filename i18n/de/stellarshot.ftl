@@ -240,6 +240,7 @@ versions-same = { $count ->
 }
 open-copy = Kopie öffnen
 download = Herunterladen …
+restore-mount = Als Ordner einbinden …
 restore-this-version = Diese Version wiederherstellen …
 deleted-scope = Dateien in { $folder }, die in Sicherungen der letzten { $days } Tage enthalten, aber nicht mehr vorhanden sind.
 deleted-change-folder = Ordner ändern …
@@ -305,6 +306,11 @@ download-title = Kopie aus dieser Sicherung speichern
 download-failed = Es konnte keine Kopie aus dieser Sicherung gespeichert werden.
 select-scope-folder = Wähle einen Ordner zum Durchsuchen
 select-restore-folder = Wähle, wohin wiederhergestellt werden soll
+select-mount-folder = Wähle einen leeren Ordner zum Einbinden
+mount-active = Eingebunden unter { $folder }
+mount-open-folder = Ordner öffnen
+unmount = Aushängen
+mount-failed = Diese Sicherung konnte nicht als Ordner eingebunden werden.
 
 # Automation
 error-password-not-remembered = Geplante Sicherungen benötigen das im Schlüsselbund gespeicherte Passwort. Öffne die Sicherung, gib ihr Passwort mit „Passwort merken“ ein, dann läuft die nächste geplante Sicherung.

@@ -9,6 +9,7 @@
 
 use rand::RngExt;
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 /// Bytes of entropy in a generated token, before hex encoding.
 const TOKEN_BYTES: usize = 32;
@@ -27,9 +28,12 @@ pub fn generate() -> Token {
     Token { raw, hash }
 }
 
-/// Whether `candidate` is the token `hash` was generated from.
+/// Whether `candidate` is the token `hash` was generated from. Constant-time
+/// on a length match, so a network attacker gains nothing from how long a
+/// wrong guess took to reject.
 pub fn verify(candidate: &str, hash: &str) -> bool {
-    self::hash(candidate) == hash
+    let candidate_hash = self::hash(candidate);
+    bool::from(candidate_hash.as_bytes().ct_eq(hash.as_bytes()))
 }
 
 fn hash(token: &str) -> String {

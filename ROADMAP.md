@@ -565,17 +565,23 @@ backup without sitting at the machine, plus a REST API behind it.
       `Localhost`-scoped daemon answers `curl` on `127.0.0.1` and refuses a
       connection on the machine's own LAN address, not merely "untested but
       presumably fine"
-- [ ] **Authentication**: a shared password (kept in the OS keyring the same
-      way a repository's own password is), a generated API token (kept only
-      as a SHA-256 hash, shown once), and PAM, each turned on or off
-      independently in Settings. The settings exist and persist; none of the
-      three is actually checked by the daemon yet, so every request that
-      passes the IP allow-list currently reaches the one route that exists.
-      PAM specifically: verifying that a Linux user's password actually
-      works through it from an unprivileged per-user service (it does, via
+- [x] **Password and token authentication**: the shared password (HTTP
+      Basic; the username is ignored) and the API token
+      (`Authorization: Bearer`) are both genuinely checked by the daemon now,
+      in constant time so a wrong guess's rejection cannot be timed for
+      information, either or both usable if enabled. **PAM is not wired up
+      yet**: its checkbox exists and its setting persists, but the daemon
+      does not call into it — verifying that a Linux user's password
+      actually works from an unprivileged per-user service (it does, via
       `unix_chkpwd`, so long as it is only ever checking its own user) is
-      design research done ahead of building it, not yet wired to a real
-      check
+      design research done ahead of building it, not yet a real check. If
+      **no** method is enabled, the daemon fails closed: every request is
+      rejected rather than the one route becoming open by omission, proven
+      against a real request with no credentials at all. Not yet decided or
+      built: the daemon reads the shared password from the keyring once at
+      startup, so changing it currently needs a restart to take effect —
+      whether that is good enough long-term, or the daemon should notice a
+      change without one, is unresolved
 - [x] **An IP allow-list**: addresses or CIDR ranges, added and removed in
       Settings the same way a global exclusion pattern is, and enforced by
       the daemon before any route runs — proven both by an integration test

@@ -103,6 +103,13 @@ rand = "0.10"
 axum = "0.8"
 # Matching addresses and CIDR ranges in the web interface's IP allow-list.
 ipnet = "2"
+# Decoding the web interface's HTTP Basic credentials.
+base64 = "0.22"
+# Comparing the web interface's password and API token in constant time, so
+# a network attacker gains nothing from how long a wrong guess took to
+# reject. Already pulled in transitively; a direct dependency on the same
+# version, not a second copy.
+subtle = "2"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

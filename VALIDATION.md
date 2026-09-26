@@ -262,6 +262,23 @@ Beyond the automated tests, this was verified against the actual compiled binary
 
 Not built yet: a systemd unit to run this as the always-on per-user service the design calls for, PAM authentication itself, and a configurable port (fixed at `8737`). Changing an authentication setting or the shared password currently requires restarting the daemon by hand to take effect, since the password is read from the keyring once at startup rather than on every request.
 
+### The REST API's first routes (`src/web/routes.rs`)
+
+`GET /api/v1/backups`, `GET /api/v1/backups/{id}/snapshots`, and `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse` — every one a thin wrapper over the same `status`/`engine`/`Browser` calls the desktop window already uses, so the goal here is proving the *wrapping* (routing, request extraction, JSON shape, error-to-status mapping), not re-proving engine logic `src/engine/tests.rs` already covers extensively.
+
+| Test | What it proves |
+| --- | --- |
+| `each_engine_error_kind_maps_to_a_sensible_status` | Every `ErrorKind` this project has maps to a status code a REST client can sensibly act on (401/404/409/503/500), not one blanket 500 for everything |
+| `backup_by_id_finds_the_matching_profile_only` | Looking a backup up by ID returns exactly that one, and a missing ID is an error rather than a panic or the first profile by accident |
+| `a_real_request_lists_the_configured_backup`, `a_real_request_lists_the_one_real_snapshot`, `a_real_request_browses_the_backed_up_file` | Against a *real* repository — a real `engine::init`, a real backup of a real file, a real `axum::serve` on a real socket — an HTTP client sees exactly what was actually backed up: the right profile ID, one real snapshot, and the one real file's name, not fixture data standing in for a repository |
+| `a_real_request_for_an_unknown_backup_is_not_found` | A backup ID nothing configured maps to answers `404`, not `500` or a hang |
+
+The list of backups a running daemon serves is injected once at startup (`Arc<Vec<Profile>>`), the same choice already made for its auth settings — this is also what makes the routes above testable directly against a chosen list of profiles, with no dependency on this machine's real settings and no risk of a test touching real configuration the way the daemon-level tests avoid touching the real keyring.
+
+The real end-to-end tests use a small hand-rolled HTTP/1.1 client over a raw `TcpStream`, the same approach already proven in `src/web.rs`'s own tests, rather than the `reqwest` crate: a first attempt using `reqwest::get` against this exact router, in this exact sandbox, consistently timed out connecting to `127.0.0.1` for reasons not fully diagnosed (no proxy environment variables were set) — switching to the raw-socket approach that already worked elsewhere resolved it immediately. Noted here in case `reqwest` is reached for again in this environment.
+
+Not covered: `search`, `versions`, `diff`, and `missing` (`Browser` can already do all four; no route calls them yet, and `FileVersion`/`DiffEntry`/`MissingEntry` need a `Serialize` derive first), starting a backup or a restore through the API, and reading the History page's own data through it. Unlike the daemon-level scope/allow-list/auth work, this slice's "for real" proof is an in-process real server in the test suite, not also a separately launched `stellarshot-web` process reached with `curl` — the risk this slice actually carries (axum routing, request extraction, and JSON serialization) is fully exercised either way, and a hand-crafted settings file for a manual run would mostly re-prove config loading already proven for the daemon's other settings.
+
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 
 Three more changes from watching the app actually get used, none of them logic a unit test would catch:

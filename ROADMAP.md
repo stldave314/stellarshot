@@ -587,9 +587,22 @@ backup without sitting at the machine, plus a REST API behind it.
       the daemon before any route runs — proven both by an integration test
       and by a real `curl` request rejected with a real `403` from the
       actual running binary
-- [ ] **A REST API**, versioned, covering at least: listing backups and
-      snapshots, starting a backup, browsing and restoring a snapshot, and
-      reading the History page's own data. Not started
+- [x] **A REST API, started**: `GET /api/v1/backups` (every backup's status),
+      `GET /api/v1/backups/{id}/snapshots` (a backup's snapshots), and
+      `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse?path=...` (a
+      folder's contents in a snapshot) — every one of them calling the same
+      `engine`/`Browser` code the desktop window already reads through, off
+      the async runtime the same way the window's own background reads are.
+      Proven against a real repository: a real backup is made, a real
+      `axum::serve` on a real socket answers real HTTP requests for it, and
+      the response is checked against what was actually backed up, not a
+      fixture standing in for one. **Not built yet**: starting a backup,
+      restoring, or reading the History page's own data — this is read-only,
+      and only three of the many things `Browser` can already do
+      (`search`, `versions`, `diff`, `missing` are not routes yet, and
+      several of their types need a `Serialize` derive first). The list of
+      backups is read once at daemon startup, like its auth settings — a
+      backup added after the daemon starts needs a restart to appear
 - [ ] **A web UI** on top of the API: browse, restore, and see the same
       History page the desktop app shows. Not started
 - [ ] **TLS**, if the network scope ever grows beyond a trusted LAN. Not

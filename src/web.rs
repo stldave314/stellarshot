@@ -10,9 +10,11 @@
 //! in `crate::app::child` exists to protect the *window's* long-lived
 //! process, not this one.
 //!
-//! This first version only binds according to the network scope setting and
-//! enforces the IP allow-list; it has no authentication and exactly one
-//! route, proving the plumbing before anything real is reachable through it.
+//! Every request meets, in order: the network scope's own bind address (a
+//! request from outside it never arrives at all), the IP allow-list, then
+//! authentication (a shared password, an API token, or — not yet wired up —
+//! PAM). [`routes`] is the REST API itself, reachable only once a request
+//! has passed all three.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::ExitCode;
@@ -30,7 +32,10 @@ use subtle::ConstantTimeEq;
 use crate::app::config::{NetworkScope, StellarshotConfig};
 use crate::debug::WEB;
 use crate::engine::Secret;
+use crate::profile::Profile;
 use crate::{debug_log, error_log};
+
+mod routes;
 
 /// Fixed for now: not yet exposed as a setting.
 const PORT: u16 = 8737;
@@ -76,7 +81,7 @@ pub fn main(_args: &[String]) -> ExitCode {
             token_enabled: config.web.token_enabled,
             token_hash: config.web.token_hash,
         };
-        serve(addr, config.web.allowed_addresses, auth).await
+        serve(addr, config.web.allowed_addresses, auth, config.profiles).await
     })
 }
 
@@ -98,16 +103,22 @@ fn bind_address(scope: NetworkScope) -> Option<SocketAddr> {
 /// "Ordering" documentation for [`middleware`] — so the allow-list, added
 /// last, is what a request meets first, before authentication is even
 /// considered.
-fn app(allowed_addresses: Vec<String>, auth: AuthConfig) -> Router {
+fn app(allowed_addresses: Vec<String>, auth: AuthConfig, profiles: Vec<Profile>) -> Router {
     let allowed = Arc::new(allowed_addresses);
     let auth = Arc::new(auth);
     Router::new()
         .route("/api/v1/health", get(health))
+        .merge(routes::router(Arc::new(profiles)))
         .layer(middleware::from_fn_with_state(auth, authenticate))
         .layer(middleware::from_fn_with_state(allowed, allow_list))
 }
 
-async fn serve(addr: SocketAddr, allowed_addresses: Vec<String>, auth: AuthConfig) -> ExitCode {
+async fn serve(
+    addr: SocketAddr,
+    allowed_addresses: Vec<String>,
+    auth: AuthConfig,
+    profiles: Vec<Profile>,
+) -> ExitCode {
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(err) => {
@@ -118,7 +129,7 @@ async fn serve(addr: SocketAddr, allowed_addresses: Vec<String>, auth: AuthConfi
     debug_log!(WEB, "listening on {addr}");
     let result = axum::serve(
         listener,
-        app(allowed_addresses, auth).into_make_service_with_connect_info::<SocketAddr>(),
+        app(allowed_addresses, auth, profiles).into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await;
     if let Err(err) = result {
@@ -367,18 +378,19 @@ mod tests {
         format!("Basic {encoded}").parse().unwrap()
     }
 
-    /// Serve `allowed_addresses`/`auth` on a real, ephemeral loopback port
-    /// and return its address: an actual `TcpListener` and `axum::serve`,
-    /// not a mocked request, so a wiring mistake between the middleware
-    /// layers and `ConnectInfo` extraction (which only they working
-    /// together can reveal) would show up here.
+    /// Serve `allowed_addresses`/`auth` (with no backups configured) on a
+    /// real, ephemeral loopback port and return its address: an actual
+    /// `TcpListener` and `axum::serve`, not a mocked request, so a wiring
+    /// mistake between the middleware layers and `ConnectInfo` extraction
+    /// (which only they working together can reveal) would show up here.
     async fn spawn(allowed_addresses: Vec<String>, auth: AuthConfig) -> SocketAddr {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(
                 listener,
-                app(allowed_addresses, auth).into_make_service_with_connect_info::<SocketAddr>(),
+                app(allowed_addresses, auth, Vec::new())
+                    .into_make_service_with_connect_info::<SocketAddr>(),
             )
             .await
         });

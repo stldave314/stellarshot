@@ -22,11 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   localhost-only, or LAN-reachable), a shared password, a generated API
   token, PAM, and an IP allow-list, each configurable independently.
 - **A `stellarshot-web` daemon**, binding according to the network scope
-  setting and enforcing the IP allow-list. Now checks the shared password
-  and API token for real (PAM not wired up yet); every request is rejected
-  if no method is enabled, rather than the daemon becoming open by omission.
-  Not yet a systemd service (it has to be started by hand) — it has exactly
-  one route, a health check, ahead of a real REST API.
+  setting and enforcing the IP allow-list. Checks the shared password and
+  API token for real (PAM not wired up yet); every request is rejected if no
+  method is enabled, rather than the daemon becoming open by omission. Not
+  yet a systemd service (it has to be started by hand).
+- **The beginning of a REST API**: `GET /api/v1/backups`,
+  `GET /api/v1/backups/{id}/snapshots`, and
+  `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse`. Read-only for
+  now — no starting a backup or restoring through it yet.
 
 ### Fixed
 

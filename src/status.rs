@@ -7,12 +7,14 @@
 //! (a scheduled backup that began while the window was closed, or was
 //! started by another window).
 
+use serde::Serialize;
+
 use crate::engine::lock;
 use crate::profile::Profile;
 use crate::run_state::{self, RunState};
 
 /// One backup's status right now.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {
     pub profile_id: String,
     pub name: String,

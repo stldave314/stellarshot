@@ -483,6 +483,20 @@ event-skipped = Hoppades över: { $reason }
 event-checked-sound = Kontrollen godkändes
 event-checked-damaged = Kontrollen hittade skador
 event-cleaned-up = Glömde { $count } ögonblicksbilder, frigjorde { $size }
+event-restored = { $count ->
+    [one] Återställde 1 fil ({ $size })
+   *[other] Återställde { $count } filer ({ $size })
+}
+event-snapshot-deleted = Tog bort ögonblicksbild { $snapshot }
+event-pinned = Fäste ögonblicksbild { $snapshot }
+event-unpinned = Lossade ögonblicksbild { $snapshot }
+event-password-changed = Bytte lösenord
+event-mounted = Monterade ögonblicksbild { $snapshot } som mapp
+event-unmounted = Avmonterade ögonblicksbild { $snapshot }
+history-empty = Inget har hänt än.
+history-unknown-backup = (borttagen säkerhetskopia)
+history-truncated = Visar de senaste { $shown } av { $total }
+history-via-web = Webb
 notify-overdue = "{ $name }" har inte säkerhetskopierats på ett tag
 notify-overdue-body = Dess destination har inte varit nåbar vid de schemalagda tiderna. { $schedule } Kontrollera att den är ansluten, öppna sedan Stellarshot för att säkerhetskopiera nu.
 settings-backup-title = Säkerhetskopiera och återställ Stellarshots egna inställningar

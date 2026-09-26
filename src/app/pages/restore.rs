@@ -108,6 +108,10 @@ impl MountHandle {
     fn point(&self) -> &Path {
         self.0.point()
     }
+
+    pub(crate) fn snapshot(&self) -> &str {
+        self.0.snapshot()
+    }
 }
 
 impl From<Mount> for MountHandle {

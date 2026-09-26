@@ -483,6 +483,20 @@ event-skipped = Пропуснато: { $reason }
 event-checked-sound = Проверката премина успешно
 event-checked-damaged = Проверката откри повреда
 event-cleaned-up = Забравени { $count } моментни състояния, освободени { $size }
+event-restored = { $count ->
+    [one] Възстановен е 1 файл ({ $size })
+   *[other] Възстановени са { $count } файла ({ $size })
+}
+event-snapshot-deleted = Изтрито моментно състояние { $snapshot }
+event-pinned = Закачено моментно състояние { $snapshot }
+event-unpinned = Откачено моментно състояние { $snapshot }
+event-password-changed = Паролата е сменена
+event-mounted = Моментно състояние { $snapshot } монтирано като папка
+event-unmounted = Демонтирано моментно състояние { $snapshot }
+history-empty = Все още нищо не се е случило.
+history-unknown-backup = (премахнато копие)
+history-truncated = Показани са последните { $shown } от общо { $total }
+history-via-web = Уеб
 notify-overdue = „{ $name }“ не е архивирано отдавна
 notify-overdue-body = Местоназначението му не е било достъпно в планираните часове. { $schedule } Проверете дали е свързано, после отворете Stellarshot, за да архивирате сега.
 settings-backup-title = Архивиране и възстановяване на собствените настройки на Stellarshot

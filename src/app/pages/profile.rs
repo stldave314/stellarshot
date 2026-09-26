@@ -37,6 +37,15 @@ pub enum Work {
     Modify,
 }
 
+/// What a [`Work::Modify`] is doing, so its own completion message (which
+/// carries only a `ChildEvent`, not what was asked for) can still log the
+/// right [`EventKind`].
+#[derive(Debug, Clone)]
+enum ModifyContext {
+    Delete(Vec<String>),
+    Pin(String, bool),
+}
+
 /// A write running in a child process. Only one runs at a time.
 pub struct Running {
     work: Work,
@@ -45,6 +54,8 @@ pub struct Running {
     started: Instant,
     /// When the progress last moved: bytes read or bytes uploaded.
     moved: Instant,
+    /// Set only for `Work::Modify`.
+    context: Option<ModifyContext>,
 }
 
 impl Running {
@@ -55,6 +66,7 @@ impl Running {
             progress: None,
             started: Instant::now(),
             moved: Instant::now(),
+            context: None,
         }
     }
 
@@ -242,6 +254,16 @@ impl ProfileState {
         Some(secret)
     }
 
+    /// Start a [`Work::Modify`], remembering `context` so its completion can
+    /// log what was actually asked for.
+    fn start_modify(&mut self, context: ModifyContext) -> Option<Secret> {
+        let secret = self.start(Work::Modify)?;
+        if let Some(running) = self.work.as_mut() {
+            running.context = Some(context);
+        }
+        Some(secret)
+    }
+
     pub fn is_unlocked(&self) -> bool {
         self.secret.is_some()
     }
@@ -260,6 +282,7 @@ impl ProfileState {
                 self.history.push(crate::event_log::Event {
                     time: now,
                     kind: kind.clone(),
+                    source: crate::event_log::Source::Desktop,
                 });
             }
         }
@@ -426,37 +449,64 @@ impl ProfileState {
             Message::EditHooks => vec![Effect::EditHooks],
             Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
             Message::ChangePassword => vec![Effect::ChangePassword],
-            Message::DeleteSnapshot(id) => self
-                .start(Work::Modify)
-                .map(|secret| Effect::DeleteSnapshots(secret, vec![id]))
-                .into_iter()
-                .collect(),
+            Message::DeleteSnapshot(id) => {
+                let ids = vec![id];
+                self.start_modify(ModifyContext::Delete(ids.clone()))
+                    .map(|secret| Effect::DeleteSnapshots(secret, ids))
+                    .into_iter()
+                    .collect()
+            }
             Message::SnapshotsDeleted(event) => {
                 let secret = self.secret.clone();
-                self.on_work(event, move |outcome| {
+                let context = self
+                    .work
+                    .as_ref()
+                    .and_then(|running| running.context.clone());
+                let effects = self.on_work(event, move |outcome| {
                     let mut effects = match outcome {
-                        Ok(_) => Vec::new(),
+                        Ok(_) => match context {
+                            Some(ModifyContext::Delete(ids)) => ids
+                                .into_iter()
+                                .map(|snapshot| {
+                                    Effect::LogEvent(EventKind::SnapshotDeleted { snapshot })
+                                })
+                                .collect(),
+                            _ => Vec::new(),
+                        },
                         Err(error) => vec![Effect::ShowError(fl!("delete-snapshot-failed"), error)],
                     };
                     effects.extend(secret.map(Effect::Fetch));
                     effects
-                })
+                });
+                self.track_history(&effects);
+                effects
             }
             Message::TogglePinned(id, pinned) => self
-                .start(Work::Modify)
+                .start_modify(ModifyContext::Pin(id.clone(), pinned))
                 .map(|secret| Effect::SetPinned(secret, id, pinned))
                 .into_iter()
                 .collect(),
             Message::Pinned(event) => {
                 let secret = self.secret.clone();
-                self.on_work(event, move |outcome| {
+                let context = self
+                    .work
+                    .as_ref()
+                    .and_then(|running| running.context.clone());
+                let effects = self.on_work(event, move |outcome| {
                     let mut effects = match outcome {
-                        Ok(_) => Vec::new(),
+                        Ok(_) => match context {
+                            Some(ModifyContext::Pin(snapshot, pinned)) => {
+                                vec![Effect::LogEvent(EventKind::Pinned { snapshot, pinned })]
+                            }
+                            _ => Vec::new(),
+                        },
                         Err(error) => vec![Effect::ShowError(fl!("pin-snapshot-failed"), error)],
                     };
                     effects.extend(secret.map(Effect::Fetch));
                     effects
-                })
+                });
+                self.track_history(&effects);
+                effects
             }
             Message::ShowAll => {
                 self.show_all = true;
@@ -891,7 +941,7 @@ impl ProfileState {
         for event in self.history.iter().rev().take(RECENT) {
             section = section.add(row(
                 format::local_time(event.time),
-                describe_event(&event.kind),
+                crate::event_log::describe(&event.kind),
             ));
         }
         Some(section.into())
@@ -938,41 +988,6 @@ impl ProfileState {
             }
         };
         section.into()
-    }
-}
-
-/// A history entry, as a sentence.
-fn describe_event(kind: &EventKind) -> String {
-    match kind {
-        EventKind::BackedUp => fl!("event-backed-up"),
-        EventKind::Failed {
-            stage,
-            kind,
-            detail,
-        } => {
-            let stage = match stage {
-                crate::run_state::Stage::Backup => fl!("event-stage-backup"),
-                crate::run_state::Stage::Check => fl!("event-stage-check"),
-                crate::run_state::Stage::Cleanup => fl!("event-stage-cleanup"),
-            };
-            let error = EngineError::new(*kind, detail.clone());
-            fl!(
-                "event-failed",
-                stage = stage,
-                reason = errors::explain(&error)
-            )
-        }
-        EventKind::Skipped { kind } => {
-            let error = EngineError::new(*kind, String::new());
-            fl!("event-skipped", reason = errors::explain(&error))
-        }
-        EventKind::Checked { damaged: false } => fl!("event-checked-sound"),
-        EventKind::Checked { damaged: true } => fl!("event-checked-damaged"),
-        EventKind::CleanedUp { forgotten, freed } => fl!(
-            "event-cleaned-up",
-            count = (*forgotten as i64),
-            size = format::bytes(*freed)
-        ),
     }
 }
 
@@ -1371,11 +1386,13 @@ mod tests {
         state.history.push(crate::event_log::Event {
             time: 500,
             kind: EventKind::BackedUp,
+            source: crate::event_log::Source::Desktop,
         });
 
         let loaded = vec![crate::event_log::Event {
             time: 100,
             kind: EventKind::Checked { damaged: false },
+            source: crate::event_log::Source::Desktop,
         }];
         state.update(Message::HistoryLoaded(loaded), &profile());
 
@@ -1430,6 +1447,56 @@ mod tests {
                 .update(Message::TogglePinned("abc".into(), true), &profile())
                 .is_empty()
         );
+    }
+
+    fn done() -> ChildEvent {
+        ChildEvent::Event(Event::Done {
+            report: None,
+            restored: None,
+            forgotten: None,
+            pruned: None,
+            pinned: None,
+        })
+    }
+
+    #[test]
+    fn a_finished_snapshot_deletion_logs_which_one() {
+        let mut state = unlocked();
+        state.update(Message::DeleteSnapshot("abc123".into()), &profile());
+
+        let effects = state.update(Message::SnapshotsDeleted(done()), &profile());
+
+        assert!(effects.iter().any(|e| matches!(e, Effect::Fetch(_))));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::LogEvent(EventKind::SnapshotDeleted { snapshot }) if snapshot == "abc123"
+        )));
+    }
+
+    #[test]
+    fn a_failed_snapshot_deletion_logs_nothing() {
+        let mut state = unlocked();
+        state.update(Message::DeleteSnapshot("abc123".into()), &profile());
+
+        let effects = state.update(
+            Message::SnapshotsDeleted(ChildEvent::Ended(EngineError::new(ErrorKind::Io, ""))),
+            &profile(),
+        );
+
+        assert!(!effects.iter().any(|e| matches!(e, Effect::LogEvent(_))));
+    }
+
+    #[test]
+    fn a_finished_pin_change_logs_which_way_it_went() {
+        let mut state = unlocked();
+        state.update(Message::TogglePinned("abc123".into(), true), &profile());
+
+        let effects = state.update(Message::Pinned(done()), &profile());
+
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::LogEvent(EventKind::Pinned { snapshot, pinned: true }) if snapshot == "abc123"
+        )));
     }
 
     #[test]

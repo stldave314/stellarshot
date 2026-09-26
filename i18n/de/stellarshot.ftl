@@ -483,6 +483,20 @@ event-skipped = Übersprungen: { $reason }
 event-checked-sound = Prüfung bestanden
 event-checked-damaged = Prüfung hat Schäden gefunden
 event-cleaned-up = { $count } Momentaufnahmen vergessen, { $size } freigegeben
+event-restored = { $count ->
+    [one] 1 Datei wiederhergestellt ({ $size })
+   *[other] { $count } Dateien wiederhergestellt ({ $size })
+}
+event-snapshot-deleted = Momentaufnahme { $snapshot } gelöscht
+event-pinned = Momentaufnahme { $snapshot } angeheftet
+event-unpinned = Momentaufnahme { $snapshot } losgelöst
+event-password-changed = Passwort geändert
+event-mounted = Momentaufnahme { $snapshot } als Ordner eingebunden
+event-unmounted = Momentaufnahme { $snapshot } ausgehängt
+history-empty = Noch ist nichts passiert.
+history-unknown-backup = (entfernte Sicherung)
+history-truncated = Zeigt die neuesten { $shown } von { $total }
+history-via-web = Web
 notify-overdue = „{ $name }“ wurde lange nicht gesichert
 notify-overdue-body = Das Ziel war zu den geplanten Zeiten nicht erreichbar. { $schedule } Prüfe, ob es verbunden ist, und öffne dann Stellarshot, um jetzt zu sichern.
 settings-backup-title = Stellarshots eigene Einstellungen sichern und wiederherstellen

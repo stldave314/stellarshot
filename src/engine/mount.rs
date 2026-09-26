@@ -36,12 +36,18 @@ const TTL: Duration = Duration::from_secs(365 * 24 * 3600);
 pub struct Mount {
     session: Option<fuser::BackgroundSession>,
     point: PathBuf,
+    snapshot: String,
 }
 
 impl Mount {
     /// Where this snapshot is mounted.
     pub fn point(&self) -> &Path {
         &self.point
+    }
+
+    /// Which snapshot this is.
+    pub fn snapshot(&self) -> &str {
+        &self.snapshot
     }
 }
 
@@ -61,7 +67,7 @@ pub fn mount(
     snapshot: String,
     mount_point: &Path,
 ) -> Result<Mount, std::io::Error> {
-    let fs = SnapshotFs::new(browser, snapshot);
+    let fs = SnapshotFs::new(browser, snapshot.clone());
     let mut config = fuser::Config::default();
     // Deliberately no `DefaultPermissions`: whoever mounted this already
     // authenticated with the repository's own password, and every entry
@@ -76,6 +82,7 @@ pub fn mount(
     Ok(Mount {
         session: Some(session),
         point: mount_point.to_path_buf(),
+        snapshot,
     })
 }
 

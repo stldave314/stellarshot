@@ -146,7 +146,12 @@ fn run(
         state.failure = None;
         state.overdue_notified = false;
     });
-    event_log::record(&profile.id, finished, event_log::EventKind::BackedUp);
+    event_log::record(
+        &profile.id,
+        finished,
+        event_log::EventKind::BackedUp,
+        event_log::Source::Desktop,
+    );
     debug_log!(SCHED, "backed up {}", profile.id);
 
     let plan = Plan::new(profile, &run_state::load(&profile.id), finished);
@@ -177,6 +182,7 @@ fn run(
                 &profile.id,
                 checked,
                 event_log::EventKind::Checked { damaged },
+                event_log::Source::Desktop,
             );
         }
         result.map_err(|err| Failed(Stage::Check, err))?;
@@ -205,6 +211,7 @@ fn run(
                 forgotten: removed,
                 freed,
             },
+            event_log::Source::Desktop,
         );
     }
     Ok(())
@@ -252,6 +259,7 @@ pub fn main(args: &[String]) -> ExitCode {
             event_log::EventKind::Skipped {
                 kind: ErrorKind::ConditionsNotMet,
             },
+            event_log::Source::Desktop,
         );
         notify_if_overdue(&profile, &runtime);
         return ExitCode::SUCCESS;
@@ -285,6 +293,7 @@ pub fn main(args: &[String]) -> ExitCode {
             id,
             now(),
             event_log::EventKind::Skipped { kind: error.kind },
+            event_log::Source::Desktop,
         );
         notify_if_overdue(&profile, &runtime);
         return ExitCode::SUCCESS;
@@ -311,6 +320,7 @@ pub fn main(args: &[String]) -> ExitCode {
             kind: error.kind,
             detail: error.detail.clone(),
         },
+        event_log::Source::Desktop,
     );
     let summary = match stage {
         Stage::Backup => fl!("notify-backup-failed", name = profile.name.clone()),

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   application, without restoring or downloading anything first. A "Mount as
   Folder…" button on the Browse tab; "Open Folder" and "Unmount" while it is
   live.
+- **A History page**, in the sidebar, showing every backup's activity in one
+  place: backups, checks, clean-ups, restores, snapshot deletions, pin
+  changes, password changes, and mounts, newest first.
 
 ### Fixed
 

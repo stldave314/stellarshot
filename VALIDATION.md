@@ -221,6 +221,19 @@ Found only by running the real end-to-end test, not by reading the code: an earl
 
 Not covered by an automated test: the "Mount as Folder…"/"Open Folder"/"Unmount" buttons themselves in `src/app/pages/restore.rs`, or the folder-choosing dialog they open — UI wiring, not new logic, following the same `Effect`/blocking-task pattern already proven for **Download** and **Open Copy**. Also not proven: behavior with `allow_other` or multi-user access — not offered, since only the user who authenticated with the repository's password can see the mount at all, which is the intended scope.
 
+### A History page across every backup (`src/event_log.rs`, `src/app/pages/history.rs`, `src/app/pages/profile.rs`, `src/app.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `merge_sorted_interleaves_every_profiles_events_newest_first` (`src/event_log.rs`) | Events from more than one profile's log come back merged into a single newest-first list, not grouped by profile or left in per-profile order |
+| `an_event_logged_before_source_existed_is_read_back_as_desktop` (`src/event_log.rs`) | A log entry written before the `source` field existed (no such key in its stored form at all) deserializes as `Source::Desktop`, not a parse failure — the same backward-compatibility pattern already proven for profile fields |
+| `every_new_event_kind_describes_itself_with_the_snapshots_short_id` (`src/event_log.rs`) | Every new `EventKind` (restore, snapshot deletion, pin/unpin, password change, mount/unmount) renders as a sentence that names the *short* snapshot ID, not the full hash |
+| `a_finished_snapshot_deletion_logs_which_one`, `a_failed_snapshot_deletion_logs_nothing`, `a_finished_pin_change_logs_which_way_it_went` (`src/app/pages/profile.rs`) | Deleting or pinning a snapshot logs exactly what was asked for once the child process actually finishes — not merely that some write happened — and a failed deletion logs nothing rather than a wrong success entry |
+
+Five kinds of action gained a log entry that had none before: restore, snapshot deletion, pin/unpin, password change, and mount/unmount — previously only backup, check, clean-up, skip and failure were recorded at all. Each `Event` also now carries a `Source` (`Desktop` or `Web`), defaulted for every entry recorded before this field existed; nothing writes `Source::Web` yet, since the web interface itself does not exist, but the History page already renders a "Web" badge for one the moment something does, without a later migration of already-recorded history.
+
+Not covered by an automated test: the History page's own `view()` in `src/app/pages/history.rs` (a pure rendering function, no interactive `Message` of its own yet) or the sidebar entry and its data-loading `Task` in `src/app.rs` — UI wiring, following the same pattern already noted above for Download, Open Copy and the mount buttons. The 500-entry display cap (`history::LIMIT`) is exercised by nothing but its own arithmetic; not proven against an actual machine with that much history.
+
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 
 Three more changes from watching the app actually get used, none of them logic a unit test would catch:

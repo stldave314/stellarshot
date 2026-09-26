@@ -76,6 +76,9 @@ pub struct App {
     runs: HashMap<String, RunState>,
     /// The Settings page's pattern field, for a global exclusion not yet added.
     global_exclude_pattern_input: String,
+    /// Every backup's history, merged and newest first: loaded fresh each
+    /// time the History page is opened, so it never needs invalidating.
+    history: Option<Vec<(String, event_log::Event)>>,
 }
 
 /// What a sidebar entry leads to.
@@ -83,6 +86,8 @@ pub struct App {
 enum NavItem {
     /// Every backup at a glance: status, folders and storage locations.
     Home,
+    /// Every backup's history in one place, across every profile.
+    History,
     Profile(String),
     /// Opens a fresh wizard. Replaced by `Wizard` once one is in progress.
     New,
@@ -136,6 +141,8 @@ pub enum Message {
     CacheDirChosen(Option<PathBuf>),
     ClearCacheDir,
     NoCache(bool),
+    /// Every backup's history, read from disk for the History page.
+    HistoryLoaded(Vec<(String, event_log::Event)>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -441,6 +448,11 @@ impl App {
         matches!(self.nav.active_data::<NavItem>(), Some(NavItem::Home))
     }
 
+    /// The History page is showing.
+    fn showing_history(&self) -> bool {
+        matches!(self.nav.active_data::<NavItem>(), Some(NavItem::History))
+    }
+
     /// The wizard, rather than the home screen or a particular backup, is
     /// showing. A wizard can exist (`self.wizard.is_some()`) without this
     /// being true: "finish later" leaves it running but out of view.
@@ -495,6 +507,7 @@ impl App {
         // schedule changed) must not silently jump the window to the first
         // backup instead.
         let keep_home = select.is_none() && self.showing_home();
+        let keep_history = select.is_none() && self.showing_history();
         let keep_wizard = select.is_none() && self.showing_wizard();
         self.nav.clear();
         let home = self
@@ -504,7 +517,20 @@ impl App {
             .icon(widget::icon::from_name("go-home-symbolic"))
             .data(NavItem::Home)
             .id();
-        let mut chosen = keep_home.then_some(home);
+        let history = self
+            .nav
+            .insert()
+            .text(fl!("history-title"))
+            .icon(widget::icon::from_name("emblem-documents-symbolic"))
+            .data(NavItem::History)
+            .id();
+        let mut chosen = if keep_home {
+            Some(home)
+        } else if keep_history {
+            Some(history)
+        } else {
+            None
+        };
         for profile in &self.config.profiles {
             let status = self.backup_status(profile);
             let text = self.nav_row_text(profile, status);
@@ -516,7 +542,7 @@ impl App {
                 .data(NavItem::Profile(profile.id.clone()))
                 .id();
             if keep.as_deref() == Some(profile.id.as_str())
-                || (chosen.is_none() && !keep_home && !keep_wizard)
+                || (chosen.is_none() && !keep_home && !keep_history && !keep_wizard)
             {
                 chosen = Some(id);
             }
@@ -686,6 +712,24 @@ impl App {
         };
         let effects = self.pages.entry(id.clone()).or_default().activate(&profile);
         self.run_profile_effects(&id, effects)
+    }
+
+    /// Read every backup's history from disk, off the UI thread: reloaded
+    /// every time the History page is opened rather than cached, since
+    /// nothing about the page's own state can go stale that way.
+    fn load_history(&self) -> Task<Message> {
+        let profile_ids: Vec<String> = self
+            .config
+            .profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect();
+        Task::perform(
+            tasks::blocking(move || Ok(event_log::load_all(&profile_ids))),
+            |result: Result<Vec<(String, event_log::Event)>, EngineError>| {
+                app(Message::HistoryLoaded(result.unwrap_or_default()))
+            },
+        )
     }
 
     /// Something on screen shows a running time.
@@ -1003,31 +1047,70 @@ impl App {
                         None => app(Message::Noop),
                     },
                 ),
-                restore::Effect::Mount { snapshot, point } => Task::perform(
-                    tasks::blocking(move || {
-                        let browser = browsing(browser)?;
-                        Ok(engine::mount::mount(browser, snapshot, &point)?.into())
-                    }),
-                    move |result| to_page(restore::Message::Mounted(result)),
-                ),
+                restore::Effect::Mount { snapshot, point } => {
+                    let profile_id = profile.id.clone();
+                    let logged_snapshot = snapshot.clone();
+                    Task::perform(
+                        tasks::blocking(move || {
+                            let browser = browsing(browser)?;
+                            Ok(engine::mount::mount(browser, snapshot, &point)?.into())
+                        }),
+                        move |result: Result<restore::MountHandle, EngineError>| {
+                            if result.is_ok() {
+                                event_log::record(
+                                    &profile_id,
+                                    format::now(),
+                                    event_log::EventKind::Mounted {
+                                        snapshot: logged_snapshot.clone(),
+                                    },
+                                    event_log::Source::Desktop,
+                                );
+                            }
+                            to_page(restore::Message::Mounted(result))
+                        },
+                    )
+                }
                 restore::Effect::OpenMounted(path) => {
                     if let Err(err) = open::that_detached(&path) {
                         error_log!(UI, "failed to open mounted folder {path:?}: {err}");
                     }
                     Task::none()
                 }
-                restore::Effect::Unmount(handle) => Task::perform(
-                    tasks::blocking(move || {
-                        drop(handle);
-                        Ok(())
-                    }),
-                    |_: Result<(), EngineError>| app(Message::Noop),
-                ),
+                restore::Effect::Unmount(handle) => {
+                    let profile_id = profile.id.clone();
+                    let snapshot = handle.snapshot().to_owned();
+                    Task::perform(
+                        tasks::blocking(move || {
+                            drop(handle);
+                            Ok(())
+                        }),
+                        move |_: Result<(), EngineError>| {
+                            event_log::record(
+                                &profile_id,
+                                format::now(),
+                                event_log::EventKind::Unmounted {
+                                    snapshot: snapshot.clone(),
+                                },
+                                event_log::Source::Desktop,
+                            );
+                            app(Message::Noop)
+                        },
+                    )
+                }
                 restore::Effect::ShowError(context, error) => {
                     self.show_error(&context, &error);
                     Task::none()
                 }
                 restore::Effect::Restored(done) => {
+                    event_log::record(
+                        &profile.id,
+                        format::now(),
+                        event_log::EventKind::Restored {
+                            files: done.files,
+                            bytes: done.bytes,
+                        },
+                        event_log::Source::Desktop,
+                    );
                     self.dialog = Some(Dialog::Info(
                         fl!("restore-done-title"),
                         fl!(
@@ -1220,7 +1303,7 @@ impl App {
                     Task::none()
                 }
                 profile::Effect::LogEvent(kind) => {
-                    event_log::record(&id, format::now(), kind);
+                    event_log::record(&id, format::now(), kind, event_log::Source::Desktop);
                     Task::none()
                 }
                 profile::Effect::FetchHistory => {
@@ -1580,6 +1663,12 @@ impl App {
                         page.set_secret(new_password.clone());
                     }
                     debug_log!(ENGINE, "changed the password of profile {id}");
+                    event_log::record(
+                        &id,
+                        format::now(),
+                        event_log::EventKind::PasswordChanged,
+                        event_log::Source::Desktop,
+                    );
                     let Some(profile) = self.config.profile(&id).cloned() else {
                         return Task::none();
                     };
@@ -1778,6 +1867,7 @@ impl Application for App {
             dejadup: crate::dejadup::find().is_some(),
             runs: HashMap::new(),
             global_exclude_pattern_input: String::new(),
+            history: None,
         };
         app.reload_runs();
         app.rebuild_nav(flags.select.as_deref());
@@ -1952,6 +2042,9 @@ impl Application for App {
             return self.update(Message::NewBackup);
         }
         self.nav.activate(id);
+        if matches!(self.nav.data::<NavItem>(id), Some(NavItem::History)) {
+            return self.load_history();
+        }
         self.activate_selected()
     }
 
@@ -1979,6 +2072,10 @@ impl Application for App {
         }
         if self.showing_home() {
             return pages::home::view(&self.config.profiles, &self.runs, &self.pages, self.now);
+        }
+        if self.showing_history() {
+            let entries = self.history.as_deref().unwrap_or_default();
+            return pages::history::view(entries, &self.config.profiles);
         }
         let Some(id) = self.selected() else {
             return widget::space::horizontal().width(Length::Fill).into();
@@ -2293,6 +2390,7 @@ impl Application for App {
                     error_log!(CONFIG, "failed to save the cache setting: {err}");
                 }
             }
+            Message::HistoryLoaded(entries) => self.history = Some(entries),
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
                     self.core.window.show_context = !self.core.window.show_context;

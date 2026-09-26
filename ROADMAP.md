@@ -300,6 +300,15 @@ A new backup engine behind one module, on the current rustic release.
       mounted the snapshot instead, since FUSE already limits the mount to
       that one user and the point of a read-only mount is to look, not to
       reproduce the original owner's access rules
+- [x] **A History page across every backup**, not just one profile's own
+      history section: every backup, check, clean-up, restore, snapshot
+      deletion, pin change, password change, and mount/unmount, merged and
+      shown newest first, on its own entry in the sidebar. Each entry also
+      now records where the action came from (`event_log::Source`, currently
+      always the desktop or a scheduled run), shown as a "Web" badge once
+      something records one — groundwork for the web interface below, so
+      that feature does not need its own separate log or a later migration
+      of everything already recorded
 - [x] **Restore checks existing files by content**, not only by size and date
       (`verify_existing`), as a toggle in the restore sheet's Advanced
       section; proven with a test that corrupts a file without changing its
@@ -527,6 +536,36 @@ A new backup engine behind one module, on the current rustic release.
       or a second launcher click) reopens or refocuses the same window
       rather than starting a second one
 
+## 0.6 — Remote access
+
+A web interface, reachable over the LAN, for looking at and controlling a
+backup without sitting at the machine, plus a REST API behind it.
+
+- [x] **An audit trail ready for it**: every history entry already records
+      whether it came from the desktop (or a scheduled run) or the web
+      (`event_log::Source`), so the web interface's own actions land in the
+      same History page other actions do, marked as such, from the moment it
+      exists — see 0.3's History page entry
+- [ ] **A daemon**, separate from the desktop window: a systemd service so
+      remote access keeps working whether or not the window is open. Not
+      started
+- [ ] **A network scope setting**: off, localhost-only, or LAN-reachable
+      (bound to a chosen interface). Not started
+- [ ] **Authentication**: a shared password (kept in the OS keyring the same
+      way a repository's own password is), an API token for scripted use,
+      and PAM, offered as alternatives rather than one fixed choice. Not
+      started
+- [ ] **IP restriction**: an allow-list of addresses or subnets, enforced
+      regardless of which authentication method is in use. Not started
+- [ ] **A REST API**, versioned, covering at least: listing backups and
+      snapshots, starting a backup, browsing and restoring a snapshot, and
+      reading the History page's own data. Not started
+- [ ] **A web UI** on top of the API: browse, restore, and see the same
+      History page the desktop app shows. Not started
+- [ ] **TLS**, if the network scope ever grows beyond a trusted LAN. Not
+      started; deliberately deferred until the scope that needs it is
+      actually offered
+
 ## 1.0 — Hardening
 
 - [x] **Every locale complete**, mechanically enforced rather than assumed:
@@ -603,9 +642,6 @@ Questions to answer before anything is built.
   it
 - **rustic-server and rustic-scheduler**: what an append-only REST
   destination, and central scheduling of several machines, would give
-- **A web interface**, alongside the desktop one: it needs its own server,
-  authentication, restrictions by address, interface and network, and an
-  audit trail
 - **A central dashboard** for many machines, hosted or on-premises in a
   container, and finding the machines on the network, each with its own
   permissions

@@ -483,6 +483,20 @@ event-skipped = Übersprunge: { $reason }
 event-checked-sound = Prüefig bestande
 event-checked-damaged = Prüefig hät Schäde gfunde
 event-cleaned-up = { $count } Momentuufnahme vergässe, { $size } freigeh
+event-restored = { $count ->
+    [one] 1 Datei widerhergstellt ({ $size })
+   *[other] { $count } Dateie widerhergstellt ({ $size })
+}
+event-snapshot-deleted = Momentuufnahm { $snapshot } glöscht
+event-pinned = Momentuufnahm { $snapshot } aaghänkt
+event-unpinned = Momentuufnahm { $snapshot } lösgmacht
+event-password-changed = Passwort gänderet
+event-mounted = Momentuufnahm { $snapshot } als Ordner ischbunde
+event-unmounted = Momentuufnahm { $snapshot } ushänkt
+history-empty = No isch nüt passiert.
+history-unknown-backup = (entfernti Sicherig)
+history-truncated = Zeigt die nöischte { $shown } vo { $total }
+history-via-web = Web
 notify-overdue = „{ $name }“ isch scho lang nüm gsicheret worde
 notify-overdue-body = Ziel isch zu de vorgsehene Zite nöd erreichbar gsi. { $schedule } Lueg, öb's verbunde isch, und mach de Sterneschuss uf, zum jetzt z sichere.
 settings-backup-title = Sterneschuss sini eigete Iistellige sichere und widerherstelle

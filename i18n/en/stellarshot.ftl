@@ -499,6 +499,20 @@ event-skipped = Skipped: { $reason }
 event-checked-sound = Check passed
 event-checked-damaged = Check found damage
 event-cleaned-up = Forgot { $count } snapshots, freed { $size }
+event-restored = { $count ->
+    [one] Restored 1 file ({ $size })
+   *[other] Restored { $count } files ({ $size })
+}
+event-snapshot-deleted = Deleted snapshot { $snapshot }
+event-pinned = Pinned snapshot { $snapshot }
+event-unpinned = Unpinned snapshot { $snapshot }
+event-password-changed = Changed the password
+event-mounted = Mounted snapshot { $snapshot } as a folder
+event-unmounted = Unmounted snapshot { $snapshot }
+history-empty = Nothing has happened yet.
+history-unknown-backup = (removed backup)
+history-truncated = Showing the most recent { $shown } of { $total }
+history-via-web = Web
 notify-overdue = "{ $name }" has not backed up in a while
 notify-overdue-body = Its destination has not been reachable at its scheduled times. { $schedule } Check that it is connected, then open Stellarshot to back up now.
 settings-backup-title = Backup and restore Stellarshot's own settings

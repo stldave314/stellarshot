@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 LOG_PATH=$(grep -oP 'pub const PATH: &str = "\K[^"]+' src/debug.rs)
-BINS=(stellarshot stellarshot-applet)
+BINS=(stellarshot stellarshot-applet stellarshot-web)
 
 if [[ -z "$LOG_PATH" ]]; then
     echo "FAIL: could not find the debug log PATH constant in src/debug.rs" >&2

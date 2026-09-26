@@ -28,6 +28,7 @@ DESTDIR="${DESTDIR:-}"
 APP_ID="io.github.stldave314.Stellarshot"
 BIN_APP="stellarshot"
 BIN_APPLET="stellarshot-applet"
+BIN_WEB="stellarshot-web"
 APPLET_ID="$APP_ID.Applet"
 DIST="dist"
 
@@ -59,7 +60,7 @@ cmd_build() {
     need cargo "install a Rust toolchain from https://rustup.rs"
     info "Building (features: $FEATURES)"
     cargo build --release --features "$FEATURES" ${CARGO_JOBS:+-j "$CARGO_JOBS"}
-    info "Built target/release/$BIN_APP and target/release/$BIN_APPLET"
+    info "Built target/release/$BIN_APP, target/release/$BIN_APPLET and target/release/$BIN_WEB"
 }
 
 # Install into $1 (a staging root, possibly empty for a real install).
@@ -70,6 +71,7 @@ stage() {
 
     "${runner[@]}" install -Dm755 "target/release/$BIN_APP"    "$root$PREFIX/bin/$BIN_APP"
     "${runner[@]}" install -Dm755 "target/release/$BIN_APPLET" "$root$PREFIX/bin/$BIN_APPLET"
+    "${runner[@]}" install -Dm755 "target/release/$BIN_WEB"    "$root$PREFIX/bin/$BIN_WEB"
 
     "${runner[@]}" install -Dm644 "res/$APP_ID.desktop" \
         "$root$PREFIX/share/applications/$APP_ID.desktop"
@@ -118,6 +120,7 @@ cmd_uninstall() {
     as_root rm -f \
         "$PREFIX/bin/$BIN_APP" \
         "$PREFIX/bin/$BIN_APPLET" \
+        "$PREFIX/bin/$BIN_WEB" \
         "$PREFIX/share/applications/$APP_ID.desktop" \
         "$PREFIX/share/applications/$APPLET_ID.desktop" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg" \

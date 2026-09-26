@@ -66,6 +66,19 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.6.0" date="2026-09-26">
+      <description>
+        <p>Getting more out of a backup, and the start of a web interface.</p>
+        <ul>
+          <li>Choose a compression level when creating a backup</li>
+          <li>Mount a snapshot as a read-only folder, browsable and openable with any application</li>
+          <li>A History page showing every backup's activity in one place</li>
+          <li>Search for a file by name across every snapshot at once</li>
+          <li>The Compare tab groups changes by folder instead of one long flat list</li>
+          <li>Web interface settings, and a daemon with real password and API token authentication (still in progress)</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-09-25">
       <description>
         <p>Automation: conditions for when a scheduled backup runs, hooks

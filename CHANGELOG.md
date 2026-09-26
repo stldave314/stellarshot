@@ -5,7 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-09-26
+
+Getting more out of a backup: mounting a snapshot as a folder, a History
+page across every backup, searching by filename across every snapshot, and
+folder-grouped comparisons. Plus the start of a web interface: settings, a
+daemon with real password and token authentication, and the first REST API
+routes.
 
 ### Added
 
@@ -43,7 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read like new data was missing; it is deduplication (even within one
   backup, identical files or repeated byte patterns are only stored once),
   not a mistake. Now reads "5.7 GB new, deduplicated."
-
 - **The Browse tree's include/exclude control now reads as a selector, not a
   status label.** A folder row's "Included"/"Excluded"/"Partly included"
   button, whose text was the current state rather than an action, is now a

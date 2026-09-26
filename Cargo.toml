@@ -1,6 +1,6 @@
 [package]
 name = "stellarshot"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.93"
 license = "GPL-3.0-only"
@@ -104,7 +104,7 @@ axum = "0.8"
 # Matching addresses and CIDR ranges in the web interface's IP allow-list.
 ipnet = "2"
 # Decoding the web interface's HTTP Basic credentials.
-base64 = "0.22"
+base64 = "0.23"
 # Comparing the web interface's password and API token in constant time, so
 # a network attacker gains nothing from how long a wrong guess took to
 # reject. Already pulled in transitively; a direct dependency on the same
@@ -167,6 +167,7 @@ recommends = "rclone"
 assets = [
     ["target/release/stellarshot", "usr/bin/", "755"],
     ["target/release/stellarshot-applet", "usr/bin/", "755"],
+    ["target/release/stellarshot-web", "usr/bin/", "755"],
     ["res/io.github.stldave314.Stellarshot.desktop", "usr/share/applications/", "644"],
     ["res/io.github.stldave314.Stellarshot.Applet.desktop", "usr/share/applications/", "644"],
     ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
@@ -182,6 +183,7 @@ recommends = { rclone = "*" }
 assets = [
     { source = "target/release/stellarshot", dest = "/usr/bin/stellarshot", mode = "755" },
     { source = "target/release/stellarshot-applet", dest = "/usr/bin/stellarshot-applet", mode = "755" },
+    { source = "target/release/stellarshot-web", dest = "/usr/bin/stellarshot-web", mode = "755" },
     { source = "res/io.github.stldave314.Stellarshot.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.desktop", mode = "644" },
     { source = "res/io.github.stldave314.Stellarshot.Applet.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.Applet.desktop", mode = "644" },
     { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", mode = "644" },

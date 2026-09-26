@@ -58,8 +58,11 @@ snapshot you ever made.
   else. Without it, the page asks once per session.
 - **Status at a glance.** "Last backup 2 hours ago", where the backup is, how
   many snapshots it holds, and the most recent snapshots with their size and
-  how much new data each added. **Pin** a snapshot ("before the upgrade") so
-  cleaning up never removes it, however old it gets.
+  how much new data each added, deduplicated. **Pin** a snapshot ("before the
+  upgrade") so cleaning up never removes it, however old it gets.
+- **A History page** lists every backup's activity in one place: backups,
+  checks, clean-ups, restores, snapshot deletions, pin changes, password
+  changes, and mounts, newest first.
 - **Two different ways to let go of a backup.** *Remove from Stellarshot*
   forgets it and leaves the data alone. *Delete backup and all data* deletes
   it, and only after you type the backup's name.
@@ -80,10 +83,15 @@ snapshot you ever made.
   with the same folders the last snapshot covered.
 - **Getting files back without the command line.** Browse any snapshot as a
   folder tree, search it, and see every version of a file, with identical
-  versions marked. **Deleted files** lists what your backups still have that is
-  no longer on disk, and **Compare** shows what changed between two snapshots.
-  **Download…** saves a file, an older version of one, or a whole folder as a
-  `.tar.gz`, straight from the snapshot, without restoring anything.
+  versions marked. **Search everywhere** finds a file by name across every
+  snapshot at once, not just the one open, and jumps straight to it.
+  **Deleted files** lists what your backups still have that is no longer on
+  disk, and **Compare** shows what changed between two snapshots, grouped by
+  folder. **Mount as Folder…** opens a whole snapshot read-only, browsable
+  and openable with any application, without restoring or downloading
+  anything. **Download…** saves a file, an older version of one, or a whole
+  folder as a `.tar.gz`, straight from the snapshot, without restoring
+  anything.
 - **A restore that shows you what it will do first.** Put files back where
   they were or in another folder. When a file is already there, choose **Keep
   both** (the default: your file is not touched and the restored copy gets a
@@ -107,9 +115,12 @@ snapshot you ever made.
 
 ## What is coming
 
-A clearer picture of every backup, finer control over what is backed up,
-more storage options and alerts beyond the desktop, on the way to 1.0. The
-detail is in [ROADMAP.md](ROADMAP.md).
+A web interface and REST API — the settings and a daemon exist (off by
+default; see [Settings](#settings)), but there is no web page to visit yet
+and authentication beyond a password or token is not wired up. Also: a
+clearer picture of every backup, finer control over what is backed up, more
+storage options and alerts beyond the desktop, on the way to 1.0. The detail
+is in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -314,9 +325,10 @@ soon as it is unlocked).
 
 | Tab | What it is for |
 | --- | --- |
-| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
+| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly, with **Open Folder** and **Unmount** while it is live. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
 | **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
-| **Compare** | Choose two snapshots to list what was added, removed and changed between them. Ticking a changed or removed item restores it as it was in the snapshot on the left |
+| **Compare** | Choose two snapshots to list what was added, removed and changed between them, grouped by folder behind a count and expanded on request (a folder with only one change is shown directly). Ticking a changed or removed item restores it as it was in the snapshot on the left |
+| **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match shows every snapshot it was found in; clicking one jumps straight to Browse at that snapshot and folder |
 
 Tick the files and folders you want and press **Restore…**. Then choose:
 
@@ -493,6 +505,7 @@ next to it keeps one however old it gets, until unpinned.
 | `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
 | `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable or a laptop condition is not met |
 | `stellarshot-applet` | The panel applet; run by the panel itself, not normally launched directly |
+| `stellarshot-web` | The web interface's daemon: reads the Web interface setting and, unless it is Off, binds and serves the REST API. No systemd service yet — run by hand to try it |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
 ### Reading your backups without Stellarshot
@@ -514,6 +527,7 @@ restic -r /path/to/backup restore latest --target ~/restored
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 | Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
 | Cache location | rustic's own default (`~/.cache/rustic`) | Another folder, or no local cache at all, for every repository this computer opens |
+| Web interface | Off | Network scope (off, this computer only, or reachable on the network), a shared password, an API token, PAM, and an address allow-list, for the `stellarshot-web` daemon. Still in progress: no web page exists yet, PAM is not checked, and the daemon has to be started by hand — see [ROADMAP.md](ROADMAP.md) |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in
@@ -663,8 +677,11 @@ written to stderr too.
   with Stellarshot itself, so most people never have to do this by hand.
 - **Timers need systemd.** On a system without a systemd user session,
   automatic backups cannot be set up; **Back Up Now** still works.
-- **Search, Deleted files and Compare show at most 500 entries.** Narrow the
-  search, choose a smaller folder, or compare snapshots closer together.
+- **Search, Search everywhere, Deleted files and Compare show at most 500
+  entries.** Narrow the search, choose a smaller folder, or compare snapshots
+  closer together. **Search everywhere** finds a name across every snapshot,
+  not what is inside a file: rustic has no support for searching file
+  content, only filenames.
 - **Opening the restore page reads the whole index first,** which can take a
   while for a large backup on a slow connection.
 - **Freed space can take a day to appear.** Data no snapshot needs is first
@@ -706,6 +723,10 @@ written to stderr too.
              each backup's status straight off disk (run history, and
              whether something holds its repository's lock), the same way
              the window itself does; no D-Bus link to the window at all
+  web     ── stellarshot-web, a separate daemon (off by default, run by hand
+             for now). Reads settings and snapshots the same way the window
+             does; a write would go through the same runner as its child
+             process, once the REST API grows write routes
 ```
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
@@ -726,6 +747,7 @@ running as you can read.
 | `engine::uploads` | Several pack uploads at once for SSH and cloud storage, without letting an index or snapshot be written before every pack it names has arrived |
 | `engine::browse` | Looking inside snapshots with the index loaded once: folders, search, versions of a file, comparing two snapshots, deleted files |
 | `engine::restore` | Selected files to their original place or a folder, with the Keep both, Overwrite or Skip decision made before rustic sees the file list, and a dry run that counts the same way |
+| `engine::mount` | A snapshot mounted read-only through FUSE, reading through the same `Browser` the restore page uses |
 | `engine::estimate` | The size of a backup before it runs, from the same file list the backup reads |
 | `drives` | Mounted removable drives, and where a drive with a given ID is mounted now |
 | `dejadup` | Reading Déjà Dup's settings (never its password) and turning them into a backup |
@@ -736,6 +758,7 @@ running as you can read.
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
 | `conditions` | Whether a laptop's power, battery and network state satisfy a scheduled backup's conditions; reading the real state (UPower, NetworkManager) and deciding are kept apart |
 | `run_state` | What happened when each backup last ran on its own, in cosmic-config's state store |
+| `event_log` | Every backup's history — backups, checks, clean-ups, restores, snapshot deletions, pin and password changes, mounts — behind the History page, marked with whether it came from the desktop or the web interface |
 | `status` | Each backup's status from what any process can see on disk: run history, and whether its repository lock is currently held. Shared by the window (a run it did not itself start) and the applet |
 | `notify` | Desktop notifications, and opening the backup when one is clicked |
 | `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
@@ -747,6 +770,9 @@ running as you can read.
 | `app::child` | Spawns `--run` in its own process group, streams its events into the UI, cancels it and everything it started |
 | `app::errors` | A localized explanation for every kind of engine error |
 | `app::migrate` | One-time moves of settings from older versions |
+| `web` | `stellarshot-web`, a separate daemon: binds according to the network scope setting, enforces the address allow-list, then a shared password or API token, ahead of every route |
+| `web::routes` | The REST API's own routes: a backup's status, its snapshots, and browsing a folder in one — read-only so far |
+| `web_token` | Generating and verifying the web interface's API token; only its hash is ever stored |
 
 ---
 

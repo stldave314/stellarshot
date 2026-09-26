@@ -6117,6 +6117,7 @@ dependencies = [
  "oo7",
  "open",
  "paste",
+ "rand 0.10.3",
  "ron",
  "rust-embed",
  "rustic_backend",

@@ -26,3 +26,4 @@ pub mod schedule;
 pub mod scheduled;
 pub mod settings_export;
 pub mod status;
+pub mod web_token;

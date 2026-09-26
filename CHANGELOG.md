@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A History page**, in the sidebar, showing every backup's activity in one
   place: backups, checks, clean-ups, restores, snapshot deletions, pin
   changes, password changes, and mounts, newest first.
+- **Web interface settings**, in Settings: a network scope (off,
+  localhost-only, or LAN-reachable), a shared password, a generated API
+  token, PAM, and an IP allow-list, each configurable independently. Not yet
+  functional on their own — this is the settings surface for a web interface
+  and REST API that do not exist yet.
 
 ### Fixed
 

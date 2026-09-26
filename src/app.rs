@@ -17,7 +17,7 @@ use cosmic::widget::menu::{action::MenuAction, key_bind::KeyBind};
 use cosmic::widget::{self, nav_bar};
 use cosmic::{Application, ApplicationExt, Element, cosmic_config, cosmic_theme, theme};
 
-use crate::app::config::{AppTheme, CONFIG_VERSION, StellarshotConfig};
+use crate::app::config::{AppTheme, CONFIG_VERSION, NetworkScope, StellarshotConfig};
 use crate::app::key_bind::key_binds;
 use crate::app::pages::profile::{self, ProfileState};
 use crate::app::pages::restore::{self, RestorePage};
@@ -79,6 +79,9 @@ pub struct App {
     /// Every backup's history, merged and newest first: loaded fresh each
     /// time the History page is opened, so it never needs invalidating.
     history: Option<Vec<(String, event_log::Event)>>,
+    /// The Settings page's own draft fields, before they are saved.
+    web_password_input: String,
+    web_allowed_address_input: String,
 }
 
 /// What a sidebar entry leads to.
@@ -143,6 +146,17 @@ pub enum Message {
     NoCache(bool),
     /// Every backup's history, read from disk for the History page.
     HistoryLoaded(Vec<(String, event_log::Event)>),
+    WebScope(NetworkScope),
+    WebPasswordEnabled(bool),
+    WebPasswordInput(String),
+    SaveWebPassword,
+    WebPasswordSaved(Result<(), String>),
+    WebTokenEnabled(bool),
+    GenerateWebToken,
+    WebPamEnabled(bool),
+    WebAllowedAddressInput(String),
+    AddWebAllowedAddress,
+    RemoveWebAllowedAddress(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -366,6 +380,111 @@ impl App {
                     widget::button::standard(fl!("add")).on_press(Message::AddGlobalExcludePattern),
                 ),
         );
+
+        let scope_item = |title: String, description: String, scope: NetworkScope| {
+            widget::settings::item::builder(title)
+                .description(description)
+                .radio(scope, Some(self.config.web.scope), Message::WebScope)
+        };
+        let web = widget::settings::section()
+            .title(fl!("settings-web-title"))
+            .add(scope_item(
+                fl!("web-scope-off"),
+                fl!("web-scope-off-description"),
+                NetworkScope::Off,
+            ))
+            .add(scope_item(
+                fl!("web-scope-localhost"),
+                fl!("web-scope-localhost-description"),
+                NetworkScope::Localhost,
+            ))
+            .add(scope_item(
+                fl!("web-scope-lan"),
+                fl!("web-scope-lan-description"),
+                NetworkScope::Lan,
+            ))
+            .add(
+                widget::settings::item::builder(fl!("web-auth-password"))
+                    .description(fl!("web-auth-password-description"))
+                    .toggler(
+                        self.config.web.password_enabled,
+                        Message::WebPasswordEnabled,
+                    ),
+            )
+            .add_maybe(self.config.web.password_enabled.then(|| {
+                widget::settings::item::builder(fl!("web-password-set")).control(
+                    widget::row::with_capacity(2)
+                        .spacing(spacing.space_xs)
+                        .push(
+                            widget::secure_input(
+                                fl!("web-password-placeholder"),
+                                &self.web_password_input,
+                                None,
+                                true,
+                            )
+                            .on_input(Message::WebPasswordInput)
+                            .on_submit(|_| Message::SaveWebPassword)
+                            .width(Length::Fill),
+                        )
+                        .push(
+                            widget::button::standard(fl!("save"))
+                                .on_press(Message::SaveWebPassword),
+                        ),
+                )
+            }))
+            .add(
+                widget::settings::item::builder(fl!("web-auth-token"))
+                    .description(fl!("web-auth-token-description"))
+                    .toggler(self.config.web.token_enabled, Message::WebTokenEnabled),
+            )
+            .add_maybe(self.config.web.token_enabled.then(|| {
+                let status = if self.config.web.token_hash.is_some() {
+                    fl!("web-token-exists")
+                } else {
+                    fl!("web-token-none")
+                };
+                widget::settings::item::builder(fl!("web-token-generate"))
+                    .description(status)
+                    .control(
+                        widget::button::standard(fl!("web-token-generate-button"))
+                            .on_press(Message::GenerateWebToken),
+                    )
+            }))
+            .add(
+                widget::settings::item::builder(fl!("web-auth-pam"))
+                    .description(fl!("web-auth-pam-description"))
+                    .toggler(self.config.web.pam_enabled, Message::WebPamEnabled),
+            );
+
+        let mut web_allowed = widget::settings::section()
+            .title(fl!("web-allowed-title"))
+            .add(widget::text::body(fl!("web-allowed-description")));
+        for (index, address) in self.config.web.allowed_addresses.iter().enumerate() {
+            web_allowed = web_allowed.add(
+                widget::settings::item::builder(address.clone()).control(
+                    widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
+                        .tooltip(fl!("remove"))
+                        .name(fl!("remove"))
+                        .on_press(Message::RemoveWebAllowedAddress(index)),
+                ),
+            );
+        }
+        web_allowed = web_allowed.add(
+            widget::row::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .align_y(Alignment::Center)
+                .push(
+                    widget::text_input(
+                        fl!("web-allowed-placeholder"),
+                        &self.web_allowed_address_input,
+                    )
+                    .on_input(Message::WebAllowedAddressInput)
+                    .on_submit(|_| Message::AddWebAllowedAddress)
+                    .width(Length::Fill),
+                )
+                .push(widget::button::standard(fl!("add")).on_press(Message::AddWebAllowedAddress)),
+        );
+
         widget::settings::view_column(vec![
             widget::settings::section()
                 .title(fl!("appearance"))
@@ -398,6 +517,8 @@ impl App {
                 .into(),
             cache.into(),
             global_excludes.into(),
+            web.into(),
+            web_allowed.into(),
         ])
         .into()
     }
@@ -730,6 +851,19 @@ impl App {
                 app(Message::HistoryLoaded(result.unwrap_or_default()))
             },
         )
+    }
+
+    /// Change the web interface's settings and save them, in one step: every
+    /// field lives in one `WebConfig`, so `set_web` is the only setter
+    /// `CosmicConfigEntry` generates for any part of it.
+    fn update_web(&mut self, mutate: impl FnOnce(&mut config::WebConfig)) {
+        let mut web = self.config.web.clone();
+        mutate(&mut web);
+        if let Some(handler) = &self.config_handler
+            && let Err(err) = self.config.set_web(handler, web)
+        {
+            error_log!(CONFIG, "failed to save the web interface settings: {err}");
+        }
     }
 
     /// Something on screen shows a running time.
@@ -1868,6 +2002,8 @@ impl Application for App {
             runs: HashMap::new(),
             global_exclude_pattern_input: String::new(),
             history: None,
+            web_password_input: String::new(),
+            web_allowed_address_input: String::new(),
         };
         app.reload_runs();
         app.rebuild_nav(flags.select.as_deref());
@@ -2391,6 +2527,58 @@ impl Application for App {
                 }
             }
             Message::HistoryLoaded(entries) => self.history = Some(entries),
+            Message::WebScope(scope) => self.update_web(|web| web.scope = scope),
+            Message::WebPasswordEnabled(enabled) => {
+                self.update_web(|web| web.password_enabled = enabled);
+            }
+            Message::WebPasswordInput(text) => self.web_password_input = text,
+            Message::SaveWebPassword => {
+                let password = std::mem::take(&mut self.web_password_input);
+                if password.is_empty() {
+                    return Task::none();
+                }
+                let secret = Secret::new(password);
+                return Task::perform(
+                    async move { crate::keyring::store_web_password(&secret).await },
+                    |result| app(Message::WebPasswordSaved(result)),
+                );
+            }
+            Message::WebPasswordSaved(Ok(())) => {}
+            Message::WebPasswordSaved(Err(detail)) => {
+                self.show_error(
+                    &fl!("web-password-failed"),
+                    &EngineError::new(engine::ErrorKind::KeyringUnavailable, detail),
+                );
+            }
+            Message::WebTokenEnabled(enabled) => self.update_web(|web| web.token_enabled = enabled),
+            Message::GenerateWebToken => {
+                let token = crate::web_token::generate();
+                self.update_web(|web| web.token_hash = Some(token.hash));
+                self.dialog = Some(Dialog::Info(
+                    fl!("web-token-title"),
+                    fl!("web-token-body", token = token.raw),
+                ));
+            }
+            Message::WebPamEnabled(enabled) => self.update_web(|web| web.pam_enabled = enabled),
+            Message::WebAllowedAddressInput(text) => self.web_allowed_address_input = text,
+            Message::AddWebAllowedAddress => {
+                let address = self.web_allowed_address_input.trim().to_owned();
+                if !address.is_empty() {
+                    self.web_allowed_address_input.clear();
+                    self.update_web(|web| {
+                        if !web.allowed_addresses.contains(&address) {
+                            web.allowed_addresses.push(address);
+                        }
+                    });
+                }
+            }
+            Message::RemoveWebAllowedAddress(index) => {
+                self.update_web(|web| {
+                    if index < web.allowed_addresses.len() {
+                        web.allowed_addresses.remove(index);
+                    }
+                });
+            }
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
                     self.core.window.show_context = !self.core.window.show_context;

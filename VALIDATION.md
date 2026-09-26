@@ -234,6 +234,18 @@ Five kinds of action gained a log entry that had none before: restore, snapshot 
 
 Not covered by an automated test: the History page's own `view()` in `src/app/pages/history.rs` (a pure rendering function, no interactive `Message` of its own yet) or the sidebar entry and its data-loading `Task` in `src/app.rs` — UI wiring, following the same pattern already noted above for Download, Open Copy and the mount buttons. The 500-entry display cap (`history::LIMIT`) is exercised by nothing but its own arithmetic; not proven against an actual machine with that much history.
 
+### Web interface settings (`src/app/config.rs`, `src/keyring.rs`, `src/web_token.rs`, `src/app.rs`)
+
+The settings surface for a planned web interface and REST API: a network scope, three independent authentication toggles, and an IP allow-list. None of it is enforced by anything yet, since the daemon that would read these settings does not exist.
+
+| Test | What it proves |
+| --- | --- |
+| `the_web_interface_defaults_to_off` (`src/app/config.rs`) | A fresh config, or one saved before this setting existed, always comes up with the network scope off — never silently listening by default |
+| `a_generated_tokens_hash_verifies_it`, `a_wrong_token_does_not_verify`, `two_generated_tokens_are_never_the_same`, `the_hash_never_equals_the_raw_token` (`src/web_token.rs`) | A generated API token's hash verifies exactly that token and no other, two generated tokens never collide, and the stored hash is never mistakable for the raw token itself |
+| `web_password_round_trip` (`tests/keyring.rs`) | The web interface's shared password round-trips through a real Secret Service (GNOME Keyring, unlocked, in this sandbox) — stored, read back, replaced, and restored to whatever was there before the test ran, since this secret (unlike a profile's) has no ID of its own to test against safely |
+
+Not covered by an automated test: the Settings page's own new controls in `src/app.rs` (the scope radio buttons, the two toggles-with-detail for password and token, the allow-list add/remove row) — UI wiring, following the same pattern as every other settings control already in this section. Not proven at all: PAM authentication itself. Its checkbox exists and its setting persists, but nothing calls into PAM yet; whether verifying a Linux user's own password from an unprivileged per-user service actually works (via `pam_unix`'s `unix_chkpwd` helper, which by design only checks the calling user's own password) is design research recorded in ROADMAP.md, not a running, tested code path.
+
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 
 Three more changes from watching the app actually get used, none of them logic a unit test would catch:

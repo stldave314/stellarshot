@@ -548,15 +548,24 @@ backup without sitting at the machine, plus a REST API behind it.
       exists — see 0.3's History page entry
 - [ ] **A daemon**, separate from the desktop window: a systemd service so
       remote access keeps working whether or not the window is open. Not
-      started
-- [ ] **A network scope setting**: off, localhost-only, or LAN-reachable
-      (bound to a chosen interface). Not started
-- [ ] **Authentication**: a shared password (kept in the OS keyring the same
-      way a repository's own password is), an API token for scripted use,
-      and PAM, offered as alternatives rather than one fixed choice. Not
-      started
-- [ ] **IP restriction**: an allow-list of addresses or subnets, enforced
-      regardless of which authentication method is in use. Not started
+      started; the settings below already exist for it to read once it does
+- [x] **A network scope setting**: off, localhost-only, or LAN-reachable, as
+      a choice in Settings (`StellarshotConfig.web.scope`). Defaults to off,
+      proven with a test that a fresh config never comes up any other way.
+      Not yet enforced by anything, since the daemon that would bind to it
+      does not exist yet
+- [x] **Authentication settings**: a shared password (kept in the OS keyring
+      the same way a repository's own password is), a generated API token
+      (kept only as a SHA-256 hash, shown once), and PAM, each turned on or
+      off independently in Settings rather than one fixed choice. Not yet
+      enforced by anything; PAM's own checkbox does not yet talk to PAM at
+      all — verifying that a Linux user's password actually works through it
+      from an unprivileged per-user service (it does, via `unix_chkpwd`, so
+      long as it is only ever checking its own user) is design research done
+      ahead of building it, not yet wired to a real check
+- [x] **An IP allow-list setting**: addresses or ranges, added and removed in
+      Settings the same way a global exclusion pattern is. Not yet enforced,
+      for the same reason as the two settings above
 - [ ] **A REST API**, versioned, covering at least: listing backups and
       snapshots, starting a backup, browsing and restoring a snapshot, and
       reading the History page's own data. Not started

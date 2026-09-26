@@ -89,6 +89,9 @@ atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
 # libfuse directly), so this is a small filesystem of Stellarshot's own,
 # backed by the same `Browser` the restore page already reads through.
 fuser = "0.18"
+# Generating a web interface API token: high-entropy bytes, not a UUID
+# (fewer bits, not meant as a secret).
+rand = "0.10"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

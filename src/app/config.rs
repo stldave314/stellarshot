@@ -33,6 +33,11 @@ pub struct StellarshotConfig {
     /// Do not cache repository index data locally at all: slower, but
     /// nothing worth keeping on a machine low on disk space.
     pub no_cache: bool,
+    /// The web interface's own settings: never any secret material itself
+    /// (the shared password lives in the keyring, like a repository's own;
+    /// an API token is kept only as a hash), just what is turned on and who
+    /// may reach it.
+    pub web: WebConfig,
 }
 
 impl StellarshotConfig {
@@ -74,5 +79,53 @@ impl AppTheme {
             Self::Light => theme::Theme::light(),
             Self::System => theme::system_preference(),
         }
+    }
+}
+
+/// Who can reach the web interface, network-wise. Independent of whether any
+/// authentication method is turned on: `Off` is the only setting that
+/// actually stops the daemon from listening at all.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub enum NetworkScope {
+    /// The daemon does not listen at all.
+    #[default]
+    Off,
+    /// Bound to `127.0.0.1` only: reachable through the machine's own SSH
+    /// tunnel or a reverse proxy, never directly from another device.
+    Localhost,
+    /// Bound to every interface, reachable from the rest of the LAN.
+    Lan,
+}
+
+/// The web interface's settings: never a secret itself, only what is turned
+/// on. The shared password lives in the keyring (`crate::keyring`); an API
+/// token is kept here only as a hash, since the hash alone is enough to
+/// check one without ever storing the raw value anywhere but the moment it
+/// is generated.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WebConfig {
+    pub scope: NetworkScope,
+    pub password_enabled: bool,
+    pub token_enabled: bool,
+    pub pam_enabled: bool,
+    /// The current API token's SHA-256 hash, hex-encoded. `None` until one
+    /// has been generated; regenerating replaces it, invalidating the old
+    /// token immediately.
+    pub token_hash: Option<String>,
+    /// Addresses or CIDR ranges allowed to reach the web interface, on top
+    /// of whatever `scope` itself already allows. Empty means every address
+    /// `scope` allows, unrestricted.
+    pub allowed_addresses: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_web_interface_defaults_to_off() {
+        // A fresh install, or one that predates this setting entirely, must
+        // never come up listening on a network by surprise.
+        assert_eq!(WebConfig::default().scope, NetworkScope::Off);
     }
 }

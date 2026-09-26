@@ -20,9 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes, password changes, and mounts, newest first.
 - **Web interface settings**, in Settings: a network scope (off,
   localhost-only, or LAN-reachable), a shared password, a generated API
-  token, PAM, and an IP allow-list, each configurable independently. Not yet
-  functional on their own — this is the settings surface for a web interface
-  and REST API that do not exist yet.
+  token, PAM, and an IP allow-list, each configurable independently.
+- **A `stellarshot-web` daemon**, binding according to the network scope
+  setting and enforcing the IP allow-list. Not yet a systemd service (it has
+  to be started by hand) and not yet authenticated (no password, token or
+  PAM check exists yet) — it has exactly one route, a health check, ahead of
+  a real REST API.
 
 ### Fixed
 

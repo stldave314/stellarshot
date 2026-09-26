@@ -546,26 +546,41 @@ backup without sitting at the machine, plus a REST API behind it.
       (`event_log::Source`), so the web interface's own actions land in the
       same History page other actions do, marked as such, from the moment it
       exists — see 0.3's History page entry
-- [ ] **A daemon**, separate from the desktop window: a systemd service so
-      remote access keeps working whether or not the window is open. Not
-      started; the settings below already exist for it to read once it does
+- [x] **A daemon**: a new `stellarshot-web` binary (axum), binding according
+      to the network scope setting and enforcing the IP allow-list before any
+      route is reached — proven against a real socket, both by an
+      integration test that serves the real router on an ephemeral port and
+      by running the actual compiled binary and reaching it (and failing to
+      reach it) with real `curl` requests. Not yet a systemd service of its
+      own: today it only runs if started by hand; installing and managing it
+      as a per-user unit (the way `crate::schedule` already does for backup
+      timers) is not started. It has exactly one route (a health check) and
+      no authentication at all yet — everything reaching it is let through
+      once past the allow-list, which is acceptable only because nothing
+      behind it does anything yet
 - [x] **A network scope setting**: off, localhost-only, or LAN-reachable, as
-      a choice in Settings (`StellarshotConfig.web.scope`). Defaults to off,
-      proven with a test that a fresh config never comes up any other way.
-      Not yet enforced by anything, since the daemon that would bind to it
-      does not exist yet
-- [x] **Authentication settings**: a shared password (kept in the OS keyring
-      the same way a repository's own password is), a generated API token
-      (kept only as a SHA-256 hash, shown once), and PAM, each turned on or
-      off independently in Settings rather than one fixed choice. Not yet
-      enforced by anything; PAM's own checkbox does not yet talk to PAM at
-      all — verifying that a Linux user's password actually works through it
-      from an unprivileged per-user service (it does, via `unix_chkpwd`, so
-      long as it is only ever checking its own user) is design research done
-      ahead of building it, not yet wired to a real check
-- [x] **An IP allow-list setting**: addresses or ranges, added and removed in
-      Settings the same way a global exclusion pattern is. Not yet enforced,
-      for the same reason as the two settings above
+      a choice in Settings (`StellarshotConfig.web.scope`) and now genuinely
+      enforced by the daemon above. Defaults to off, proven with a test that
+      a fresh config never comes up any other way, and confirmed for real: a
+      `Localhost`-scoped daemon answers `curl` on `127.0.0.1` and refuses a
+      connection on the machine's own LAN address, not merely "untested but
+      presumably fine"
+- [ ] **Authentication**: a shared password (kept in the OS keyring the same
+      way a repository's own password is), a generated API token (kept only
+      as a SHA-256 hash, shown once), and PAM, each turned on or off
+      independently in Settings. The settings exist and persist; none of the
+      three is actually checked by the daemon yet, so every request that
+      passes the IP allow-list currently reaches the one route that exists.
+      PAM specifically: verifying that a Linux user's password actually
+      works through it from an unprivileged per-user service (it does, via
+      `unix_chkpwd`, so long as it is only ever checking its own user) is
+      design research done ahead of building it, not yet wired to a real
+      check
+- [x] **An IP allow-list**: addresses or CIDR ranges, added and removed in
+      Settings the same way a global exclusion pattern is, and enforced by
+      the daemon before any route runs — proven both by an integration test
+      and by a real `curl` request rejected with a real `403` from the
+      actual running binary
 - [ ] **A REST API**, versioned, covering at least: listing backups and
       snapshots, starting a backup, browsing and restoring a snapshot, and
       reading the History page's own data. Not started

@@ -42,6 +42,8 @@ pub const UI: &str = "UI";
 pub const CONFIG: &str = "CONFIG";
 /// Scheduled backups: systemd units, the `--scheduled` run, notifications.
 pub const SCHED: &str = "SCHED";
+/// The web interface's own server: binding, requests allowed or rejected.
+pub const WEB: &str = "WEB";
 
 /// Opens (or creates) `path` as a private log file: `0600`, and refusing to
 /// follow a symlink already at that name. Truncated if `truncate`, appended

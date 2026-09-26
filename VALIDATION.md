@@ -236,7 +236,7 @@ Not covered by an automated test: the History page's own `view()` in `src/app/pa
 
 ### Web interface settings (`src/app/config.rs`, `src/keyring.rs`, `src/web_token.rs`, `src/app.rs`)
 
-The settings surface for a planned web interface and REST API: a network scope, three independent authentication toggles, and an IP allow-list. None of it is enforced by anything yet, since the daemon that would read these settings does not exist.
+The settings surface for a planned web interface and REST API: a network scope, three independent authentication toggles, and an IP allow-list. The network scope and the allow-list are now genuinely enforced by the daemon in the next section; the three authentication methods are not enforced by anything yet.
 
 | Test | What it proves |
 | --- | --- |
@@ -245,6 +245,20 @@ The settings surface for a planned web interface and REST API: a network scope, 
 | `web_password_round_trip` (`tests/keyring.rs`) | The web interface's shared password round-trips through a real Secret Service (GNOME Keyring, unlocked, in this sandbox) — stored, read back, replaced, and restored to whatever was there before the test ran, since this secret (unlike a profile's) has no ID of its own to test against safely |
 
 Not covered by an automated test: the Settings page's own new controls in `src/app.rs` (the scope radio buttons, the two toggles-with-detail for password and token, the allow-list add/remove row) — UI wiring, following the same pattern as every other settings control already in this section. Not proven at all: PAM authentication itself. Its checkbox exists and its setting persists, but nothing calls into PAM yet; whether verifying a Linux user's own password from an unprivileged per-user service actually works (via `pam_unix`'s `unix_chkpwd` helper, which by design only checks the calling user's own password) is design research recorded in ROADMAP.md, not a running, tested code path.
+
+### The web interface's own daemon (`src/web.rs`, `src/bin/web.rs`)
+
+The `stellarshot-web` binary: binds according to the network scope setting and enforces the IP allow-list ahead of every route. No authentication yet, and exactly one route (a health check) — proven now so the allow-list and scope-binding logic is not re-verified from scratch once real routes exist behind it.
+
+| Test | What it proves |
+| --- | --- |
+| `the_off_scope_binds_nowhere`, `the_localhost_scope_binds_only_loopback`, `the_lan_scope_binds_every_interface` | Each network scope maps to the intended bind address, not merely "some address" |
+| `an_empty_allow_list_allows_everything`, `a_single_address_only_allows_itself`, `a_cidr_range_allows_every_address_inside_it`, `an_unparseable_entry_matches_nothing_rather_than_panicking` | The allow-list's matching logic: empty means unrestricted, a single address matches only itself, a CIDR range matches everything inside it and nothing outside, and a garbled entry fails closed (matches nothing) rather than panicking the whole server |
+| `a_real_request_from_an_address_not_on_the_allow_list_is_forbidden`, `a_real_request_with_no_allow_list_reaches_the_health_route` | Against a real `TcpListener` and a real `axum::serve` on an ephemeral port, not a mocked request: a genuine TCP client is refused or let through exactly as the allow-list says, proving the allow-list middleware and `ConnectInfo` peer-address extraction actually cooperate, not just that each looks right in isolation |
+
+Beyond the automated tests, this was verified against the actual compiled binary, isolating the layer under test the way a directory-permission claim needs isolating from a web-server config claim: with the allow-list empty and scope set to `Localhost`, `curl http://127.0.0.1:8737/api/v1/health` returned a real `200` with `{"ok":true}`, and `curl` against the machine's own LAN address on the same port was refused outright (`Connection refused`) — proving `Localhost` scope is not reachable from the network at all, not merely untested from there. With the allow-list then set to an address that is not the loopback address, the same `127.0.0.1` request that previously succeeded came back a real `403` from the running process. Not proven: `Lan` scope actually being reachable from a second machine on the network (this sandbox has no second machine to test from) — its bind address (`0.0.0.0`) is proven correct by `the_lan_scope_binds_every_interface` and by general knowledge of what that address means to the kernel, not by an external client actually connecting.
+
+Not built yet: a systemd unit to run this as the always-on per-user service the design calls for. Today it only runs if started by hand, and a fixed port (`8737`) is not yet configurable.
 
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 

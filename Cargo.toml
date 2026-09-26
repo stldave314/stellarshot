@@ -23,6 +23,10 @@ path = "src/main.rs"
 name = "stellarshot-applet"
 path = "src/bin/applet.rs"
 
+[[bin]]
+name = "stellarshot-web"
+path = "src/bin/web.rs"
+
 [features]
 default = []
 # Forces developer debug logging off at compile time. Every packaging target
@@ -46,7 +50,7 @@ bytesize = "2"
 rustic_backend = { version = "0.7", default-features = false, features = ["rclone", "rest"] }
 serde_json = "1"
 sha2 = "0.11"
-tokio = { version = "1", features = ["macros", "process", "io-util", "rt", "time"] }
+tokio = { version = "1", features = ["macros", "process", "io-util", "net", "rt", "rt-multi-thread", "time"] }
 jiff = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Bridges `log` (what rustic_core and rustic_backend, including rclone's own
@@ -92,6 +96,13 @@ fuser = "0.18"
 # Generating a web interface API token: high-entropy bytes, not a UUID
 # (fewer bits, not meant as a secret).
 rand = "0.10"
+# The web interface's own HTTP server (`stellarshot-web`), on the same
+# tokio runtime already used elsewhere. Already pulled in transitively
+# (through libcosmic's own dependencies); these are direct dependencies on
+# compatible versions, not a second copy.
+axum = "0.8"
+# Matching addresses and CIDR ranges in the web interface's IP allow-list.
+ipnet = "2"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

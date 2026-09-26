@@ -813,6 +813,60 @@ fn search_finds_names_anywhere() {
 }
 
 #[test]
+fn search_all_finds_every_snapshot_a_name_appears_in() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("keepme.txt"), b"first").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("keepme.txt"), b"second").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    fs::remove_file(fixture.source.join("keepme.txt")).unwrap();
+    fs::write(fixture.source.join("unrelated.txt"), b"noise").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    let found = browser(&fixture).search_all("keepme", 10).unwrap();
+
+    assert_eq!(
+        found.len(),
+        1,
+        "one distinct path, not one row per snapshot"
+    );
+    assert_eq!(found[0].path, fixture.source.join("keepme.txt"));
+    assert_eq!(
+        found[0].snapshots.len(),
+        2,
+        "found only in the two snapshots that actually had it"
+    );
+}
+
+#[test]
+fn search_all_matches_every_distinct_path() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("report-jan.txt"), b"a").unwrap();
+    fs::write(fixture.source.join("report-feb.txt"), b"b").unwrap();
+    fs::write(fixture.source.join("other.txt"), b"c").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    let found = browser(&fixture).search_all("report", 10).unwrap();
+
+    assert_eq!(found.len(), 2);
+    assert!(found.iter().any(|m| m.path.ends_with("report-jan.txt")));
+    assert!(found.iter().any(|m| m.path.ends_with("report-feb.txt")));
+}
+
+#[test]
+fn search_all_ignores_case_and_an_empty_query_finds_nothing() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("Report.txt"), b"a").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    assert_eq!(browser(&fixture).search_all("REPORT", 10).unwrap().len(), 1);
+    assert_eq!(browser(&fixture).search_all("", 10).unwrap().len(), 0);
+}
+
+#[test]
 fn versions_collapse_identical_content() {
     let fixture = fixture();
     awkward_tree(&fixture.source);

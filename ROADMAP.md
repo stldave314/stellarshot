@@ -324,6 +324,20 @@ A new backup engine behind one module, on the current rustic release.
       type it takes, so it cannot be named from outside the crate at all.
       Worth raising with the rustic project itself, per the rule at the top
       of this page; not attempted here
+- [x] **Search across every snapshot** at once, by filename: a "Search
+      everywhere" tab in Restore, alongside Browse/Deleted/Compare.
+      `rustic_core` keeps no persistent search index of its own; this uses
+      `find_matching_nodes`, which walks every snapshot's tree but shares the
+      walk of any subtree byte-identical across snapshots rather than
+      repeating it — fast enough at desktop scale without Stellarshot
+      building and maintaining a database of its own. Each match shows every
+      snapshot it was found in; clicking one jumps straight to Browse at
+      that snapshot and folder. Content search (searching *inside* files) is
+      not offered: rustic has no support for it at all, only filenames
+- [x] **The Compare tab groups changes by folder**, collapsed behind a count,
+      rather than one flat list of every changed path — the actual "drill
+      down" this was missing before. A folder with only one change is shown
+      directly, without an extra click to reveal the one thing inside it
 
 ## 0.4 — Storage and credentials
 
@@ -651,7 +665,6 @@ backup without sitting at the machine, plus a REST API behind it.
 
 ## After 1.0
 
-- **Search across every snapshot** at once, over time
 - **A side-by-side comparison** of a file in a snapshot against the file on
   disk, before restoring over it
 - **A low-memory profile** for machines that back up millions of files, once

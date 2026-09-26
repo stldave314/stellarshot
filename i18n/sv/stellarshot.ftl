@@ -36,7 +36,7 @@ remember-password = Kom ihåg lösenordet
 remember-password-description = Sparas i din nyckelring. Schemalagda säkerhetskopieringar behöver det.
 recent-snapshots = Senaste ögonblicksbilderna
 no-snapshots-yet = Inga ögonblicksbilder än. Tryck på Säkerhetskopiera nu för att ta den första.
-snapshot-row = { $id } · { $size } · { $added } nytt
+snapshot-row = { $id } · { $size } · { $added } nytt, deduplicerat
 show-all-snapshots = Visa alla { $count } ögonblicksbilder
 manage = Hantera
 edit-backup = Vad som säkerhetskopieras
@@ -222,6 +222,7 @@ folder-up = En mapp upp
 tab-browse = Bläddra
 tab-deleted = Borttagna filer
 tab-compare = Jämför
+tab-search = Sök överallt
 selected-count = { $count ->
     [one] 1 objekt markerat
    *[other] { $count } objekt markerade
@@ -232,6 +233,9 @@ search-results = { $count ->
     [one] 1 träff
    *[other] { $count } träffar
 }
+search-all-placeholder = Sök i alla ögonblicksbilder
+search-all-intro = Hitta en fil efter namn i alla ögonblicksbilder, oavsett var den säkerhetskopierades.
+search-all-none = Inget matchade i någon ögonblicksbild.
 folder-empty = Den här mappen är tom.
 versions-title = Versioner
 versions-same = { $count ->
@@ -253,6 +257,8 @@ compare-button = Jämför
 compare-intro = Välj två ögonblicksbilder för att se vad som ändrats.
 compare-none = Inget ändrades mellan de här ögonblicksbilderna.
 compare-summary = { $added } tillagda · { $removed } borttagna · { $changed } ändrade
+compare-folder = { $folder } ({ $count } ändrade)
+compare-folder-root = { $count } ändrade här
 restore-sheet-title = { $count ->
     [one] Återställ 1 objekt
    *[other] Återställ { $count } objekt

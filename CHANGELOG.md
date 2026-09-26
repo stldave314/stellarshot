@@ -30,8 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `GET /api/v1/backups/{id}/snapshots`, and
   `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse`. Read-only for
   now — no starting a backup or restoring through it yet.
+- **Search across every snapshot** by filename, in a new "Search everywhere"
+  tab: shows every snapshot a match was found in, and jumps straight to
+  Browse at the one you pick.
+- **The Compare tab groups changes by folder**, collapsed behind a count and
+  expanded on request, instead of one flat list of every changed path.
 
 ### Fixed
+
+- **A snapshot's size no longer looks like a bug on a brand-new backup.**
+  "5.7 GB new" on a backup's very first run, next to a larger total size,
+  read like new data was missing; it is deduplication (even within one
+  backup, identical files or repeated byte patterns are only stored once),
+  not a mistake. Now reads "5.7 GB new, deduplicated."
 
 - **The Browse tree's include/exclude control now reads as a selector, not a
   status label.** A folder row's "Included"/"Excluded"/"Partly included"

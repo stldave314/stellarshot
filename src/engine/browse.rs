@@ -90,6 +90,16 @@ pub struct MissingEntry {
     pub last_seen: SnapshotSummary,
 }
 
+/// One path found by name across every snapshot, not just one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalMatch {
+    pub path: PathBuf,
+    pub kind: EntryKind,
+    pub size: u64,
+    /// Every snapshot this exact path was found in, newest first.
+    pub snapshots: Vec<SnapshotSummary>,
+}
+
 /// An open repository for looking around in.
 pub struct Browser {
     repo: Mutex<Repository<IndexedFullStatus>>,
@@ -370,6 +380,56 @@ impl Browser {
             }
         }
         Ok(found)
+    }
+
+    /// Every path whose name contains `query` (ignoring case) in *any*
+    /// snapshot, with every snapshot it was found in, up to `limit` distinct
+    /// paths. Rustic keeps no persistent search index of its own — this
+    /// walks every snapshot's tree once, through `find_matching_nodes`,
+    /// which shares the walk of any subtree byte-identical across
+    /// snapshots (the common case for a backup) rather than repeating it
+    /// once per snapshot.
+    pub fn search_all(&self, query: &str, limit: usize) -> Result<Vec<GlobalMatch>, EngineError> {
+        let query = query.to_lowercase();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let repo = self.repo()?;
+        let ids = self.snapshots.iter().map(|(file, _)| file.tree);
+        let result = repo.find_matching_nodes(ids, &|_path, node| {
+            node.name()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(&query)
+        })?;
+        let mut by_path: BTreeMap<PathBuf, (usize, Vec<usize>)> = BTreeMap::new();
+        for (snapshot_index, hits) in result.matches.iter().enumerate() {
+            for &(path_index, node_index) in hits {
+                // `find_matching_nodes` returns paths relative to the tree
+                // root, without the leading `/` every other path in this
+                // module carries; same fix-up as `search` above.
+                let path = Path::new("/").join(&result.paths[path_index]);
+                let (_, snapshot_indices) = by_path.entry(path).or_insert((node_index, Vec::new()));
+                snapshot_indices.push(snapshot_index);
+            }
+        }
+        let mut matches: Vec<GlobalMatch> = by_path
+            .into_iter()
+            .map(|(path, (node_index, snapshot_indices))| {
+                let node = &result.nodes[node_index];
+                GlobalMatch {
+                    path,
+                    kind: kind_of(node),
+                    size: node.meta.size,
+                    snapshots: snapshot_indices
+                        .into_iter()
+                        .map(|index| self.snapshots[index].1.clone())
+                        .collect(),
+                }
+            })
+            .collect();
+        matches.truncate(limit);
+        Ok(matches)
     }
 
     /// `path` in every snapshot that has it, newest first.

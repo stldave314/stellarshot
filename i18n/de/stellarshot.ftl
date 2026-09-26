@@ -36,7 +36,7 @@ remember-password = Passwort merken
 remember-password-description = Wird in deinem Schlüsselbund gespeichert. Geplante Sicherungen brauchen es.
 recent-snapshots = Letzte Momentaufnahmen
 no-snapshots-yet = Noch keine Momentaufnahmen. Drücke „Jetzt sichern“ für die erste.
-snapshot-row = { $id } · { $size } · { $added } neu
+snapshot-row = { $id } · { $size } · { $added } neu, dedupliziert
 show-all-snapshots = Alle { $count } Momentaufnahmen anzeigen
 manage = Verwalten
 edit-backup = Was gesichert wird
@@ -222,6 +222,7 @@ folder-up = Einen Ordner nach oben
 tab-browse = Durchsuchen
 tab-deleted = Gelöschte Dateien
 tab-compare = Vergleichen
+tab-search = Überall suchen
 selected-count = { $count ->
     [one] 1 Element ausgewählt
    *[other] { $count } Elemente ausgewählt
@@ -232,6 +233,9 @@ search-results = { $count ->
     [one] 1 Treffer
    *[other] { $count } Treffer
 }
+search-all-placeholder = Jede Momentaufnahme durchsuchen
+search-all-intro = Finde eine Datei anhand ihres Namens über jede Momentaufnahme hinweg, egal wo sie gesichert wurde.
+search-all-none = Nichts hat in irgendeiner Momentaufnahme übereingestimmt.
 folder-empty = Dieser Ordner ist leer.
 versions-title = Versionen
 versions-same = { $count ->
@@ -253,6 +257,8 @@ compare-button = Vergleichen
 compare-intro = Wähle zwei Momentaufnahmen, um zu sehen, was sich geändert hat.
 compare-none = Zwischen diesen Momentaufnahmen hat sich nichts geändert.
 compare-summary = { $added } hinzugefügt · { $removed } entfernt · { $changed } geändert
+compare-folder = { $folder } ({ $count } geändert)
+compare-folder-root = { $count } hier geändert
 restore-sheet-title = { $count ->
     [one] 1 Element wiederherstellen
    *[other] { $count } Elemente wiederherstellen

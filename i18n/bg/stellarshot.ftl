@@ -36,7 +36,7 @@ remember-password = Запомняне на паролата
 remember-password-description = Пази се в ключодържателя ви. Планираните резервни копия се нуждаят от нея.
 recent-snapshots = Последни моментни състояния
 no-snapshots-yet = Все още няма моментни състояния. Натиснете „Резервно копие сега“ за първото.
-snapshot-row = { $id } · { $size } · { $added } нови
+snapshot-row = { $id } · { $size } · { $added } нови, дедублицирани
 show-all-snapshots = Показване на всички { $count } моментни състояния
 manage = Управление
 edit-backup = Какво се копира
@@ -222,6 +222,7 @@ folder-up = Една папка нагоре
 tab-browse = Преглед
 tab-deleted = Изтрити файлове
 tab-compare = Сравняване
+tab-search = Търсене навсякъде
 selected-count = { $count ->
     [one] 1 избран елемент
    *[other] { $count } избрани елемента
@@ -232,6 +233,9 @@ search-results = { $count ->
     [one] 1 съвпадение
    *[other] { $count } съвпадения
 }
+search-all-placeholder = Търсене във всяко моментно състояние
+search-all-intro = Намерете файл по име във всяко моментно състояние, независимо къде е бил архивиран.
+search-all-none = Нищо не съвпадна в нито едно моментно състояние.
 folder-empty = Тази папка е празна.
 versions-title = Версии
 versions-same = { $count ->
@@ -253,6 +257,8 @@ compare-button = Сравняване
 compare-intro = Изберете две моментни състояния, за да видите промените.
 compare-none = Нищо не се е променило между тези състояния.
 compare-summary = { $added } добавени · { $removed } премахнати · { $changed } променени
+compare-folder = { $folder } ({ $count } променени)
+compare-folder-root = { $count } променени тук
 restore-sheet-title = { $count ->
     [one] Възстановяване на 1 елемент
    *[other] Възстановяване на { $count } елемента

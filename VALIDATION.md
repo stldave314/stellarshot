@@ -279,6 +279,21 @@ The real end-to-end tests use a small hand-rolled HTTP/1.1 client over a raw `Tc
 
 Not covered: `search`, `versions`, `diff`, and `missing` (`Browser` can already do all four; no route calls them yet, and `FileVersion`/`DiffEntry`/`MissingEntry` need a `Serialize` derive first), starting a backup or a restore through the API, and reading the History page's own data through it. Unlike the daemon-level scope/allow-list/auth work, this slice's "for real" proof is an in-process real server in the test suite, not also a separately launched `stellarshot-web` process reached with `curl` — the risk this slice actually carries (axum routing, request extraction, and JSON serialization) is fully exercised either way, and a hand-crafted settings file for a manual run would mostly re-prove config loading already proven for the daemon's other settings.
 
+### Searching across every snapshot, and the Compare tab's folder grouping (`src/engine/browse.rs`, `src/app/pages/restore.rs`)
+
+| Test | What it proves |
+| --- | --- |
+| `search_all_finds_every_snapshot_a_name_appears_in` (`src/engine/tests.rs`) | Against a real repository with three real backups: a name present in two of three snapshots comes back as *one* result naming both, not two separate rows, and a snapshot that never had it is correctly excluded |
+| `search_all_matches_every_distinct_path` | Two different files whose names both match the query come back as two distinct results, not merged or one dropped |
+| `search_all_ignores_case_and_an_empty_query_finds_nothing` | Case-insensitive matching, and an empty query is treated as "nothing to search for" rather than "match everything" |
+| `common_ancestor_finds_the_longest_shared_prefix`, `common_ancestor_of_one_path_is_its_own_parent_chain`, `group_diff_puts_every_entry_directly_in_the_common_root_together`, `group_diff_separates_entries_in_different_subfolders` (`src/app/pages/restore.rs`) | The Compare tab's folder-grouping logic: changes sharing a folder land in one group, changes in different folders land in separate groups, and the group key is relative to the diff's own common root rather than the full absolute path |
+| `a_folders_diff_expansion_toggles`, `comparing_again_clears_the_previous_expansion` | Expanding a folder's changes toggles cleanly, and starting a new comparison does not leave a stale folder expanded from the previous one |
+| `jump_to_match_switches_to_browse_at_the_matched_snapshot_and_folder`, `jump_to_an_unknown_snapshot_does_nothing` | Clicking a search result's snapshot switches to Browse already pointed at the right snapshot and folder; a snapshot ID that somehow does not match anything currently loaded is a no-op, not a panic |
+
+One real bug was found and fixed by the real-repository test, not by reading the code: `find_matching_nodes` returns paths relative to the tree root, without the leading `/` every other path in `Browser` carries (`list`, `search`, `diff` all prepend it). The first version of `search_all` did not know this and returned paths like `tmp/.../keepme.txt` instead of `/tmp/.../keepme.txt` — `search_all_finds_every_snapshot_a_name_appears_in`'s exact-equality assertion caught it immediately; a looser `.ends_with(...)` check (used in the other two tests, for other reasons) would not have. Fixed by applying the same `Path::new("/").join(...)` fix-up `search` already does.
+
+Not covered by an automated test: `search_view`/`global_match_row`'s own rendering in `src/app/pages/restore.rs` — UI wiring, following the same pattern as this project's other view functions. Not built: searching file *contents*, which rustic_core has no support for at all (see ROADMAP.md).
+
 ### Usability fixes from real use (`src/app.rs`, `src/run_state.rs`)
 
 Three more changes from watching the app actually get used, none of them logic a unit test would catch:

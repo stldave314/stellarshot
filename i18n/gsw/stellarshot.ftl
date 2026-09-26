@@ -36,7 +36,7 @@ remember-password = Passwort merke
 remember-password-description = Wird i dim Schlüsselbund gspeicheret. Planti Sicherige bruuched s.
 recent-snapshots = Letschti Momentuufnahme
 no-snapshots-yet = No kei Momentuufnahme. Druck „Jetzt sichere“ für di erscht.
-snapshot-row = { $id } · { $size } · { $added } neu
+snapshot-row = { $id } · { $size } · { $added } neu, dedupliziert
 show-all-snapshots = All { $count } Momentuufnahme zeige
 manage = Verwalte
 edit-backup = Was gsicheret wird
@@ -222,6 +222,7 @@ folder-up = En Ordner uufe
 tab-browse = Durchsueche
 tab-deleted = Glöschti Dateie
 tab-compare = Vergliiche
+tab-search = Überall sueche
 selected-count = { $count ->
     [one] 1 Element usgwählt
    *[other] { $count } Element usgwählt
@@ -232,6 +233,9 @@ search-results = { $count ->
     [one] 1 Träffer
    *[other] { $count } Träffer
 }
+search-all-placeholder = Jedi Momentuufnahm durchsueche
+search-all-intro = Find e Datei nach ihrem Name über jedi Momentuufnahm windurch, egal wo si gsicheret worde isch.
+search-all-none = Nüt hät i irgendere Momentuufnahm übereigstimmt.
 folder-empty = De Ordner isch leer.
 versions-title = Versione
 versions-same = { $count ->
@@ -253,6 +257,8 @@ compare-button = Vergliiche
 compare-intro = Wähl zwei Momentuufnahme, zum gseh, was sich gänderet hät.
 compare-none = Zwüsche dene Momentuufnahme hät sich nüt gänderet.
 compare-summary = { $added } dezue · { $removed } weg · { $changed } gänderet
+compare-folder = { $folder } ({ $count } gänderet)
+compare-folder-root = { $count } da gänderet
 restore-sheet-title = { $count ->
     [one] 1 Element widerherstelle
    *[other] { $count } Element widerherstelle

@@ -1073,6 +1073,12 @@ impl App {
                     tasks::blocking(move || browsing(browser)?.diff(&from, &to)),
                     move |result| to_page(restore::Message::Compared(result)),
                 ),
+                restore::Effect::GlobalSearch { query } => Task::perform(
+                    tasks::blocking(move || {
+                        browsing(browser)?.search_all(&query, restore::RESULT_LIMIT)
+                    }),
+                    move |result| to_page(restore::Message::GlobalFound(result)),
+                ),
                 restore::Effect::Preview(requests) => {
                     let (profile, secret) = (profile.clone(), secret.clone());
                     let asked = requests.clone();

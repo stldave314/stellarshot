@@ -36,7 +36,7 @@ remember-password = Remember password
 remember-password-description = Stored in your keyring. Scheduled backups will need it.
 recent-snapshots = Recent snapshots
 no-snapshots-yet = No snapshots yet. Press Back Up Now to take the first one.
-snapshot-row = { $id } · { $size } · { $added } new
+snapshot-row = { $id } · { $size } · { $added } new, deduplicated
 show-all-snapshots = Show all { $count } snapshots
 manage = Manage
 edit-backup = What to back up
@@ -232,6 +232,7 @@ folder-up = Up one folder
 tab-browse = Browse
 tab-deleted = Deleted files
 tab-compare = Compare
+tab-search = Search everywhere
 selected-count = { $count ->
     [one] 1 item selected
    *[other] { $count } items selected
@@ -242,6 +243,9 @@ search-results = { $count ->
     [one] 1 match
    *[other] { $count } matches
 }
+search-all-placeholder = Search every snapshot
+search-all-intro = Find a file by name across every snapshot, wherever it was backed up.
+search-all-none = Nothing matched in any snapshot.
 folder-empty = This folder is empty.
 versions-title = Versions
 versions-same = { $count ->
@@ -263,6 +267,8 @@ compare-button = Compare
 compare-intro = Choose two snapshots to see what changed between them.
 compare-none = Nothing changed between these snapshots.
 compare-summary = { $added } added · { $removed } removed · { $changed } changed
+compare-folder = { $folder } ({ $count } changed)
+compare-folder-root = { $count } changed here
 restore-sheet-title = { $count ->
     [one] Restore 1 item
    *[other] Restore { $count } items

@@ -19,8 +19,9 @@ use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
 use crate::engine::mount::Mount;
 use crate::engine::{
-    Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, MissingEntry,
-    Ownership, ProgressEvent, RestorePreview, RestoreRequest, SnapshotSummary, Target, TreeEntry,
+    Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, GlobalMatch,
+    MissingEntry, Ownership, ProgressEvent, RestorePreview, RestoreRequest, SnapshotSummary,
+    Target, TreeEntry,
 };
 use crate::fl;
 use crate::runner::Event;
@@ -35,6 +36,7 @@ pub enum Tab {
     Browse,
     Deleted,
     Compare,
+    Search,
 }
 
 /// Where the restore goes, as chosen in the sheet.
@@ -144,6 +146,12 @@ pub struct RestorePage {
     to: Option<usize>,
     diff: Option<Vec<DiffEntry>>,
     diff_selection: BTreeSet<PathBuf>,
+    /// Folders (relative to the diff's own common root) whose changes are
+    /// expanded, rather than collapsed behind a count.
+    diff_expanded: BTreeSet<PathBuf>,
+    // Search across every snapshot
+    global_query: String,
+    global_results: Option<Vec<GlobalMatch>>,
     // Restoring
     sheet: Option<Sheet>,
     running: Option<Running>,
@@ -177,6 +185,13 @@ pub enum Message {
     Compare,
     Compared(Result<Vec<DiffEntry>, EngineError>),
     ToggleDiff(PathBuf, bool),
+    /// Expand or collapse one folder's changes in the Compare tab.
+    ToggleDiffFolder(PathBuf),
+    GlobalSearch(String),
+    GlobalSearchNow,
+    GlobalFound(Result<Vec<GlobalMatch>, EngineError>),
+    /// Jump to `path`'s folder, in `snapshot`, on the Browse tab.
+    JumpToMatch(String, PathBuf),
     /// Open the restore sheet for the current tab's selection.
     RestoreSelection,
     /// Open the restore sheet for one version of one file.
@@ -226,6 +241,10 @@ pub enum Effect {
     Diff {
         from: String,
         to: String,
+    },
+    /// Search every snapshot's tree for `query`.
+    GlobalSearch {
+        query: String,
     },
     Preview(Vec<RestoreRequest>),
     Restore(RestoreRequest),
@@ -282,6 +301,9 @@ impl RestorePage {
             to: None,
             diff: None,
             diff_selection: BTreeSet::new(),
+            diff_expanded: BTreeSet::new(),
+            global_query: String::new(),
+            global_results: None,
             sheet: None,
             running: None,
             busy: false,
@@ -388,6 +410,9 @@ impl RestorePage {
                     None => Vec::new(),
                 }
             }
+            // Nothing is selected directly here: a match is restored by
+            // jumping to it on the Browse tab, which already can.
+            Tab::Search => Vec::new(),
         }
     }
 
@@ -396,6 +421,7 @@ impl RestorePage {
             Tab::Browse => self.selection.len(),
             Tab::Deleted => self.missing_selection.len(),
             Tab::Compare => self.diff_selection.len(),
+            Tab::Search => 0,
         }
     }
 
@@ -576,6 +602,7 @@ impl RestorePage {
                 };
                 self.busy = true;
                 self.diff_selection.clear();
+                self.diff_expanded.clear();
                 vec![Effect::Diff {
                     from: from.id.clone(),
                     to: to.id.clone(),
@@ -598,6 +625,51 @@ impl RestorePage {
                     self.diff_selection.remove(&path);
                 }
                 Vec::new()
+            }
+            Message::ToggleDiffFolder(folder) => {
+                if !self.diff_expanded.remove(&folder) {
+                    self.diff_expanded.insert(folder);
+                }
+                Vec::new()
+            }
+            Message::GlobalSearch(text) => {
+                self.global_query = text;
+                Vec::new()
+            }
+            Message::GlobalSearchNow => {
+                if self.global_query.trim().is_empty() {
+                    self.global_results = None;
+                    return Vec::new();
+                }
+                self.busy = true;
+                vec![Effect::GlobalSearch {
+                    query: self.global_query.clone(),
+                }]
+            }
+            Message::GlobalFound(result) => {
+                self.busy = false;
+                match result {
+                    Ok(results) => {
+                        self.global_results = Some(results);
+                        Vec::new()
+                    }
+                    Err(err) => vec![Effect::ShowError(fl!("browse-failed"), err)],
+                }
+            }
+            Message::JumpToMatch(snapshot, path) => {
+                let Some(index) = self.snapshots.iter().position(|s| s.id == snapshot) else {
+                    return Vec::new();
+                };
+                self.tab = Tab::Browse;
+                self.snapshot = Some(index);
+                self.selection.clear();
+                self.results = None;
+                self.expanded = None;
+                self.dir = path
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| PathBuf::from("/"));
+                self.list()
             }
             Message::RestoreSelection => {
                 let requests = self.selection_requests();
@@ -805,35 +877,42 @@ impl RestorePage {
         } else if self.snapshots.is_empty() {
             widget::text::body(fl!("no-snapshots-yet")).into()
         } else {
-            let tabs = widget::row::with_capacity(3)
+            let tabs = widget::row::with_capacity(4)
                 .spacing(spacing.space_xs)
                 .push(tab_button(fl!("tab-browse"), Tab::Browse, self.tab))
                 .push(tab_button(fl!("tab-deleted"), Tab::Deleted, self.tab))
-                .push(tab_button(fl!("tab-compare"), Tab::Compare, self.tab));
+                .push(tab_button(fl!("tab-compare"), Tab::Compare, self.tab))
+                .push(tab_button(fl!("tab-search"), Tab::Search, self.tab));
             let content = match self.tab {
                 Tab::Browse => self.browse_view(),
                 Tab::Deleted => self.deleted_view(),
                 Tab::Compare => self.compare_view(),
+                Tab::Search => self.search_view(),
             };
-            let count = self.selection_count();
-            let footer = widget::row::with_capacity(3)
-                .spacing(spacing.space_s)
-                .align_y(Alignment::Center)
-                .push(widget::text::body(fl!(
-                    "selected-count",
-                    count = (count as i64)
-                )))
-                .push(widget::space::horizontal())
-                .push(
-                    widget::button::suggested(fl!("restore-button"))
-                        .on_press_maybe((count > 0).then_some(Message::RestoreSelection)),
-                );
-            widget::column::with_capacity(3)
+            let mut column = widget::column::with_capacity(3)
                 .spacing(spacing.space_s)
                 .push(tabs)
-                .push(content)
-                .push(footer)
-                .into()
+                .push(content);
+            // Nothing on the Search tab is ever selected directly: a match
+            // is restored by jumping to it on Browse, which already has its
+            // own footer.
+            if self.tab != Tab::Search {
+                let count = self.selection_count();
+                let footer = widget::row::with_capacity(3)
+                    .spacing(spacing.space_s)
+                    .align_y(Alignment::Center)
+                    .push(widget::text::body(fl!(
+                        "selected-count",
+                        count = (count as i64)
+                    )))
+                    .push(widget::space::horizontal())
+                    .push(
+                        widget::button::suggested(fl!("restore-button"))
+                            .on_press_maybe((count > 0).then_some(Message::RestoreSelection)),
+                    );
+                column = column.push(footer);
+            }
+            column.into()
         };
 
         widget::column::with_capacity(2)
@@ -1112,31 +1191,29 @@ impl RestorePage {
                     removed = (removed as i64),
                     changed = (changed as i64)
                 )));
-                for entry in diff.iter().take(RESULT_LIMIT) {
-                    let sign = match entry.change {
-                        Change::Added => "+",
-                        Change::Removed => "−",
-                        Change::Modified => "~",
-                    };
-                    let mut row = widget::row::with_capacity(4)
-                        .spacing(spacing.space_s)
-                        .align_y(Alignment::Center);
-                    // Only what existed in the older snapshot can be restored from it.
-                    if entry.change != Change::Added {
-                        let path = entry.path.clone();
-                        let checked = self.diff_selection.contains(&entry.path);
-                        row = row.push(
-                            widget::checkbox(checked)
-                                .on_toggle(move |on| Message::ToggleDiff(path.clone(), on)),
-                        );
+                for (folder, entries) in group_diff(diff) {
+                    if entries.len() == 1 {
+                        // Nothing to drill into for a folder with only one
+                        // change: show it directly, in full, like before.
+                        let entry = entries[0];
+                        list = list.push(self.diff_entry_row(entry, &entry.path));
+                    } else {
+                        let expanded = self.diff_expanded.contains(&folder);
+                        list = list.push(self.diff_folder_row(&folder, entries.len(), expanded));
+                        if expanded {
+                            for entry in entries {
+                                let name = entry
+                                    .path
+                                    .file_name()
+                                    .map_or_else(|| entry.path.clone(), PathBuf::from);
+                                list = list.push(
+                                    widget::row::with_capacity(2)
+                                        .push(widget::space::horizontal().width(spacing.space_l))
+                                        .push(self.diff_entry_row(entry, &name)),
+                                );
+                            }
+                        }
                     }
-                    row = row
-                        .push(widget::text::body(sign))
-                        .push(widget::text::body(format::path(&entry.path)).width(Length::Fill));
-                    if !entry.is_dir {
-                        row = row.push(widget::text::caption(format::bytes(entry.size)));
-                    }
-                    list = list.push(row);
                 }
             }
         }
@@ -1144,6 +1221,124 @@ impl RestorePage {
             .spacing(spacing.space_s)
             .push(top)
             .push(widget::scrollable(list).height(Length::Fill))
+            .into()
+    }
+
+    /// One changed entry, `label` shown in place of its full path: the
+    /// entry's own path when it is the only change in its folder, or just
+    /// its file name when it is one of several already grouped under a
+    /// folder row that names the rest.
+    fn diff_entry_row<'a>(&'a self, entry: &'a DiffEntry, label: &Path) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let sign = match entry.change {
+            Change::Added => "+",
+            Change::Removed => "−",
+            Change::Modified => "~",
+        };
+        let mut row = widget::row::with_capacity(4)
+            .spacing(spacing.space_s)
+            .align_y(Alignment::Center);
+        // Only what existed in the older snapshot can be restored from it.
+        if entry.change != Change::Added {
+            let path = entry.path.clone();
+            let checked = self.diff_selection.contains(&entry.path);
+            row = row.push(
+                widget::checkbox(checked)
+                    .on_toggle(move |on| Message::ToggleDiff(path.clone(), on)),
+            );
+        }
+        row = row
+            .push(widget::text::body(sign))
+            .push(widget::text::body(format::path(label)).width(Length::Fill));
+        if !entry.is_dir {
+            row = row.push(widget::text::caption(format::bytes(entry.size)));
+        }
+        row.into()
+    }
+
+    /// A folder with more than one change beneath it: a count instead of
+    /// every path at once, expanded on request.
+    fn diff_folder_row(&self, folder: &Path, count: usize, expanded: bool) -> Element<'_, Message> {
+        let icon = if expanded {
+            "go-down-symbolic"
+        } else {
+            "go-next-symbolic"
+        };
+        let owned = folder.to_path_buf();
+        let label = if folder.as_os_str().is_empty() {
+            fl!("compare-folder-root", count = (count as i64))
+        } else {
+            fl!(
+                "compare-folder",
+                folder = format::path(folder),
+                count = (count as i64)
+            )
+        };
+        widget::button::text(label)
+            .leading_icon(widget::icon::from_name(icon))
+            .width(Length::Fill)
+            .on_press(Message::ToggleDiffFolder(owned))
+            .into()
+    }
+
+    fn search_view(&self) -> Element<'_, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let top = widget::search_input(fl!("search-all-placeholder"), &self.global_query)
+            .on_input(Message::GlobalSearch)
+            .on_submit(|_| Message::GlobalSearchNow)
+            .width(Length::Fill);
+        let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
+        match &self.global_results {
+            None if self.busy => list = list.push(widget::text::body(fl!("restore-searching"))),
+            None => list = list.push(widget::text::body(fl!("search-all-intro"))),
+            Some(results) if results.is_empty() => {
+                list = list.push(widget::text::body(fl!("search-all-none")));
+            }
+            Some(results) => {
+                list = list.push(widget::text::caption(fl!(
+                    "search-results",
+                    count = (results.len() as i64)
+                )));
+                for found in results.iter().take(RESULT_LIMIT) {
+                    list = list.push(self.global_match_row(found));
+                }
+            }
+        }
+        widget::column::with_capacity(2)
+            .spacing(spacing.space_s)
+            .push(top)
+            .push(widget::scrollable(list).height(Length::Fill))
+            .into()
+    }
+
+    fn global_match_row<'a>(&self, found: &'a GlobalMatch) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let icon = match found.kind {
+            EntryKind::Directory => "folder-symbolic",
+            EntryKind::Symlink => "emblem-symbolic-link",
+            _ => "text-x-generic-symbolic",
+        };
+        let mut chips =
+            widget::row::with_capacity(found.snapshots.len()).spacing(spacing.space_xxs);
+        for snapshot in &found.snapshots {
+            let id = snapshot.id.clone();
+            let path = found.path.clone();
+            chips = chips.push(
+                widget::button::standard(snapshot.short_id().to_owned())
+                    .on_press(Message::JumpToMatch(id, path)),
+            );
+        }
+        widget::column::with_capacity(2)
+            .spacing(spacing.space_xxxs)
+            .push(
+                widget::row::with_capacity(3)
+                    .spacing(spacing.space_s)
+                    .align_y(Alignment::Center)
+                    .push(widget::icon::from_name(icon).size(16))
+                    .push(widget::text::body(format::path(&found.path)).width(Length::Fill))
+                    .push(widget::text::caption(format::bytes(found.size))),
+            )
+            .push(chips)
             .into()
     }
 
@@ -1295,6 +1490,44 @@ fn tab_button<'a>(label: String, tab: Tab, current: Tab) -> Element<'a, Message>
             .on_press(Message::Tab(tab))
             .into()
     }
+}
+
+/// The longest path every one of `paths` starts with, component by
+/// component: usually a diff's own common source folder, so grouping
+/// relative to it does not force a click through a long chain of folders
+/// that never actually branch.
+fn common_ancestor<'a>(paths: impl Iterator<Item = &'a Path>) -> PathBuf {
+    let mut common: Option<Vec<std::path::Component<'a>>> = None;
+    for path in paths {
+        let components: Vec<_> = path.components().collect();
+        common = Some(match common {
+            None => components,
+            Some(previous) => previous
+                .into_iter()
+                .zip(components)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| a)
+                .collect(),
+        });
+    }
+    common.unwrap_or_default().into_iter().collect()
+}
+
+/// `entries` grouped by the folder each directly sits in, relative to their
+/// own common root, oldest folder path first. A folder with just one change
+/// is not worth drilling into on its own; [`compare_view`] shows those
+/// directly instead of as a one-entry group.
+fn group_diff(entries: &[DiffEntry]) -> Vec<(PathBuf, Vec<&DiffEntry>)> {
+    let root = common_ancestor(entries.iter().map(|entry| entry.path.as_path()));
+    let mut groups: BTreeMap<PathBuf, Vec<&DiffEntry>> = BTreeMap::new();
+    for entry in entries {
+        let relative = entry.path.strip_prefix(&root).unwrap_or(&entry.path);
+        let folder = relative
+            .parent()
+            .map_or_else(PathBuf::new, Path::to_path_buf);
+        groups.entry(folder).or_default().push(entry);
+    }
+    groups.into_iter().collect()
 }
 
 fn progress(running: &Running) -> Element<'_, Message> {
@@ -1598,6 +1831,139 @@ mod tests {
         assert!(
             matches!(effects.as_slice(), [Effect::ShowError(..)]),
             "and only then an error, never a loop"
+        );
+    }
+
+    fn diff_entry(path: &str, change: Change) -> DiffEntry {
+        DiffEntry {
+            path: path.into(),
+            change,
+            is_dir: false,
+            size: 1,
+        }
+    }
+
+    #[test]
+    fn common_ancestor_finds_the_longest_shared_prefix() {
+        let paths = [
+            PathBuf::from("/home/alex/project/src/main.rs"),
+            PathBuf::from("/home/alex/project/src/lib.rs"),
+            PathBuf::from("/home/alex/project/README.md"),
+        ];
+        assert_eq!(
+            common_ancestor(paths.iter().map(PathBuf::as_path)),
+            PathBuf::from("/home/alex/project")
+        );
+    }
+
+    #[test]
+    fn common_ancestor_of_one_path_is_its_own_parent_chain() {
+        let paths = [PathBuf::from("/home/alex/only.txt")];
+        assert_eq!(
+            common_ancestor(paths.iter().map(PathBuf::as_path)),
+            PathBuf::from("/home/alex/only.txt")
+        );
+    }
+
+    #[test]
+    fn group_diff_puts_every_entry_directly_in_the_common_root_together() {
+        let entries = vec![
+            diff_entry("/home/alex/a.txt", Change::Added),
+            diff_entry("/home/alex/b.txt", Change::Modified),
+        ];
+
+        let groups = group_diff(&entries);
+
+        assert_eq!(groups.len(), 1, "both entries share one, empty, group key");
+        let (folder, group_entries) = &groups[0];
+        assert!(folder.as_os_str().is_empty());
+        assert_eq!(group_entries.len(), 2);
+    }
+
+    #[test]
+    fn group_diff_separates_entries_in_different_subfolders() {
+        let entries = vec![
+            diff_entry("/home/alex/project/src/main.rs", Change::Modified),
+            diff_entry("/home/alex/project/docs/readme.md", Change::Modified),
+        ];
+
+        let groups = group_diff(&entries);
+
+        assert_eq!(groups.len(), 2, "src and docs are separate groups");
+        assert!(groups.iter().any(|(folder, _)| folder == Path::new("src")));
+        assert!(groups.iter().any(|(folder, _)| folder == Path::new("docs")));
+    }
+
+    #[test]
+    fn a_folders_diff_expansion_toggles() {
+        let mut page = page_with_snapshots();
+        let folder = PathBuf::from("src");
+
+        page.update(Message::ToggleDiffFolder(folder.clone()));
+        assert!(page.diff_expanded.contains(&folder));
+
+        page.update(Message::ToggleDiffFolder(folder.clone()));
+        assert!(!page.diff_expanded.contains(&folder));
+    }
+
+    #[test]
+    fn comparing_again_clears_the_previous_expansion() {
+        let mut page = page_with_snapshots();
+        page.diff_expanded.insert(PathBuf::from("src"));
+
+        page.update(Message::Compare);
+
+        assert!(page.diff_expanded.is_empty());
+    }
+
+    #[test]
+    fn jump_to_match_switches_to_browse_at_the_matched_snapshot_and_folder() {
+        let mut page = page_with_snapshots();
+        page.tab = Tab::Search;
+
+        let effects = page.update(Message::JumpToMatch(
+            "aaaaaaaa".into(),
+            "/home/alex/project/report.txt".into(),
+        ));
+
+        assert_eq!(page.tab, Tab::Browse);
+        assert_eq!(page.snapshot, Some(1), "aaaaaaaa is the second snapshot");
+        assert_eq!(page.dir, PathBuf::from("/home/alex/project"));
+        assert!(matches!(effects.as_slice(), [Effect::List { .. }]));
+    }
+
+    #[test]
+    fn jump_to_an_unknown_snapshot_does_nothing() {
+        let mut page = page_with_snapshots();
+        page.tab = Tab::Search;
+
+        let effects = page.update(Message::JumpToMatch("nope".into(), "/x".into()));
+
+        assert_eq!(page.tab, Tab::Search, "nothing to jump to");
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn an_empty_global_search_clears_any_previous_results_without_a_fetch() {
+        let mut page = page_with_snapshots();
+        page.global_results = Some(vec![]);
+        page.global_query = "  ".into();
+
+        let effects = page.update(Message::GlobalSearchNow);
+
+        assert!(page.global_results.is_none());
+        assert!(effects.is_empty());
+    }
+
+    #[test]
+    fn a_global_search_asks_for_the_current_query() {
+        let mut page = page_with_snapshots();
+        page.update(Message::GlobalSearch("report".into()));
+
+        let effects = page.update(Message::GlobalSearchNow);
+
+        assert!(
+            matches!(effects.as_slice(), [Effect::GlobalSearch { query }] if query == "report")
         );
     }
 }

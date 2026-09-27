@@ -33,7 +33,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            dbus gnome-keyring rclone rpm2cpio
+            dbus gnome-keyring rclone rpm2cpio cpio
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:

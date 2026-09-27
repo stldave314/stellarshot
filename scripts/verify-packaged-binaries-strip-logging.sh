@@ -16,6 +16,7 @@
 #
 # Usage: scripts/verify-packaged-binaries-strip-logging.sh
 set -euo pipefail
+trap 'echo "FAIL: \"$BASH_COMMAND\" failed at line $LINENO" >&2' ERR
 
 cd "$(dirname "$0")/.."
 

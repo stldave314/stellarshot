@@ -388,6 +388,13 @@ still written to its new location.
 
 ### SEC-6. Timers and the web service can point at a binary in a world-writable directory
 
+**Status: Done for scheduled units (`schedule.rs`); the web daemon's own
+unit is the peer session's file, not checked here.** `trusted_executable`
+walks every ancestor directory, refusing group/other write access unless
+sticky-and-root-owned, and requires the file itself be owned by root or the
+current user. Verified with a real `/usr/bin/true` (trusted) and a
+world-writable tempdir (refused) — see `schedule::tests`.
+
 **Low · S · Verified**
 
 **Files:** `src/schedule.rs:86-101,147-154`, `src/web_daemon.rs:44-71`
@@ -410,6 +417,16 @@ backups".
 ---
 
 ### SEC-7. Private key and Open Copy permission gaps
+
+**Status: Open Copy half done (`app.rs`); the TLS-key half is not.**
+`open_copy` now requires `symlink_metadata(&copy)?.is_file()` before
+chmod'ing or opening it, refusing a symlink rather than following it to
+its target. `web_tls.rs`'s `write_private` still uses
+`.create(true).mode(0o600)`, which (as the problem statement itself
+describes) only actually applies the mode when the file is *created* — a
+pre-existing looser `key.pem` reused when only `cert.pem` was missing
+would keep its old mode. Not fixed tonight; that file is the peer
+session's own.
 
 **Low · S · Verified**
 
@@ -497,6 +514,13 @@ a backup (or a test calling `rustix::process::dumpable_behavior()`).
 ---
 
 ### SEC-9. rclone argument hygiene
+
+**Status: Done**, except routing every invocation through one shared
+builder (deferred to [ARC-2](#arc-2-remove-duplicated-logic), not started).
+`rclone_within` now redacts its log line the same way `rclone` does;
+`--` precedes every positional remote/path argument; `LC_ALL=C` is set on
+every command, and the file-not-found exit code is checked alongside the
+old text match rather than replacing it.
 
 **Low · S · Verified**
 

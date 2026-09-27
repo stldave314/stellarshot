@@ -216,9 +216,25 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::TempDir;
 
+    /// A `TempDir` explicitly set to `0700`: `tempfile::TempDir::new`'s own
+    /// mode is not fixed, only whatever `mkdir`'s default (`0777`) becomes
+    /// after the process `umask` is applied — under a permissive one (this
+    /// sandbox's own is `0007`, allowing the whole group), that lands on
+    /// `0770`, which `create_private_dir`'s own ownership/mode check
+    /// (correctly) refuses. Every test below stands in for `runtime_dir`'s
+    /// real fallback location, which is created with an explicit mode of
+    /// its own and does not have this problem; this only exists to make the
+    /// *test fixture* as private as the real thing, not to work around the
+    /// check.
+    fn private_dir() -> TempDir {
+        let dir = TempDir::new().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        dir
+    }
+
     #[test]
     fn a_second_lock_on_the_same_repository_is_refused() {
-        let dir = TempDir::new().unwrap();
+        let dir = private_dir();
         let location = Location::local("/backups/home");
 
         let first = acquire_in(dir.path(), &location).unwrap();
@@ -231,14 +247,14 @@ mod tests {
 
     #[test]
     fn different_repositories_do_not_block_each_other() {
-        let dir = TempDir::new().unwrap();
+        let dir = private_dir();
         let _a = acquire_in(dir.path(), &Location::local("/backups/a")).unwrap();
         let _b = acquire_in(dir.path(), &Location::local("/backups/b")).unwrap();
     }
 
     #[test]
     fn is_running_reflects_a_real_held_lock_without_taking_it_over() {
-        let dir = TempDir::new().unwrap();
+        let dir = private_dir();
         let location = Location::local("/backups/home");
         assert!(
             !is_running_in(dir.path(), &location),
@@ -259,7 +275,7 @@ mod tests {
         // Unlike a retry-based mitigation, `F_OFD_GETLK` never takes the
         // lock at all, so this holds even under a prober with no delay
         // between iterations whatsoever.
-        let dir = TempDir::new().unwrap();
+        let dir = private_dir();
         let location = Location::local("/backups/home");
         let probe_dir = dir.path().to_path_buf();
         let probe_location = location.clone();

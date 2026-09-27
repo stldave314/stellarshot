@@ -154,8 +154,14 @@ fn retrying(repo_name: &str, scenario: impl Fn(&Path, u16)) {
     for attempt in 0..3 {
         let scratch = TempDir::new().unwrap();
         let data_dir = scratch.path().join("data");
-        let server = spawn_server(&data_dir, repo_name);
+        // `spawn_server` itself, not just `scenario`, inside the same
+        // `catch_unwind`: a server that never gets to "listening" in time
+        // used to panic straight out of this function, skipping both the
+        // log printed below and the retry the same failure in `scenario`
+        // already gets — exactly the gap that left a failed startup with
+        // nothing to show for it.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let server = spawn_server(&data_dir, repo_name);
             scenario(scratch.path(), server.port);
         }));
         match result {

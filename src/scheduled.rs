@@ -298,15 +298,25 @@ pub fn main(args: &[String]) -> ExitCode {
     let Err(Failed(stage, error)) = result else {
         return ExitCode::SUCCESS;
     };
-    if stage == Stage::Backup && is_quiet(&error) {
-        debug_log!(SCHED, "{id} skipped: {error}");
+    // Quiet applies to every stage, not just the backup itself: a lock
+    // held by a window action, or a destination that dropped out between
+    // stages, is exactly as retry-worthy during cleanup or the check as
+    // it is during the backup — the next slot tries again either way, and
+    // none of it deserves a notification. Only "overdue" tracking stays
+    // backup-specific: it exists to notice a backup that keeps not
+    // happening, which a lock during cleanup says nothing about (the
+    // backup itself already succeeded by the time cleanup runs at all).
+    if is_quiet(&error) {
+        debug_log!(SCHED, "{id} skipped ({stage:?}): {error}");
         event_log::record(
             id,
             now(),
             event_log::EventKind::Skipped { kind: error.kind },
             event_log::Source::Desktop,
         );
-        notify_if_overdue(&profile, &runtime);
+        if stage == Stage::Backup {
+            notify_if_overdue(&profile, &runtime);
+        }
         return ExitCode::SUCCESS;
     }
 

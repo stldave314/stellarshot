@@ -481,11 +481,26 @@ A hook's command line is split with `shell_words`, the same as `password_command
 | `the_service_runs_the_scheduled_backup_gently` | The service runs `--scheduled <id>` as a oneshot at `Nice=10` with idle I/O |
 | `exec_paths_are_escaped_for_systemd` / `only_plain_ids_go_into_units` | A path with spaces, `%`, `$` and quotes is escaped; a path with a newline, or an ID that is not letters, digits and dashes, produces no unit at all |
 | `a_check_is_due_every_thirty_days`, `prune_waits_for_a_clean_check`, `keep_forever_forgets_and_prunes_nothing` | What runs after a scheduled backup |
-| `only_unreachable_and_busy_repositories_are_skipped_quietly` | Everything else is reported |
+| `only_unreachable_busy_or_condition_skipped_repositories_are_skipped_quietly` | Everything else is reported |
 | `a_failure_shows_until_a_later_success` | The page's warning goes once a backup succeeds, from the timer or the window |
 | `a_scheduled_backup_runs_checks_and_is_recorded` | The real binary, settings from cosmic-config and the password from a real keyring: one snapshot, a check, and the run recorded with no failure |
 | `an_unplugged_destination_is_skipped_quietly` | Exit status 0 and no failure recorded when the repository's drive is not there |
 | `runner_maintains_by_forgetting_then_pruning` (`tests/runner.rs`) | `--run maintain` forgets and prunes, reporting both |
+
+REL-12: a quiet failure (unreachable, locked, conditions not met) used to
+be quiet only during the backup stage — the same kind of failure during
+forget, check or prune was reported as a real failure with a notification,
+even though the next scheduled slot retries it exactly the same way. The
+quiet check (`is_quiet`) is unchanged and its own unit tests still pass;
+what changed is that `main` no longer gates it on `stage == Stage::Backup`.
+`an_unplugged_destination_is_skipped_quietly` and
+`a_scheduled_backup_runs_checks_and_is_recorded` both still pass, confirming
+the backup-stage behavior they already covered is undisturbed. Not yet
+covered by a test: the cleanup/check-stage half specifically, which needs a
+way to force a lock conflict to appear *between* two stages of one run —
+a test seam that does not exist yet (see REL-12's own status in the review
+plan for the larger `run_plan` consolidation this same seam would also
+serve).
 
 The wizard's tests hold that a new backup runs daily and keeps a smart
 history, that editing the schedule changes nothing else about the backup

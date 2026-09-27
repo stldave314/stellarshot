@@ -1788,6 +1788,9 @@ the applet's Open launches the window.
 
 ### REL-12. Scheduled runs take the lock and open the repository four times
 
+**Status: Partial — the minimum fix landed; the full `run_plan`
+consolidation is scoped but not built.**
+
 **Medium · M · Verified**
 
 **Files:** `src/scheduled.rs:121-205,290`
@@ -1802,9 +1805,54 @@ because `is_quiet` only applies to the backup stage.
 opens the repository once for the whole plan. At minimum, treat `Locked` as
 quiet in every stage.
 
-**Verify.** A test holds the lock between stages (through a test seam) and
-asserts no failure is recorded. With debug logging on, one scheduled run
-shows one "holds the lock" line.
+**What actually landed.** The minimum: `main`'s quiet check no longer
+requires `stage == Stage::Backup` — `is_quiet` (unreachable destination,
+locked, conditions not met) now applies during cleanup and the check too,
+so a window action that grabs the lock between stages is a quiet skip
+there as well, not a reported failure with a notification. Kept
+`notify_if_overdue` itself backup-stage-only: it tracks a backup that
+keeps not happening, which a lock encountered *after* the backup already
+succeeded says nothing about.
+
+**Why the full fix did not land tonight.** Traced exactly what a genuine
+single-open `run_plan` needs, rather than guessing at the size of the
+remaining work: `Repo::forget`, `::check` and `::prune` already take
+`&self` and operate on `self.inner: Repository<OpenStatus>` directly, so
+the three of them can already share one open repository. The blocker is
+`Repo::backup`, which takes `self` by value because its own body calls
+`self.inner.to_indexed_ids()` — a `rustic_core` typestate conversion that
+consumes the `Repository<OpenStatus>` it is called on, leaving no `Repo`
+behind for forget/check/prune to reuse afterward. Confirmed `Repository<S>`
+itself derives `Clone` (its fields are `Arc`-backed backends, so this is
+cheap): changing `backup` to take `&self` and calling
+`self.inner.clone().to_indexed_ids()` instead would stop it consuming the
+`Repo`, and then a `run_plan` opening once and calling
+`repo.backup(..)`/`repo.forget(..)`/`repo.check()`/`repo.prune()` in
+sequence becomes possible with no reordering of the existing backup →
+forget → check → prune sequence (reordering would itself risk changing
+what retention rules actually keep). Confirmed every existing caller of
+`backup()` (`runner.rs`, `estimate.rs`, `statistics.rs`, `web/routes.rs`,
+`app/tasks.rs`, `engine/tests.rs`) calls it on a repository they never
+reuse afterward, so the signature change itself is not a breaking one for
+any of them.
+
+Did not make this change tonight: it is a real behavior change to the
+core backup path, not the kind of thing to land unreviewed at the end of
+a long unattended session, and the plan's own verify step for the full
+fix ("a test holds the lock between stages, through a test seam") needs
+new test infrastructure — a way to force a lock conflict to appear
+*between* two stages of one `run_plan` call — that does not exist yet and
+deserves to be built alongside the fix, not bolted on after. Left as the
+next concrete step for this item, with the exact path above rather than a
+vague "needs a bigger refactor."
+
+**Verify.** `is_quiet`'s own unit tests are unchanged and still pass; the
+existing `an_unplugged_destination_is_skipped_quietly` integration test
+(backup-stage) and `a_scheduled_backup_runs_checks_and_is_recorded` both
+still pass, confirming the broadened check did not disturb the
+backup-stage behavior it already covered. The cleanup/check-stage half of
+the fix has no dedicated test yet — the same missing test seam noted
+above, disclosed rather than claimed.
 
 ---
 

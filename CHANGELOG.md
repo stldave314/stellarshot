@@ -224,6 +224,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **If "Remember password" cannot actually save to your keyring, you are now
   told**, instead of finding out only when a later scheduled backup fails
   with no password to use.
+- **A scheduled backup's cleanup or integrity check no longer reports a
+  spurious failure notification** when it happens to run into the
+  repository's lock — the same retry-next-time treatment a locked backup
+  itself already got.
 
 ## [0.6.0] - 2026-09-26
 

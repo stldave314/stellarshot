@@ -80,7 +80,23 @@ done
 for rpm in "${rpms[@]}"; do
     out="$workdir/rpm"
     mkdir -p "$out"
-    (cd "$out" && rpm2cpio "$OLDPWD/$rpm" | cpio -idm --quiet)
+    # A real intermediate file rather than a pipe: piping rpm2cpio straight
+    # into cpio left a failure on either side unreported, past both
+    # pipefail and the ERR trap above, down to a bare exit code with no
+    # text explaining which of the two — or why — actually failed.
+    payload="$workdir/$(basename "$rpm").cpio"
+    rpm2cpio "$rpm" >"$payload" || {
+        status=$?
+        echo "FAIL ($(basename "$rpm")): rpm2cpio exited $status extracting the payload" >&2
+        fail=1
+        continue
+    }
+    (cd "$out" && cpio -idm --quiet <"$payload") || {
+        status=$?
+        echo "FAIL ($(basename "$rpm")): cpio exited $status unpacking the payload" >&2
+        fail=1
+        continue
+    }
     check_binaries_in "$(basename "$rpm")" "$out"
 done
 

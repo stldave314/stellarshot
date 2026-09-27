@@ -50,6 +50,11 @@ impl Fixture {
                 sources: vec![self.source.clone()],
                 ..BackupRequest::default()
             }),
+            // Maintain jobs built from `..fixture.backup_job(..)` need this
+            // to match their own snapshots via the untagged-sources fallback
+            // (see `matches_untagged_sources`); backup itself never reads
+            // it, so setting it here is harmless for that operation.
+            profile_sources: vec![self.source.clone()],
             ..Job::new(self.location.clone(), Secret::new(password))
         }
     }

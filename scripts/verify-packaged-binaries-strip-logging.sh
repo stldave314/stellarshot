@@ -85,12 +85,16 @@ for rpm in "${rpms[@]}"; do
     # pipefail and the ERR trap above, down to a bare exit code with no
     # text explaining which of the two — or why — actually failed.
     payload="$workdir/$(basename "$rpm").cpio"
-    rpm2cpio "$rpm" >"$payload" || {
-        status=$?
-        echo "FAIL ($(basename "$rpm")): rpm2cpio exited $status extracting the payload" >&2
-        fail=1
-        continue
-    }
+    # rpm2cpio's own exit code isn't reliable proof of anything here: on at
+    # least one real build of it, confirmed directly, it exits 1 even after
+    # writing a complete, valid, TRAILER!!!-terminated cpio stream — extracting
+    # that same output with cpio afterward works perfectly. So a nonzero exit
+    # is noted but not fatal by itself; cpio's own exit code below, and
+    # check_binaries_in's "found nothing" check, are what actually catch a
+    # genuinely broken extraction.
+    if ! rpm2cpio "$rpm" >"$payload"; then
+        echo "NOTE ($(basename "$rpm")): rpm2cpio exited nonzero; checking the payload it wrote anyway"
+    fi
     (cd "$out" && cpio -idm --quiet <"$payload") || {
         status=$?
         echo "FAIL ($(basename "$rpm")): cpio exited $status unpacking the payload" >&2

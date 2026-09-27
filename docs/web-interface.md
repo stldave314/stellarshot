@@ -34,7 +34,9 @@ By default it generates its own self-signed certificate the first time it
 needs one, and keeps reusing it — it is not regenerated on every restart,
 so a browser's one-time trust exception for it keeps working. It is stored
 under `~/.local/share/stellarshot/web/` (`cert.pem`, `key.pem`; the key is
-readable only by you).
+readable only by you), covers `127.0.0.1` and `::1` (the addresses Settings
+itself tells you to connect to) as well as this machine's hostname and mDNS
+name, and is valid for about two years rather than effectively forever.
 
 If you have your own certificate — from a certificate authority your
 devices already trust, or one you manage yourself — set both **Certificate**

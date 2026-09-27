@@ -147,6 +147,14 @@ struct AuthConfig {
 pub fn main(_args: &[String]) -> ExitCode {
     crate::app::settings::set_logger_for_child();
     crate::core::localization::init();
+    // Rustls otherwise has to choose between two crypto providers compiled
+    // in (`aws-lc-rs`, which it and axum-server already use, and `ring`,
+    // which `rcgen` alone would pull in without its own feature change
+    // above) the first time it needs one — installed explicitly, once, so a
+    // future dependency enabling `rustls/ring` cannot make that choice
+    // ambiguous and panic instead. Only ever called once, so a `Result` it
+    // is safe to ignore, not a genuine "already installed" error to report.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let config = StellarshotConfig::config();
     let Some(addr) = bind_address(config.web.scope, config.web.port) else {
         debug_log!(WEB, "network scope is off; not starting");

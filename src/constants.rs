@@ -159,6 +159,13 @@ pub const WEB_UNIT_RESTART_SECS: u32 = 30;
 pub const WEB_UNIT_LIMIT_NOFILE: u32 = 1024;
 pub const WEB_UNIT_MEMORY_MAX: &str = "1G";
 
+/// How long the web interface's self-signed certificate stays valid before
+/// it needs regenerating. `rcgen`'s own default (1975 to 4096) trains users
+/// to ignore an expiry date that will never actually arrive; about two
+/// years is long enough not to nag, short enough that a certificate this
+/// old actually says something.
+pub const WEB_CERT_VALIDITY: std::time::Duration = std::time::Duration::from_secs(2 * 365 * 86_400);
+
 /// Shortest password Settings accepts for the web interface's shared
 /// password (OWASP ASVS 5.0 §6.2's minimum for a user-chosen password with
 /// no other strength check). The only rule before this was "not empty".

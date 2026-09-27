@@ -132,7 +132,29 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 # pin projection. Already pulled in transitively; a direct dependency on
 # the same version, not a second copy.
 pin-project-lite = "0.2"
-rcgen = "0.14"
+# Two crypto providers would otherwise end up compiled in: `aws-lc-rs`
+# (rustls's own default, and what axum-server actually uses at runtime) and
+# `ring` (rcgen's own default). Installed explicitly as the one default
+# provider at startup (`web::main`) so a future dependency enabling
+# `rustls/ring` cannot make rustls unable to choose and panic; `rcgen` below
+# is pinned off `ring` for the same reason. Already pulled in transitively
+# through axum-server/tokio-rustls, at the same version; this is a direct
+# dependency, not a second copy.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
+rcgen = { version = "0.14", default-features = false, features = [
+    "aws_lc_rs",
+    "pem",
+] }
+# `rcgen::CertificateParams`'s own `not_before`/`not_after` fields, for the
+# web interface's self-signed certificate's validity period. Already
+# pulled in transitively through rcgen itself, at the same version; this
+# is a direct dependency, not a second copy.
+time = "0.3"
+# Reading a certificate file's DER bytes back out, for its SHA-256
+# fingerprint shown in Settings. Already pulled in transitively through
+# rustls itself, at the same version; this is a direct dependency, not a
+# second copy.
+rustls-pki-types = { version = "1", features = ["std"] }
 # Per-request timeout, a body size cap, and fixed response headers
 # (`X-Content-Type-Options`, `Cache-Control`, a strict CSP) for the web
 # interface. Already pulled in transitively through axum's own dependency

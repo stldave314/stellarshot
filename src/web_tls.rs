@@ -11,6 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use axum_server::tls_rustls::RustlsConfig;
+use sha2::Digest;
 
 use crate::debug::WEB;
 use crate::debug_log;
@@ -57,24 +58,64 @@ pub(crate) fn self_signed_paths(dir: &Path) -> io::Result<(PathBuf, PathBuf)> {
 }
 
 /// Write a fresh self-signed certificate and key to `cert_path`/`key_path`,
-/// valid for this machine's hostname, its mDNS name, and `localhost`.
-fn generate(cert_path: &Path, key_path: &Path) -> io::Result<()> {
-    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
-    let names = vec![
-        hostname.clone(),
+/// valid for this machine's hostname, its mDNS name, `localhost`, and —
+/// unlike a plain `rcgen::generate_simple_self_signed`, which only ever
+/// names hosts — the loopback addresses Settings actually shows in the
+/// address it tells you to connect to (`https://127.0.0.1:port`): a
+/// certificate with no IP SAN at all for the address you are told to visit
+/// trains you to click through a browser's warning instead of noticing a
+/// real one. Valid for `WEB_CERT_VALIDITY`, not `rcgen`'s own default
+/// (1975 to 4096), which never actually expires and so never says anything.
+/// `rcgen::CertificateParams::new` classifies each of these as either a DNS
+/// name or an IP SAN by whether it parses as an [`std::net::IpAddr`] —
+/// `127.0.0.1` and `::1` end up as IP SANs this way, without constructing
+/// `rcgen::SanType` by hand.
+fn cert_names(hostname: &str) -> Vec<String> {
+    vec![
+        hostname.to_owned(),
         format!("{hostname}.local"),
         "localhost".to_owned(),
-    ];
-    let rcgen::CertifiedKey { cert, signing_key } =
-        rcgen::generate_simple_self_signed(names).map_err(io::Error::other)?;
+        "127.0.0.1".to_owned(),
+        "::1".to_owned(),
+    ]
+}
+
+fn generate(cert_path: &Path, key_path: &Path) -> io::Result<()> {
+    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+    let names = cert_names(&hostname);
+    let signing_key = rcgen::KeyPair::generate().map_err(io::Error::other)?;
+    let mut params = rcgen::CertificateParams::new(names).map_err(io::Error::other)?;
+    let now = time::OffsetDateTime::now_utc();
+    params.not_before = now;
+    params.not_after = now
+        + time::Duration::try_from(crate::constants::WEB_CERT_VALIDITY)
+            .map_err(io::Error::other)?;
+    let cert = params.self_signed(&signing_key).map_err(io::Error::other)?;
     write_private(key_path, signing_key.serialize_pem().as_bytes())?;
     std::fs::write(cert_path, cert.pem())?;
     debug_log!(
         WEB,
-        "generated a self-signed certificate at {}",
-        cert_path.display()
+        "generated a self-signed certificate at {}, valid until {}",
+        cert_path.display(),
+        params.not_after
     );
     Ok(())
+}
+
+/// The certificate's SHA-256 fingerprint, hex-encoded — what a
+/// trust-on-first-use check (`curl --pinnedpubkey`, a browser's own
+/// certificate viewer) actually compares against, so Settings can show it
+/// rather than leaving no way to verify the certificate at all beyond
+/// trusting whatever is presented.
+pub fn fingerprint(cert_path: &Path) -> io::Result<String> {
+    use rustls_pki_types::CertificateDer;
+    use rustls_pki_types::pem::PemObject;
+    let der = CertificateDer::from_pem_file(cert_path).map_err(io::Error::other)?;
+    Ok(sha2::Sha256::digest(&der)
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(":"))
 }
 
 /// Write `bytes` to `path`, readable only by this user: a private key must
@@ -94,6 +135,44 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_loopback_addresses_are_named_alongside_the_host() {
+        let names = cert_names("desktop");
+        assert!(names.contains(&"127.0.0.1".to_owned()));
+        assert!(names.contains(&"::1".to_owned()));
+        assert!(names.contains(&"desktop".to_owned()));
+        assert!(names.contains(&"desktop.local".to_owned()));
+        assert!(names.contains(&"localhost".to_owned()));
+    }
+
+    #[test]
+    fn a_generated_certificates_fingerprint_is_stable_and_well_formed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (cert, _key) = self_signed_paths(dir.path()).unwrap();
+
+        let first = fingerprint(&cert).unwrap();
+        let second = fingerprint(&cert).unwrap();
+
+        assert_eq!(first, second, "the same file must fingerprint the same");
+        // 32 bytes, hex-encoded two characters each, joined by a colon
+        // between every pair: 32 * 2 + 31 characters.
+        assert_eq!(first.len(), 95, "{first}");
+        assert!(
+            first.chars().all(|c| c.is_ascii_hexdigit() || c == ':'),
+            "{first}"
+        );
+    }
+
+    #[test]
+    fn two_generated_certificates_have_different_fingerprints() {
+        let dir_a = tempfile::TempDir::new().unwrap();
+        let dir_b = tempfile::TempDir::new().unwrap();
+        let (cert_a, _) = self_signed_paths(dir_a.path()).unwrap();
+        let (cert_b, _) = self_signed_paths(dir_b.path()).unwrap();
+
+        assert_ne!(fingerprint(&cert_a).unwrap(), fingerprint(&cert_b).unwrap());
+    }
 
     #[test]
     fn a_fresh_pair_is_generated_and_both_files_are_written() {

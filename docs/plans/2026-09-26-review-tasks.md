@@ -893,6 +893,33 @@ does not contain `LEAKME`. Live: `curl -skI … | grep -iE 'nosniff|no-store|www
 
 ### WEB-7. TLS configuration hardening
 
+**Status: The crypto-provider fix, IP SANs and validity period are done;
+the Settings UI and the expiry warning are not.**
+`rustls::crypto::aws_lc_rs::default_provider().install_default()` runs at
+the top of `web::main`; `rcgen` is now
+`default-features = false, features = ["aws_lc_rs", "pem"]`, so `ring` is
+gone from the dependency tree entirely — confirmed with
+`cargo tree -i ring` (nothing to print) and `cargo tree -i aws-lc-rs`
+(one provider, used by both `rcgen` and `rustls`/`axum-server`), not just
+by reading `Cargo.toml`. The self-signed certificate now names `127.0.0.1`
+and `::1` as IP SANs alongside the hostname/mDNS/`localhost` DNS names
+(`rcgen::CertificateParams::new` classifies each by whether it parses as
+an IP, so no `SanType` construction by hand), and is valid for
+`WEB_CERT_VALIDITY` (about two years, in `constants.rs`) rather than
+`rcgen`'s own 1975–4096 default. Added `web_tls::fingerprint`
+(SHA-256, colon-hex, matching the `curl --pinnedpubkey`/browser-viewer
+format), tested for stability and for differing between two certificates.
+Not done: showing that fingerprint in Settings, a "Regenerate
+certificate" button, warning in the log when a *user-supplied* certificate
+has expired (parsing an arbitrary certificate's own validity window
+would need a real X.509 parser as a new dependency, which felt like more
+than this one warning justified tonight), and the two items the plan
+asks to turn into standing tests (`--tls-max 1.1` and plain `http://`
+both failing) — all four need either a real running daemon/browser or a
+parser this session did not add. The `openssl s_client`/`subjectAltName`
+proof is likewise not run tonight, for the same "needs a real running
+daemon" reason as WEB-2/WEB-9's own status notes.
+
 **Low · S · Verified**
 
 **Files:** `src/web_tls.rs:55-92`, `src/bin/web.rs`, `Cargo.toml` (`rcgen`),

@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer needed**, rather than just left for the allocator to reuse later,
   and the backup/restore/check process that holds it disables core dumps
   for itself so a crash cannot write the password to disk.
+- **The web interface's self-signed certificate now covers `127.0.0.1` and
+  `::1`**, the addresses Settings actually tells you to connect to, so a
+  browser has one less reason to show a warning about it. It is also now
+  valid for about two years rather than effectively forever, so an expiry
+  date on it actually means something.
+- **Only one cryptography library is compiled into the web interface now**,
+  not two — closing off a future dependency change that could have made
+  TLS startup ambiguous and made it panic.
 - **The web interface's allow-list is now checked before the TLS handshake,
   not only afterward.** A connection from an address not on the list used
   to still be accepted and held open through a full handshake before ever

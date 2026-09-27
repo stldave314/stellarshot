@@ -553,19 +553,36 @@ fn an_after_hook_still_runs_when_the_destination_is_unreachable() {
 #[test]
 fn an_after_success_hook_does_not_run_after_a_failed_backup() {
     let fixture = Fixture::new();
-    let marker = fixture.dir.path().join("should-not-exist");
+    let should_not_exist = fixture.dir.path().join("should-not-exist");
+    // Proves After hooks ran *at all*, so the other assertion below actually
+    // means "correctly skipped because the backup failed" rather than
+    // "After hooks are broken and nothing ran" — both would otherwise leave
+    // `should_not_exist` absent and pass this test for the wrong reason.
+    let should_exist = fixture.dir.path().join("should-exist");
     let job = Job {
-        hooks: vec![Hook {
-            name: "make a marker".to_owned(),
-            command: format!("touch {}", marker.display()),
-            timing: HookTiming::AfterSuccess,
-            enabled: true,
-        }],
+        hooks: vec![
+            Hook {
+                name: "make a marker".to_owned(),
+                command: format!("touch {}", should_not_exist.display()),
+                timing: HookTiming::AfterSuccess,
+                enabled: true,
+            },
+            Hook {
+                name: "make the other marker".to_owned(),
+                command: format!("touch {}", should_exist.display()),
+                timing: HookTiming::AfterFailure,
+                enabled: true,
+            },
+        ],
         ..fixture.backup_job("wrong")
     };
 
     let (_, status) = fixture.run("backup", &job);
 
     assert_eq!(status.code(), Some(1));
-    assert!(!marker.exists());
+    assert!(!should_not_exist.exists());
+    assert!(
+        should_exist.exists(),
+        "an AfterFailure hook should have run"
+    );
 }

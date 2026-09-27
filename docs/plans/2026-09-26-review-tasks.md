@@ -2446,6 +2446,19 @@ Pin the install (`cargo install --locked rustic_server@<x.y.z>`, with
 
 ### TST-4. Flaky and weak tests
 
+**Status: 2 of 4 done.** `uploads.rs`'s `packs_upload_side_by_side` no
+longer asserts an elapsed-time bound (flaky on a busy runner, and
+demonstrably so tonight); `most_busy == 4` alone already proves genuine
+concurrency, since sequential uploads could never reach it regardless of
+speed. `an_after_success_hook_does_not_run_after_a_failed_backup` (in
+`tests/runner.rs`) now also asserts an `AfterFailure` hook's own marker
+*does* exist, so the test can no longer pass for the wrong reason (After
+hooks entirely broken looks identical to "correctly skipped" without it —
+both leave the original marker absent). Not done: splitting a pure
+`rclone_command()` out of `repo.rs` (`available()` needs a real rclone;
+not blocking in this sandbox, where it's installed, so lower priority),
+and `lock.rs`'s `is_running` test reimplementing the probe it tests.
+
 **Low · S · Verified**
 
 - `engine/uploads.rs:387-390` asserts `elapsed < 1000ms`, which will flake on

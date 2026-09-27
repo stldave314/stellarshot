@@ -284,7 +284,7 @@ impl Drop for ParallelUploads {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// Storage that takes `delay` per write and records what arrived.
     #[derive(Default)]
@@ -373,7 +373,6 @@ mod tests {
         });
         let uploads = ParallelUploads::with_connections(slow.clone(), SinkSlot::default(), 4);
 
-        let started = Instant::now();
         for n in 0..8 {
             uploads
                 .write_bytes(FileType::Pack, &id(n), false, pack(n))
@@ -382,13 +381,16 @@ mod tests {
         uploads
             .write_bytes(FileType::Index, &id(100), true, pack(100))
             .unwrap();
-        let elapsed = started.elapsed();
 
+        // `most_busy == 4` is what actually proves side-by-side uploads: at
+        // some point during the 8 packs, 4 were genuinely in flight at once,
+        // which sequential uploads (one at a time) could never produce
+        // regardless of how fast they ran. An elapsed-time assertion used to
+        // stand in for this too ("8 uploads of 200ms, 4 at a time, must
+        // finish under a second"), but that flakes on a busy CI runner for
+        // reasons that have nothing to do with whether uploads are actually
+        // concurrent.
         assert_eq!(slow.most_busy.load(Ordering::SeqCst), 4);
-        assert!(
-            elapsed < Duration::from_millis(1000),
-            "8 uploads of 200 ms, 4 at a time, took {elapsed:?}"
-        );
         assert_eq!(slow.files.lock().unwrap().len(), 9);
     }
 

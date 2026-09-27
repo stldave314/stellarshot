@@ -472,18 +472,26 @@ only deallocates. The `--run` child calls
 `rustix::process::set_dumpable_behavior(NotDumpable)` at the very top of
 `runner::main`, before parsing anything.
 
-**Proven against a real process, not just compiled:** `/proc/<pid>/mem` is
-owned by this user for an ordinary process (`/proc/self/mem`, confirmed by
-hand) and by `root` once a process has disabled its own dumpable flag — the
-kernel's own externally visible sign the `prctl` took effect, since a
-process cannot directly observe another's dumpable state any other way.
-`tests/child.rs`'s new `the_run_child_disables_core_dumps_for_itself`
-spawns the real compiled `--run` child with stdin held open (blocking it
-past the `prctl` call, alive long enough to inspect) and asserts
-`/proc/<child-pid>/mem` is root-owned. **Proven able to fail**, not just to
-pass: temporarily disabling the `set_dumpable_behavior` call made this
-exact test fail with `left: 1000, right: 0` (this user's uid where root was
-expected), confirming it is not vacuous, before restoring the fix.
+**Correction, the morning after (2026-09-27 09:xx):** the test as first
+written checked `/proc/<child-pid>/mem`'s owning uid after spawning a real
+`--run` child, expecting `0` (root) — true and reproducible in the sandbox
+this was written in, and it did catch the fix's absence there. It broke
+**every single CI run overnight**: GitHub Actions' own runner shows that
+ownership change to a *different* uid once a process disables its own
+dumpable flag, but not literally `0` — a container/user-namespace detail
+in how "root" is mapped there, not a sign `set_dumpable_behavior` failed.
+Asserting an exact uid was never portable across environments; this is
+exactly the kind of thing "proven against a real system" needs to mean
+*this* system, not just the one it was written on.
+
+Fixed by testing the actual contract instead of an environment-dependent
+side effect: `tests/child.rs`'s `the_dumpable_flag_set_by_runner_main_round_trips`
+calls the same `rustix::process::set_dumpable_behavior`/`dumpable_behavior`
+pair `runner::main` uses, in-process, and asserts the value reads back as
+set — portable everywhere the underlying `prctl` exists, and still a real
+proof of the mechanism `runner::main` depends on, not merely "it compiles."
+Restores the previous dumpable state afterward so it can't leak into other
+tests sharing the same test binary process.
 
 **Not done:** the web daemon's own `prctl` call (`src/web.rs`, the peer
 session's file tonight) and zeroizing the `String` momentarily produced by

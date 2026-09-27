@@ -604,6 +604,32 @@ fn an_append_only_repository_refuses_to_forget_a_snapshot() {
 }
 
 #[test]
+fn an_append_only_repository_refuses_to_prune() {
+    // Unlike `delete_snapshots`/`forget` above, `Repo::prune` never checks
+    // `is_append_only()` itself — it relies entirely on rustic_core
+    // refusing `prune_plan`/`prune` on its own. This proves that reliance
+    // is justified, rather than assuming it because the *other* operation
+    // does refuse.
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("file.txt"), b"content").unwrap();
+    let location = Location::local(dir.path().join("repo"));
+    init_with(&location, &secret(), true, None).unwrap();
+    open(&location, &secret())
+        .unwrap()
+        .backup(&sources(&source), Arc::new(NoProgress))
+        .unwrap();
+
+    let err = open(&location, &secret()).unwrap().prune().unwrap_err();
+    assert_eq!(
+        err.kind,
+        ErrorKind::Internal,
+        "rustic itself must refuse to prune an append-only repository: {err:?}"
+    );
+}
+
+#[test]
 fn a_second_key_opens_the_same_repository_as_the_first() {
     let fixture = fixture();
     let repo = open(&fixture.repo, &secret()).unwrap();
@@ -1111,7 +1137,10 @@ fn dump_file_refuses_a_folder() {
         .dump_file("latest", &fixture.source.join("nested"), &destination)
         .unwrap_err();
 
-    assert_eq!(err.kind, ErrorKind::Internal);
+    // Not `Internal`: a wrong-type path is reported the same way a path
+    // that plain doesn't exist is, so the web API (WEB-6) can answer 404
+    // for both rather than a bare 500.
+    assert_eq!(err.kind, ErrorKind::NotFound);
     assert!(!destination.exists(), "nothing is written on failure");
 }
 
@@ -1148,7 +1177,8 @@ fn archive_folder_refuses_a_file() {
         .archive_folder("latest", &fixture.source.join("plain.txt"), &destination)
         .unwrap_err();
 
-    assert_eq!(err.kind, ErrorKind::Internal);
+    // See dump_file_refuses_a_folder's own comment on NotFound vs Internal.
+    assert_eq!(err.kind, ErrorKind::NotFound);
     assert!(!destination.exists(), "nothing is written on failure");
 }
 
@@ -1674,6 +1704,37 @@ fn forget_applies_the_rules() {
     let mut newest = taken[2..].to_vec();
     newest.sort();
     assert_eq!(left, newest, "the two newest days are kept");
+}
+
+#[test]
+fn keep_last_zero_removes_every_unpinned_snapshot() {
+    // `Some(0)` ("keep the 0 most recent") is a real, reachable value from
+    // the retention settings page (a spinner with no built-in minimum other
+    // than 0), distinct from `None` ("this rule is off"): `count()` in
+    // `KeepRules::options` maps both to *some* `i32`, so it would be easy
+    // for `Some(0)` to accidentally behave like "unlimited" if a future
+    // change swapped `Option::map` for `Option::unwrap_or(i32::MAX)` or
+    // similar. Every other field stays `None` (off), so nothing else keeps
+    // a snapshot alive either.
+    let fixture = fixture();
+    daily_history(&fixture);
+    let rules = KeepRules {
+        last: Some(0),
+        ..KeepRules::default()
+    };
+
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &rules,
+            &hostname(),
+            "",
+            std::slice::from_ref(&fixture.source),
+        )
+        .unwrap();
+
+    assert_eq!((report.removed, report.kept), (4, 0));
+    assert!(snapshot_ids(&fixture).is_empty());
 }
 
 #[test]

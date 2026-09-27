@@ -451,6 +451,15 @@ mod tests {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
         let binary = dir.path().join("stellarshot");
         std::fs::write(&binary, b"").unwrap();
+        // `std::fs::write`'s own mode (0o666) is subject to the process
+        // umask, same as `TempDir::new`'s own directory mode above: under a
+        // permissive one (this sandbox's own is 0007, allowing the whole
+        // group to write), the file would otherwise land on 0o660 and
+        // `trusted_executable` would (correctly) refuse it. A real
+        // installed binary is never created this way — `install.sh` always
+        // sets an explicit mode (`install -Dm755`) — so this matches that,
+        // not works around the check.
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         assert!(trusted_executable(&binary));
     }

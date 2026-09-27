@@ -17,6 +17,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration, closing off a crafted remote string that could otherwise
   make rclone run a command of its own. Exported settings files are now
   written readable only by their owner.
+- **Restoring can no longer write outside the folder you chose.** A
+  snapshot from a repository shared with someone else could in principle
+  name a file in a way that would land somewhere else entirely; such an
+  item is now refused and the restore stops, rather than silently writing
+  there.
+- **Signing in to Google Drive no longer puts your OAuth client secret
+  somewhere any other program running as you could read it** (`ps` and
+  `/proc/<pid>/cmdline`, for as long as sign-in takes). It now reaches
+  rclone through the environment instead, which only your own user can
+  read.
+- **The lock file and log a backup uses can no longer be forced onto a
+  location another user could tamper with.** When the usual per-session
+  location isn't available, Stellarshot now falls back to a private folder
+  of its own under your home directory instead of a shared temporary
+  directory, and refuses to use a folder that already exists with the
+  wrong owner or permissions.
+- **A scheduled backup now refuses to run from a location another user
+  could replace**, such as a portable download left in a temporary folder,
+  rather than quietly trusting whatever program happens to be at that path
+  after a reboot.
+- **The repository password is now wiped from memory as soon as it is no
+  longer needed**, rather than just left for the allocator to reuse later,
+  and the backup/restore/check process that holds it disables core dumps
+  for itself so a crash cannot write the password to disk.
 - **The web interface now refuses a cross-site request outright**, before
   authentication is even attempted, so a page open in your browser on some
   other site cannot use your own still-valid access against this API.

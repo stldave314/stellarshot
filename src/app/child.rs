@@ -128,8 +128,13 @@ async fn drive(
         .process_group(0)
         .spawn()?;
 
-    let job = serde_json::to_vec(&job)
-        .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
+    // `Zeroizing` wipes this buffer when it drops: `job.password` (a
+    // `Secret`, already zeroized on its own drop) is serialized into a
+    // second, temporary copy here that `secrecy` has no reach into, purely
+    // to get it onto the wire to the child.
+    let job = zeroize::Zeroizing::new(
+        serde_json::to_vec(&job).map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?,
+    );
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&job).await?;
         // Dropping stdin closes it, which tells the child the job is complete.

@@ -441,6 +441,37 @@ version returns an error and changes no permissions.
 
 ### SEC-8. Secrets are not zeroized
 
+**Status: Done for the `--run` child; the web daemon's own dumpable flag is
+the peer session's file, not touched here.** `Secret` is now backed by
+`secrecy::SecretString`, which zeroizes on drop and redacts its own
+`Debug`; a hand-written `Serialize` (documented as the one deliberate
+`expose_secret` call besides `expose()` itself — `secrecy` refuses a
+derived one on purpose, precisely to prevent an accidental new one) keeps
+the exact same bare-JSON-string wire format `#[serde(transparent)]`
+produced, proven with a round-trip test. Both stdin buffers that carry a
+serialized `Job` (`app/child.rs`'s write side, `runner.rs`'s read side) are
+now `zeroize::Zeroizing<Vec<u8>>` instead of a plain buffer whose `drop`
+only deallocates. The `--run` child calls
+`rustix::process::set_dumpable_behavior(NotDumpable)` at the very top of
+`runner::main`, before parsing anything.
+
+**Proven against a real process, not just compiled:** `/proc/<pid>/mem` is
+owned by this user for an ordinary process (`/proc/self/mem`, confirmed by
+hand) and by `root` once a process has disabled its own dumpable flag — the
+kernel's own externally visible sign the `prctl` took effect, since a
+process cannot directly observe another's dumpable state any other way.
+`tests/child.rs`'s new `the_run_child_disables_core_dumps_for_itself`
+spawns the real compiled `--run` child with stdin held open (blocking it
+past the `prctl` call, alive long enough to inspect) and asserts
+`/proc/<child-pid>/mem` is root-owned. **Proven able to fail**, not just to
+pass: temporarily disabling the `set_dumpable_behavior` call made this
+exact test fail with `left: 1000, right: 0` (this user's uid where root was
+expected), confirming it is not vacuous, before restoring the fix.
+
+**Not done:** the web daemon's own `prctl` call (`src/web.rs`, the peer
+session's file tonight) and zeroizing the `String` momentarily produced by
+`keyring::load` before it is re-wrapped into a `Secret`.
+
 **Low · M · Verified**
 
 **Files:** `src/engine/repo.rs:26-45` (`Secret`), `src/app/child.rs:131-134`,

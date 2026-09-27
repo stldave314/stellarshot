@@ -127,6 +127,15 @@ rcgen = "0.14"
 # interface. Already pulled in transitively through axum's own dependency
 # tree, at the same version; this is a direct dependency, not a second copy.
 tower-http = { version = "0.6", features = ["timeout", "limit", "set-header"] }
+# Wraps the repository password (`engine::Secret`) so it zeroizes on drop and
+# its `Debug` is redacted by the crate itself, not by a hand-written impl that
+# could rot if a new field were ever added without updating it too.
+secrecy = { version = "0.10", features = ["serde"] }
+# Wipes the job JSON buffer that carries the password across the `--run`
+# child's stdin, after it is written: `secrecy` protects the `Secret` value
+# itself, but the serialized bytes are a second, temporary copy outside its
+# reach.
+zeroize = "1"
 
 [dependencies.libcosmic]
 git = "https://github.com/pop-os/libcosmic"

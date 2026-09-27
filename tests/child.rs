@@ -197,3 +197,55 @@ fn a_missing_executable_is_reported_not_hung() {
         other => panic!("expected a single error, got {other:?}"),
     }
 }
+
+/// SEC-8's own regression test: the `--run` child holds the repository
+/// password in memory, so it disables core dumps for itself
+/// (`rustix::process::set_dumpable_behavior`) before doing anything else.
+/// Spawned directly with `std::process::Command` (not through
+/// `child::run_with`'s streaming API) so this can hold its stdin open — the
+/// child blocks reading it, which keeps the process alive and past the
+/// `prctl` call long enough to inspect from outside — and read its raw pid.
+///
+/// **Proven able to fail:** without the `set_dumpable_behavior` call, the
+/// real, unpatched binary shows `/proc/<pid>/mem` owned by this user (the
+/// same as any ordinary process, `/proc/self/mem` included) rather than
+/// root, since dumpable is the kernel default.
+#[test]
+fn the_run_child_disables_core_dumps_for_itself() {
+    use std::os::unix::fs::MetadataExt;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(exe().unwrap())
+        .arg("--run")
+        .arg("backup")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Not written to or dropped: the child blocks in `read_to_end` on stdin,
+    // which is exactly what keeps it alive to inspect. `set_dumpable_behavior`
+    // already ran by then, at the very top of `runner::main`.
+    let _stdin = child.stdin.take();
+
+    // A moment for the child to reach and act on that call; generous, since
+    // a slow CI runner failing to see the effect yet would be a false FAIL,
+    // not a false PASS.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let mem_path = format!("/proc/{}/mem", child.id());
+    let metadata = std::fs::symlink_metadata(&mem_path)
+        .unwrap_or_else(|err| panic!("could not stat {mem_path}: {err}"));
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(
+        metadata.uid(),
+        0,
+        "a dumpable process's own /proc/<pid>/mem is owned by its real user \
+         (see /proc/self/mem for this test's own process); root ownership is \
+         the kernel's own externally visible sign that PR_SET_DUMPABLE took \
+         effect"
+    );
+}

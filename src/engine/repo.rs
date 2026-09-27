@@ -23,24 +23,49 @@ use crate::constants::RCLONE_SERVE_FLAGS;
 use crate::debug::ENGINE;
 use crate::debug_log;
 
-/// A repository password. Never printed.
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Secret(String);
+/// A repository password. Never printed, and wiped from memory on drop:
+/// backed by `secrecy::SecretString` rather than a plain `String`, so
+/// `drop`ping a `Job` or a cloned copy of one actually zeroizes the bytes
+/// instead of just freeing them (a plain `String`'s allocator free leaves
+/// the bytes as they were, recoverable from a core dump or a use-after-free
+/// elsewhere in the same process).
+#[derive(Clone)]
+pub struct Secret(secrecy::SecretString);
 
 impl Secret {
     pub fn new(password: impl Into<String>) -> Self {
-        Self(password.into())
+        Self(secrecy::SecretString::from(password.into()))
     }
 
     pub fn expose(&self) -> &str {
-        &self.0
+        use secrecy::ExposeSecret;
+        self.0.expose_secret()
     }
 }
 
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret(***)")
+    }
+}
+
+/// Deliberately exposes the secret: serializing a `Job` onto the `--run`
+/// child's stdin (see `runner.rs`) is the one place a `Secret` leaves this
+/// process's memory at all. `secrecy::SecretString` refuses a derived
+/// `Serialize` specifically to prevent this happening *by accident*
+/// (`SerializableSecret` is an opt-in marker trait `str` deliberately does
+/// not implement); this hand-written impl exists because that boundary here
+/// is deliberate and singular, not accidental — `grep -rn expose_secret src`
+/// should only ever find this, `expose()` above, and nothing else.
+impl Serialize for Secret {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.expose().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        secrecy::SecretString::deserialize(deserializer).map(Self)
     }
 }
 
@@ -532,6 +557,25 @@ pub fn open(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_secrets_debug_output_is_redacted() {
+        let secret = Secret::new("hunter2");
+        assert_eq!(format!("{secret:?}"), "Secret(***)");
+    }
+
+    #[test]
+    fn a_secret_round_trips_through_json_as_a_bare_string() {
+        // `#[serde(transparent)]`'s old wire format, kept even though the
+        // derive is gone: a `Job` already saved or logged as JSON, and every
+        // existing `--run` child expecting this shape on its own stdin,
+        // must keep working.
+        let secret = Secret::new("hunter2");
+        let json = serde_json::to_string(&secret).unwrap();
+        assert_eq!(json, "\"hunter2\"");
+        let restored: Secret = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.expose(), "hunter2");
+    }
 
     fn rclone_location(bandwidth_limit: &str) -> Location {
         Location::rclone(":local", "/tmp/somewhere").with_bandwidth_limit(bandwidth_limit)

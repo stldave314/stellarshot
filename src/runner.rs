@@ -386,6 +386,14 @@ pub fn run(
 /// Entry point for `stellarshot --run <operation>`. `args` are the arguments
 /// after `--run`.
 pub fn main(args: &[String]) -> ExitCode {
+    // This process holds the repository password in memory (in the parsed
+    // `Job`, and briefly in the stdin buffer before it is parsed and
+    // zeroized): a core dump triggered by a crash here would otherwise be
+    // readable by anyone who can read this user's files, unlike the memory
+    // itself. Best-effort; a failure here (an old kernel without this
+    // `prctl`, say) is not itself a reason to refuse to run a backup.
+    let _ = rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
+
     // Every real backup, restore or clean-up runs here, never in the
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing
@@ -402,15 +410,17 @@ pub fn main(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let mut input = String::new();
+    let mut input = zeroize::Zeroizing::new(Vec::new());
     let job = std::io::stdin()
-        .read_to_string(&mut input)
+        .read_to_end(&mut input)
         .map_err(EngineError::from)
         .and_then(|_| {
-            serde_json::from_str::<Job>(&input)
+            serde_json::from_slice::<Job>(&input)
                 .map_err(|err| EngineError::new(ErrorKind::Internal, format!("invalid job: {err}")))
         });
-    // The job holds the password; drop the raw text as soon as it is parsed.
+    // The job holds the password; `Zeroizing` wipes this buffer when it
+    // drops, rather than a plain deallocation that leaves the password's
+    // bytes in freed memory as they were.
     drop(input);
 
     let output = Arc::new(Output {

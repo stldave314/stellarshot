@@ -539,6 +539,26 @@ production `axum_server` path.
 
 ### WEB-1. Credential and profile changes never reach the running daemon
 
+**Status: The "minimum" fix is done for auth and the allow-list; profile
+changes still do not reach the daemon.** Toggling password or token auth,
+saving a new password, regenerating the token, and adding or removing an
+allow-list entry now call `App::restart_web_daemon_if_active`, which
+restarts the daemon (if `web_daemon::Status::Active`, from the last status
+Settings was told) right after the setting is saved — closing the specific
+bug in the Problem section (a regenerated token's old value kept working).
+Fixed the `config.rs` doc comment and added a paragraph to
+`docs/web-interface.md`. Scope change already started/stopped the daemon;
+switching between `Localhost` and `Lan` while already on is unchanged
+(deliberately manual — see that arm's own comment) and so is a port or TLS
+change (still the Restart button, per the existing docs). Not done: a
+backup being added, edited or removed still does not reach the daemon
+until it restarts — the plan's own "preferred" `ArcSwap` fix, or extending
+the restart-on-change treatment to profile changes specifically (visibility
+on the API, not every field edit — restarting on every minor edit would
+interrupt far more than it protects), whichever is chosen later. Not run
+tonight: the live `curl` regenerate-then-retry proof (needs a real running
+daemon and keyring; not attempted against this sandbox's real settings).
+
 **Medium · M · Verified**
 
 **Files:** `src/web.rs:79-100` (everything loaded once), `src/app.rs:2757-2801`

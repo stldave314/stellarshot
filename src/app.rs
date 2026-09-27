@@ -1034,6 +1034,27 @@ impl App {
         })
     }
 
+    /// Auth, the allow-list and the network scope are all read once, at
+    /// startup — a change to any of them (a regenerated token, a removed
+    /// allow-list entry, a disabled password) otherwise has no effect until
+    /// the daemon is restarted by hand, which the config doc comment
+    /// wrongly claimed happened "immediately". Restarting here closes that
+    /// gap for whichever of them just changed, without disturbing anything
+    /// if the daemon is not even running (`self.web_daemon_status` is a
+    /// cached last-known status, not a fresh D-Bus round trip, so this
+    /// restarts based on what Settings was last told, not a guaranteed
+    /// truth — the same staleness the status indicator itself already has).
+    /// A backup being added, edited or removed still does not reach the
+    /// daemon this way; that is a larger, separate gap (see WEB-1's own
+    /// status note).
+    fn restart_web_daemon_if_active(&self) -> Task<Message> {
+        if self.web_daemon_status == web_daemon::Status::Active {
+            self.web_daemon_task(web_daemon::restart)
+        } else {
+            Task::none()
+        }
+    }
+
     /// Something on screen shows a running time.
     fn waiting(&self) -> bool {
         self.wizard.as_ref().is_some_and(Wizard::waiting)
@@ -2846,6 +2867,7 @@ impl Application for App {
             }
             Message::WebPasswordEnabled(enabled) => {
                 self.update_web(|web| web.password_enabled = enabled);
+                return self.restart_web_daemon_if_active();
             }
             Message::WebPasswordInput(text) => self.web_password_input = text,
             Message::SaveWebPassword => {
@@ -2874,6 +2896,7 @@ impl Application for App {
                     fl!("web-password-saved-title"),
                     fl!("web-password-saved-body"),
                 ));
+                return self.restart_web_daemon_if_active();
             }
             Message::WebPasswordSaved(Err(detail)) => {
                 self.show_error(
@@ -2881,7 +2904,10 @@ impl Application for App {
                     &EngineError::new(engine::ErrorKind::KeyringUnavailable, detail),
                 );
             }
-            Message::WebTokenEnabled(enabled) => self.update_web(|web| web.token_enabled = enabled),
+            Message::WebTokenEnabled(enabled) => {
+                self.update_web(|web| web.token_enabled = enabled);
+                return self.restart_web_daemon_if_active();
+            }
             Message::GenerateWebToken => {
                 let token = crate::web_token::generate();
                 self.update_web(|web| web.token_hash = Some(token.hash));
@@ -2889,6 +2915,7 @@ impl Application for App {
                     fl!("web-token-title"),
                     fl!("web-token-body", token = token.raw),
                 ));
+                return self.restart_web_daemon_if_active();
             }
             Message::WebPamEnabled(enabled) => self.update_web(|web| web.pam_enabled = enabled),
             Message::WebAllowedAddressInput(text) => self.web_allowed_address_input = text,
@@ -2901,6 +2928,7 @@ impl Application for App {
                             web.allowed_addresses.push(address);
                         }
                     });
+                    return self.restart_web_daemon_if_active();
                 }
             }
             Message::RemoveWebAllowedAddress(index) => {
@@ -2909,6 +2937,7 @@ impl Application for App {
                         web.allowed_addresses.remove(index);
                     }
                 });
+                return self.restart_web_daemon_if_active();
             }
             Message::WebPortInput(text) => self.web_port_input = text,
             Message::SaveWebPort => match parse_port(&self.web_port_input) {

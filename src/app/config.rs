@@ -126,12 +126,15 @@ pub struct WebConfig {
     pub token_enabled: bool,
     pub pam_enabled: bool,
     /// The current API token's SHA-256 hash, hex-encoded. `None` until one
-    /// has been generated; regenerating replaces it, invalidating the old
-    /// token immediately.
+    /// has been generated; regenerating replaces it. If the daemon is
+    /// running, Settings restarts it right away so the old token stops
+    /// working immediately rather than on the next manual restart — see
+    /// `App::restart_web_daemon_if_active`.
     pub token_hash: Option<String>,
     /// Addresses or CIDR ranges allowed to reach the web interface, on top
     /// of whatever `scope` itself already allows. Empty means every address
-    /// `scope` allows, unrestricted.
+    /// `scope` allows, unrestricted. Adding or removing one restarts the
+    /// daemon the same way a token change does, if it is running.
     pub allowed_addresses: Vec<String>,
     /// A certificate and private key to use instead of the daemon's own
     /// self-signed one, generated once and kept under its data directory

@@ -102,6 +102,14 @@ scope, which binds every network interface on this machine. Checked before
 authentication: a request from an address not on the list never reaches far
 enough to try a password or token at all.
 
+Adding or removing an entry here, and any change to the password, the API
+token, or which authentication methods are enabled, restarts the daemon
+right away if it is already running — the old settings stop applying
+immediately, not only after you next restart it by hand. Changing the port
+or a TLS certificate still needs the Restart button (see
+[The daemon](#the-daemon)): those change what the daemon binds to and
+presents, not just who it lets in.
+
 ## Cross-site requests
 
 A request whose `Sec-Fetch-Site` header says it did not come from this same

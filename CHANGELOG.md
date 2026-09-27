@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The LAN network scope's empty IP allow-list now means "private network
   addresses only"**, not everyone: it binds every network interface on this
   machine, and the allow-list wording and this fallback now say so.
+- **Changing the web interface's password, API token, or IP allow-list now
+  takes effect right away** if the daemon is already running, instead of
+  only on the next manual restart — a regenerated token's old value used to
+  keep working, and a removed allow-list entry used to keep reaching the
+  daemon, until then.
 - **Reading a backup's snapshots or browsing one over the web interface is
   now capped** at a small number of requests open on that repository at
   once; past that, a request is refused immediately (`503`, with a

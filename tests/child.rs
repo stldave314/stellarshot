@@ -162,23 +162,16 @@ fn canceling_a_backup_ends_it_as_canceled_without_a_snapshot() {
     );
 }
 
-#[test]
-fn a_replaced_executable_says_the_app_needs_restarting() {
-    let (_dir, job) = setup(0);
-    let events: Vec<ChildEvent> = runtime().block_on(
-        child::run_with(
-            Ok(PathBuf::from("/usr/bin/stellarshot (deleted)")),
-            Operation::Backup,
-            job,
-        )
-        .collect(),
-    );
-
-    match events.as_slice() {
-        [ChildEvent::Ended(error)] => assert_eq!(error.kind, ErrorKind::AppUpdated),
-        other => panic!("expected a single error, got {other:?}"),
-    }
-}
+// REL-11: `run` now spawns `crate::exe::running_image` (`/proc/self/exe`)
+// rather than a raw `current_exe()`, and the lossy `" (deleted)"` string
+// check this test used to exercise is gone along with it — that path stays
+// executable even after the file it once named is unlinked (confirmed
+// directly: a running process whose own backing file was deleted still
+// re-executed itself successfully through this exact link; see
+// `crate::exe::running_image`'s own doc comment and its test). What
+// remains reachable of `AppUpdated` — `running_image` itself somehow
+// failing to spawn — is covered by `src/app/child.rs`'s own
+// `spawn_error` unit tests instead, which do not need a real subprocess.
 
 #[test]
 fn a_missing_executable_is_reported_not_hung() {

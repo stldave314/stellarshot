@@ -24,6 +24,22 @@ pub fn installed_path() -> Result<PathBuf, std::io::Error> {
     Ok(strip_deleted_marker(&path).unwrap_or(path))
 }
 
+/// This process's own running image, for spawning a `--run` child: the
+/// magic `/proc/self/exe` link, not [`installed_path`]. The kernel resolves
+/// it to whatever inode this process is actually executing from, so opening
+/// or executing it keeps working even after a package upgrade unlinks the
+/// path it was launched from — confirmed directly (a running process whose
+/// own backing file was deleted still re-executed itself successfully
+/// through this link), not assumed from how the mechanism is documented.
+/// Spawning through here rather than [`installed_path`] also guarantees the
+/// child runs the *same* binary as this process, so the `--run` child's
+/// stdin/stdout JSON protocol always matches — [`installed_path`] would
+/// launch whatever is newly installed, a version this process has not
+/// necessarily negotiated a protocol with.
+pub fn running_image() -> PathBuf {
+    PathBuf::from("/proc/self/exe")
+}
+
 /// Whether this process's own binary has been replaced since it started —
 /// a package upgrade unlinked the file it was executing from, so
 /// `/proc/self/exe`'s target now carries the marker [`installed_path`]
@@ -71,6 +87,31 @@ mod tests {
             strip_deleted_marker(Path::new("/usr/bin/stellarshot")),
             None
         );
+    }
+
+    /// The exact property [`running_image`] depends on: a running
+    /// process's own `/proc/<pid>/exe` link (`/proc/self/exe` is that same
+    /// link, by another name, for the calling process itself) stays
+    /// resolvable and executable after the file it names is deleted —
+    /// confirmed directly here, not assumed from how `/proc` is documented.
+    #[test]
+    fn a_running_processs_exe_link_stays_executable_after_its_file_is_deleted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let copy = dir.path().join("copy-of-sleep");
+        std::fs::copy("/bin/sleep", &copy).expect("this test needs /bin/sleep to exist");
+        let mut long_lived = std::process::Command::new(&copy).arg("5").spawn().unwrap();
+        let exe_link = format!("/proc/{}/exe", long_lived.id());
+
+        std::fs::remove_file(&copy).unwrap();
+
+        let status = std::process::Command::new(&exe_link)
+            .arg("0")
+            .status()
+            .expect("the exe link should still be executable after its file was deleted");
+
+        assert!(status.success());
+        let _ = long_lived.kill();
+        let _ = long_lived.wait();
     }
 
     #[test]

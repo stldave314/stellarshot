@@ -192,14 +192,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draw its own title bar on top of the app's own, instead of the
   client-side-only decoration the window starts with. Only the reopen path
   was affected; a fresh launch was never doubled.
-- **A backup or restore started right after Stellarshot itself was updated
-  now says so, instead of a bare "os error 2".** Every operation runs in a
-  child process spawned from the app's own executable path; once a package
-  upgrade replaces that file out from under an already-running window, the
-  path can no longer be launched. This is now recognized and reported as
-  "Stellarshot was updated while it was running" rather than the raw
-  operating-system error, with a clear next step: quit the app completely
-  and open it again.
+- **A backup or restore started right after a package upgrade replaced
+  Stellarshot's own binary now just works**, rather than failing with a
+  bare "os error 2" or needing the app quit and reopened first: every
+  operation spawns through the exact executable image this process is
+  still running, which keeps working even after the file it was launched
+  from has been replaced. If launching it somehow still fails regardless,
+  that is now reported as "Stellarshot was updated while it was running"
+  rather than the raw operating-system error.
 
 ## [0.6.0] - 2026-09-26
 

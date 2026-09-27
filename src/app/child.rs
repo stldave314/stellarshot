@@ -74,8 +74,17 @@ pub enum ChildEvent {
 /// Spawn `stellarshot --run <operation>` with `job` on stdin, and stream
 /// everything it reports. The last item is always a `Done` or `Error` event,
 /// or `Ended`.
+///
+/// Spawns [`crate::exe::running_image`] (`/proc/self/exe`), not
+/// [`crate::exe::installed_path`]: the child's stdin/stdout JSON protocol
+/// must match this exact process's own, and `/proc/self/exe` keeps
+/// resolving to that exact binary even once a package upgrade has unlinked
+/// the path it was launched from — confirmed directly, not assumed (see
+/// that function's own doc comment). `AppUpdated` is reachable now only if
+/// spawning genuinely fails, not merely because the window has been
+/// running since before an upgrade.
 pub fn run(operation: Operation, job: Job) -> impl Stream<Item = ChildEvent> {
-    run_with(std::env::current_exe(), operation, job)
+    run_with(Ok(crate::exe::running_image()), operation, job)
 }
 
 /// [`run`], with the executable given explicitly. Tests use this to run the
@@ -104,17 +113,7 @@ async fn drive(
     out: &mut mpsc::Sender<ChildEvent>,
 ) -> Result<bool, EngineError> {
     let exe = exe?;
-    if exe.to_string_lossy().ends_with(" (deleted)") {
-        // The kernel appends this to `/proc/self/exe`'s target once the file
-        // it named has been unlinked, which is what happens to a running
-        // process's own binary during a package upgrade. The path is no
-        // longer valid to spawn: it would fail with a bare ENOENT below.
-        return Err(EngineError::new(
-            ErrorKind::AppUpdated,
-            exe.display().to_string(),
-        ));
-    }
-    let mut child = Command::new(exe)
+    let mut child = Command::new(&exe)
         .arg("--run")
         .arg(operation.as_arg())
         .stdin(Stdio::piped())
@@ -126,7 +125,8 @@ async fn drive(
         // Its own process group, so canceling reaches everything it
         // started (see `ChildHandle::cancel`).
         .process_group(0)
-        .spawn()?;
+        .spawn()
+        .map_err(|err| spawn_error(&exe, err))?;
 
     // `Zeroizing` wipes this buffer when it drops: `job.password` (a
     // `Secret`, already zeroized on its own drop) is serialized into a
@@ -218,6 +218,22 @@ async fn drive(
     ))
 }
 
+/// `err` from failing to spawn `exe`, kept a plain [`ErrorKind::Io`] unless
+/// `exe` is [`crate::exe::running_image`] itself — a failure to spawn
+/// `/proc/self/exe` specifically has no ordinary explanation left once that
+/// function's own confirmed guarantee is trusted, short of something
+/// upgrade-related it did not anticipate; reported the same way an upgrade
+/// already is, rather than a bare, unhelpful `Io`. A path a test injects
+/// here instead (to exercise spawn failure in general, unrelated to
+/// upgrades) is reported plainly.
+fn spawn_error(exe: &std::path::Path, err: std::io::Error) -> EngineError {
+    if exe == crate::exe::running_image() {
+        EngineError::new(ErrorKind::AppUpdated, err.to_string())
+    } else {
+        EngineError::from(err)
+    }
+}
+
 /// Reads `stderr` to the end, keeping only the last `CHILD_STDERR_TAIL`
 /// bytes: enough for diagnostics without buffering an unreadable-file
 /// warning per file in a large home folder without bound.
@@ -272,5 +288,29 @@ async fn wait(handle: &ChildHandle) -> Result<std::process::ExitStatus, EngineEr
             return Ok(status);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn not_found() -> std::io::Error {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "gone")
+    }
+
+    #[test]
+    fn a_failure_to_spawn_running_image_itself_is_reported_as_an_update() {
+        let error = spawn_error(&crate::exe::running_image(), not_found());
+        assert_eq!(error.kind, ErrorKind::AppUpdated);
+    }
+
+    #[test]
+    fn a_failure_to_spawn_anything_else_is_reported_plainly() {
+        let error = spawn_error(
+            std::path::Path::new("/nonexistent/stellarshot"),
+            not_found(),
+        );
+        assert_eq!(error.kind, ErrorKind::Io);
     }
 }

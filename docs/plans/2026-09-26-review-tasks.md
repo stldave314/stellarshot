@@ -1728,6 +1728,30 @@ not the default, and `record` against it leaves the stored value unchanged
 
 ### REL-11. One policy for a binary replaced while running
 
+**Status: Done.** Added `crate::exe::running_image()` (`/proc/self/exe`);
+`app::child::run` now spawns that instead of a raw `current_exe()`, and the
+lossy `exe.to_string_lossy().ends_with(" (deleted)")` check that used to
+refuse with `AppUpdated` beforehand is gone — `/proc/self/exe` keeps
+resolving to the same executable inode even after the path it was launched
+from is unlinked, so there is nothing left to detect ahead of time.
+**Confirmed directly, not assumed**: copied `/bin/sleep` to a temp file,
+ran it, deleted the file, and successfully executed a fresh command
+through its `/proc/<pid>/exe` link anyway — the exact mechanism
+`running_image` depends on — before writing the fix, and again as an
+automated test (`a_running_processs_exe_link_stays_executable_after_its_file_is_deleted`)
+so the same proof runs on every `cargo test`, not only once by hand.
+`AppUpdated` is now reachable only if spawning `running_image()` itself
+genuinely fails (`spawn_error`, tested directly with an injected `io::Error`
+against both `running_image()` and an unrelated path, so the discrimination
+between "the app was updated" and "any other spawn failure" is proven, not
+merely asserted) — something with no ordinary explanation left once that
+guarantee is trusted. `schedule::executable`, the applet's Open button, and
+"New window" already used `crate::exe::installed_path()` from earlier work
+this session; this was the one remaining caller of the old, duplicated
+logic. Removed the integration test that exercised the deleted string
+check directly, since the mechanism it tested no longer exists — replaced
+by the unit-level tests above, which do not need a real subprocess.
+
 **Medium · M · Verified (current behavior) / Confirm first (`/proc/self/exe`)**
 
 **Files:** `src/app/child.rs:100-116`, `src/schedule.rs:147-154`,

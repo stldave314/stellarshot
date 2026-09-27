@@ -172,7 +172,12 @@ cmd_rpm() {
     cmd_build
     mkdir -p "$DIST"
     info "Building .rpm"
-    cargo generate-rpm --output "$DIST"
+    # gzip, not cargo-generate-rpm's own default of zstd: the rpm2cpio this
+    # package ships to be inspected with (and older rpm itself, on an older
+    # RPM-based distro someone might actually run this on) isn't guaranteed
+    # to have been built with zstd support, and gzip is universally readable
+    # by every rpm2cpio there has ever been.
+    cargo generate-rpm --payload-compress gzip --output "$DIST"
     info "Wrote $(ls -1 "$DIST"/*.rpm | tail -1)"
 }
 

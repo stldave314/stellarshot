@@ -601,6 +601,33 @@ curl -sk -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $OLD" \
 
 ### WEB-2. No header read timeout or connection cap; allow-list checked after TLS
 
+**Status: Done.** `serve` configures `http_builder().http1().timer(...)
+.header_read_timeout(WEB_HEADER_READ_TIMEOUT)` and
+`http_builder().http2().timer(...).keep_alive_interval(...)
+.keep_alive_timeout(...).max_concurrent_streams(...)`, all in
+`constants.rs` already. Added `AllowListAcceptor`, wrapping the TLS
+acceptor's own inner acceptor (`RustlsAcceptor::new(tls).acceptor(...)`,
+rather than the `from_tcp_rustls` convenience function that hardcodes
+`DefaultAcceptor`): it checks `stream.peer_addr()` against the allow-list
+*before* the TLS handshake even starts, and holds a `WEB_MAX_CONNECTIONS`
+`Semaphore` permit for the connection's whole lifetime
+(`LimitedStream`, released on drop — i.e. when the connection actually
+closes, not merely when it was accepted). The `allow_list` middleware
+layer stays as a second check, per the plan. `TimeoutLayer` and
+`RequestBodyLimitLayer` were already in place from earlier work. The
+allow/cap decision itself (`AllowListAcceptor::decide`) is deliberately
+factored out from the `Accept` impl so it is testable against a plain
+`IpAddr`, without a real socket — this sandbox's loopback networking
+hangs when a test both listens and connects to itself at once, confirmed
+environmental (reproduced with a bare-minimum server, nothing specific to
+this code) and already noted in WEB-3's own status note; the couple of
+lines `Accept::accept` itself still does (`peer_addr()`, wrapping the
+result) are correspondingly thin and untested directly, and
+`LimitedStream`'s own permit-release-on-drop is tested separately with an
+in-memory `tokio::io::duplex` pair instead of a real connection. Not run
+tonight: the live `openssl s_client`/`ss -tn` proofs (need a real running
+daemon).
+
 **Medium · M · Verified**
 
 **Files:** `src/web.rs:140-180`; upstream `hyper-1.11/src/common/time.rs`

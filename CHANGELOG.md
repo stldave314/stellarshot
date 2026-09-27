@@ -41,6 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer needed**, rather than just left for the allocator to reuse later,
   and the backup/restore/check process that holds it disables core dumps
   for itself so a crash cannot write the password to disk.
+- **The web interface's allow-list is now checked before the TLS handshake,
+  not only afterward.** A connection from an address not on the list used
+  to still be accepted and held open through a full handshake before ever
+  being refused; it is now refused immediately. A client that opens a
+  connection and sends nothing can no longer tie it up forever either
+  (previously unbounded, since the default header-read timeout never
+  actually applied), and the number of connections open at once is now
+  capped.
 - **The web interface now refuses a cross-site request outright**, before
   authentication is even attempted, so a page open in your browser on some
   other site cannot use your own still-valid access against this API.

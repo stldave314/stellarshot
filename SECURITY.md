@@ -105,7 +105,10 @@ note in the [README](README.md).
   as your own per-user systemd service — no elevated privileges, `NoNewPrivileges`,
   a private `UMask`, and a restricted address-family/file-descriptor/memory
   budget on top — and an IP allow-list can restrict it further than the
-  network scope alone does. It also notices a package upgrade replacing
+  network scope alone does, checked before the TLS handshake even starts,
+  not only afterward, with a cap on how many connections may be open at
+  once and no way for one to sit open sending nothing forever. It also
+  notices a package upgrade replacing
   its own binary and restarts itself into the new one within a minute,
   rather than an old, possibly since-fixed version running until the next
   login. See [docs/web-interface.md](docs/web-interface.md).

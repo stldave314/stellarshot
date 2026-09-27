@@ -121,6 +121,17 @@ subtle = "2"
 # A version pin, unlike every other entry, would need its own comment to
 # justify; there is none, so this tracks the latest compatible `0.8`/`0.14`.
 axum-server = { version = "0.8", features = ["tls-rustls"] }
+# `TokioTimer`, for the header-read timeout and HTTP/2 keepalive on
+# `axum_server::Server::http_builder()`'s own hyper connection builder, which
+# has none by default. Already pulled in transitively through axum-server
+# itself, at the same version; this is a direct dependency, not a second
+# copy.
+hyper-util = { version = "0.1", features = ["tokio"] }
+# Delegating `AsyncRead`/`AsyncWrite` through the web interface's own
+# accept-time allow-list/connection-cap wrapper without hand-written unsafe
+# pin projection. Already pulled in transitively; a direct dependency on
+# the same version, not a second copy.
+pin-project-lite = "0.2"
 rcgen = "0.14"
 # Per-request timeout, a body size cap, and fixed response headers
 # (`X-Content-Type-Options`, `Cache-Control`, a strict CSP) for the web

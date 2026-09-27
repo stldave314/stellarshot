@@ -98,9 +98,14 @@ Addresses or CIDR ranges (for example `192.168.1.0/24`) allowed to reach the
 web interface, on top of whatever the network scope itself already allows.
 Empty means every private address the scope allows (see
 [Turning it on](#turning-it-on)) — never literally everyone, even in the LAN
-scope, which binds every network interface on this machine. Checked before
-authentication: a request from an address not on the list never reaches far
-enough to try a password or token at all.
+scope, which binds every network interface on this machine. Checked twice:
+once before the TLS handshake even starts (a disallowed address is refused
+outright, not merely accepted and then rejected), and again before
+authentication, so a request from an address not on the list never reaches
+far enough to try a password or token at all. A connection that opens and
+sends nothing is also closed automatically, and only so many may be open
+at once — a client cannot tie up the service just by holding connections
+open.
 
 Adding or removing an entry here, and any change to the password, the API
 token, or which authentication methods are enabled, restarts the daemon

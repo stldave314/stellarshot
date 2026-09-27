@@ -300,13 +300,39 @@ async fn serve(
         return ExitCode::FAILURE;
     }
     debug_log!(WEB, "listening on {addr}");
-    let server = match axum_server::tls_rustls::from_tcp_rustls(listener, tls) {
-        Ok(server) => server,
+    let allow_at_accept = AllowListAcceptor {
+        allowed: Arc::new(config.allowed_addresses.clone()),
+        scope: config.scope,
+        connections: Arc::new(tokio::sync::Semaphore::new(
+            crate::constants::WEB_MAX_CONNECTIONS,
+        )),
+    };
+    let rustls_acceptor =
+        axum_server::tls_rustls::RustlsAcceptor::new(tls).acceptor(allow_at_accept);
+    let mut server = match axum_server::from_tcp(listener) {
+        Ok(server) => server.acceptor(rustls_acceptor),
         Err(err) => {
             error_log!(WEB, "could not start TLS on {addr}: {err}");
             return ExitCode::FAILURE;
         }
     };
+    // `axum_server` builds hyper's own connection handling with no timer at
+    // all, so hyper's usual default header-read timeout is silently
+    // dropped rather than applied: a client that opens a connection and
+    // sends nothing would otherwise tie up a file descriptor forever, and
+    // enough of those exhaust the service (see WEB-2 in the review plan).
+    server
+        .http_builder()
+        .http1()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(crate::constants::WEB_HEADER_READ_TIMEOUT);
+    server
+        .http_builder()
+        .http2()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .keep_alive_interval(Some(crate::constants::WEB_HTTP2_KEEPALIVE_INTERVAL))
+        .keep_alive_timeout(crate::constants::WEB_HTTP2_KEEPALIVE_TIMEOUT)
+        .max_concurrent_streams(crate::constants::WEB_HTTP2_MAX_CONCURRENT_STREAMS);
     let origins = allowed_origins(config.scope, port);
     let handle = axum_server::Handle::new();
     let router = app(config, origins, Arc::clone(&state))
@@ -388,6 +414,128 @@ async fn wait_for_shutdown_trigger() -> ShutdownReason {
     tokio::select! {
         () = sigterm => ShutdownReason::Signal,
         () = upgraded => ShutdownReason::Upgraded,
+    }
+}
+
+/// Enforces the allow-list, and a cap on how many connections may be open
+/// at once, before the TLS handshake even starts. `allow_list` (the
+/// middleware layer, kept as a second check) cannot run until after a full
+/// request has already been read on an established connection — reachable
+/// on the network at all is enough to open one and hold it open otherwise,
+/// which is what let about a thousand such connections exhaust the
+/// service's file descriptors (see WEB-2 in the review plan).
+#[derive(Clone)]
+struct AllowListAcceptor {
+    allowed: Arc<Vec<String>>,
+    scope: NetworkScope,
+    connections: Arc<tokio::sync::Semaphore>,
+}
+
+impl AllowListAcceptor {
+    /// The actual decision, separated from [`Accept::accept`] itself so it
+    /// can be tested directly against a plain [`IpAddr`], without a real
+    /// socket: `Err` if `addr` is not on the allow-list, or every
+    /// connection permit is already taken. The permit `Ok` carries is
+    /// reserved as part of making the decision, under the same lock the
+    /// semaphore itself already serializes on — not a separate
+    /// check-then-reserve that concurrent accepts could both pass.
+    fn decide(&self, addr: IpAddr) -> std::io::Result<tokio::sync::OwnedSemaphorePermit> {
+        if !is_allowed(&self.allowed, self.scope, addr) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "not on the allow-list",
+            ));
+        }
+        Arc::clone(&self.connections)
+            .try_acquire_owned()
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::WouldBlock, "too many open connections")
+            })
+    }
+}
+
+impl<S: Send + 'static> axum_server::accept::Accept<tokio::net::TcpStream, S>
+    for AllowListAcceptor
+{
+    type Stream = LimitedStream<tokio::net::TcpStream>;
+    type Service = S;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = std::io::Result<(Self::Stream, S)>> + Send>,
+    >;
+
+    fn accept(&self, stream: tokio::net::TcpStream, service: S) -> Self::Future {
+        let acceptor = self.clone();
+        Box::pin(async move {
+            let addr = stream.peer_addr()?;
+            let permit = acceptor.decide(addr.ip()).inspect_err(|err| {
+                debug_log!(WEB, "rejected {addr} at accept: {err}");
+            })?;
+            Ok((
+                LimitedStream {
+                    inner: stream,
+                    _permit: permit,
+                },
+                service,
+            ))
+        })
+    }
+}
+
+pin_project_lite::pin_project! {
+    /// `T`, holding `_permit` for as long as the connection itself stays
+    /// open: released back to [`AllowListAcceptor`]'s cap when this drops,
+    /// not when it was merely accepted, so a slow or abandoned connection
+    /// still counts against the cap for as long as it is actually open.
+    struct LimitedStream<T> {
+        #[pin]
+        inner: T,
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    }
+}
+
+impl<T: tokio::io::AsyncRead> tokio::io::AsyncRead for LimitedStream<T> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.project().inner.poll_read(cx, buf)
+    }
+}
+
+impl<T: tokio::io::AsyncWrite> tokio::io::AsyncWrite for LimitedStream<T> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.project().inner.poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.project().inner.poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.project().inner.poll_shutdown(cx)
+    }
+
+    fn poll_write_vectored(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.project().inner.poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
     }
 }
 
@@ -794,6 +942,90 @@ mod tests {
     #[test]
     fn the_off_scope_binds_nowhere() {
         assert_eq!(bind_address(NetworkScope::Off, 8737), None);
+    }
+
+    /// `AllowListAcceptor::decide` against a plain [`IpAddr`], not a real
+    /// socket: this sandbox's loopback networking hangs when a test both
+    /// listens and connects to itself at once (reproduced even with a
+    /// bare-minimum server, nothing specific to this code — see WEB-3's
+    /// status note in the review plan), so `decide` is deliberately
+    /// separated from [`Accept::accept`] itself to stay testable without
+    /// one. `Accept::accept`'s own extra step — `stream.peer_addr()`, then
+    /// wrapping the result in `LimitedStream` — is a thin, untested
+    /// couple of lines as a result; [`a_limited_streams_permit_is_released_exactly_once_dropped`]
+    /// covers `LimitedStream` itself directly instead, the same way.
+    #[test]
+    fn a_disallowed_peer_is_rejected() {
+        let acceptor = AllowListAcceptor {
+            allowed: Arc::new(vec!["203.0.113.1".to_owned()]),
+            scope: NetworkScope::Lan,
+            connections: Arc::new(tokio::sync::Semaphore::new(64)),
+        };
+        assert!(
+            acceptor.decide("127.0.0.1".parse().unwrap()).is_err(),
+            "127.0.0.1 is not in the allow-list"
+        );
+    }
+
+    #[test]
+    fn an_allowed_peer_past_the_connection_cap_is_still_rejected() {
+        let connections = Arc::new(tokio::sync::Semaphore::new(1));
+        // The only permit is already held, as if one connection were
+        // already open, before this one is even accepted.
+        let held = Arc::clone(&connections).try_acquire_owned().unwrap();
+        let acceptor = AllowListAcceptor {
+            allowed: Arc::new(Vec::new()),
+            scope: NetworkScope::Lan,
+            connections,
+        };
+
+        assert!(
+            acceptor.decide("127.0.0.1".parse().unwrap()).is_err(),
+            "the one permit was already taken"
+        );
+        drop(held);
+    }
+
+    #[test]
+    fn an_allowed_peer_with_a_free_permit_reserves_it() {
+        let connections = Arc::new(tokio::sync::Semaphore::new(1));
+        let acceptor = AllowListAcceptor {
+            allowed: Arc::new(Vec::new()),
+            scope: NetworkScope::Lan,
+            connections: Arc::clone(&connections),
+        };
+
+        let permit = acceptor.decide("127.0.0.1".parse().unwrap()).unwrap();
+
+        assert_eq!(connections.available_permits(), 0);
+        drop(permit);
+    }
+
+    #[tokio::test]
+    async fn a_limited_streams_permit_is_released_exactly_once_dropped() {
+        let connections = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = Arc::clone(&connections).try_acquire_owned().unwrap();
+        // An in-memory duplex pair stands in for a real connection: all
+        // `LimitedStream` needs from it is that it is some `AsyncRead` +
+        // `AsyncWrite`, which this is, without a real socket.
+        let (inner, _other_end) = tokio::io::duplex(64);
+        let limited = LimitedStream {
+            inner,
+            _permit: permit,
+        };
+        assert_eq!(
+            connections.available_permits(),
+            0,
+            "the permit should be held while the connection is open"
+        );
+
+        drop(limited);
+
+        assert_eq!(
+            connections.available_permits(),
+            1,
+            "and released once the connection itself closes"
+        );
     }
 
     #[test]

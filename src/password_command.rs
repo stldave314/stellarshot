@@ -171,11 +171,24 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         let grandchild_pid = std::fs::read_to_string(&marker).unwrap().trim().to_owned();
-        let still_alive = std::process::Command::new("kill")
-            .args(["-0", &grandchild_pid])
-            .status()
-            .unwrap()
-            .success();
+        // The SIGKILL lands immediately, but the grandchild stays visible to
+        // `kill -0` as a zombie until whatever it reparents to reaps it —
+        // under a busy `cargo test` run with hundreds of tests contending for
+        // CPU, that can lag well past the instant the signal was sent. Poll
+        // with the same patience as the marker wait above instead of
+        // checking once right away.
+        let mut still_alive = true;
+        for _ in 0..50 {
+            still_alive = std::process::Command::new("kill")
+                .args(["-0", &grandchild_pid])
+                .status()
+                .unwrap()
+                .success();
+            if !still_alive {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         let _ = std::fs::remove_file(&marker);
         assert!(
             !still_alive,

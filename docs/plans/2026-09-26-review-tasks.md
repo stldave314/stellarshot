@@ -2872,6 +2872,34 @@ the old code, and be listed in `VALIDATION.md`:
 
 ### TST-2. Tests that touch the developer's real state
 
+**Status: 3 of 4 done.** Confirmed the cache claim first, as suggested:
+`~/.cache/rustic` held 5090 entries, accumulated purely from this session's
+own test runs. Fixed at the one real choke point both `init` and `open` go
+through (`unopened()` in `repo.rs`), gated by a new `test-support` feature a
+self-referential dev-dependency enables for every test binary — unit and
+integration alike, with nothing to remember in any individual test file.
+Verified with a real before/after count across 73 repository-creating
+tests: zero new entries, where every previous run had added some.
+`settings_export.rs`'s history-merge test moved to its own integration
+binary (`tests/settings_export_history.rs`) with a temp `XDG_STATE_HOME`,
+the same isolation `tests/rclone_credentials.rs` already needed for `PATH`.
+`tests/keyring.rs`'s web-password test now catches a panic from its own
+checks, restores the real password either way, then resumes the panic.
+69 stray `event-log-*` entries this session's own earlier runs had already
+left in the real state store were removed, checked one by one against the
+one real profile's own ID first so nothing genuine was touched.
+
+**Not done:** `web/routes.rs`'s
+`starting_a_backup_records_it_in_the_history_under_the_web_source` still
+writes into the real history store. Its fixture (`real_backup_with_id`,
+`spawn`, `post_json`, `wait_for_a_second_snapshot`) is private to that
+file's own test module and shared by many other tests there; extracting
+just this one test would mean either duplicating that fixture or exposing
+it as new public test-support surface, disproportionate to what a stray,
+harmless (never colliding with a real profile, per its own random UUID)
+leftover key actually costs. Left as a disclosed, accepted gap rather than
+force a larger refactor.
+
 **Medium · S · Verified**
 
 - `settings_export.rs:244-263`
@@ -2892,6 +2920,28 @@ binary) for the first two. Use a drop guard in the keyring test. Call
 `cache_settings::set(None, true)` in the engine test fixture.
 
 ### TST-3. REST tests never run
+
+**Status: Not un-ignored yet; two of the three original leads already
+disproven by a prior pass through this file's own doc comments (not this
+session's — found already in place), and one real gap in the retry harness
+fixed this session.** `spawn_server`'s own readiness-probe panic used to
+happen outside `retrying()`'s `catch_unwind`, so a server that never
+reached "listening" in time skipped both the retry and the captured
+`rustic-server.log` a failed *request* already got — the one failure mode
+this harness had nothing to show for. Fixed by moving the call inside the
+same `catch_unwind`.
+
+Tried running these locally to make progress on the real CI-only `Connect`
+error next, expecting them to pass (the existing comment says they do, "run
+by hand on this project's own development machine") — instead hit a third,
+different failure ("did not start listening in time") under this
+particular sandbox's own heavy swap/fd pressure at the time (the same
+resource pressure [[feedback_resource-pressure-pause]] already documents
+recurring for the `web::` tests that same evening), not the CI-only
+`Connect` error this task is actually about. Didn't draw any conclusion
+about the real bug from a run known to be contaminated by that. Still
+open: get a real CI run of these (`--ignored`) with a healthy local run
+alongside it to compare, and read the now-more-complete captured log.
 
 **Medium · M · Verified**
 

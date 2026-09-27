@@ -128,6 +128,21 @@ fn poisoned() -> Box<RusticError> {
     RusticError::new(ErrorKind::Internal, "An upload worker panicked.")
 }
 
+/// A caught panic payload, as a [`RusticError`] naming which pack it
+/// happened on — reported and recorded exactly like an upload that
+/// returned `Err` instead of panicking.
+fn panic_error(id: Id, payload: Box<dyn std::any::Any + Send>) -> Box<RusticError> {
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_owned())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "the panic carried no message".to_owned());
+    RusticError::new(
+        ErrorKind::Internal,
+        format!("upload of pack {id} panicked: {message}"),
+    )
+}
+
 /// A worker: take packs off the queue and upload them until it closes.
 fn work(
     inner: &dyn WriteBackend,
@@ -145,8 +160,20 @@ fn work(
             return;
         };
         let size = upload.content.size() as u64;
-        let result =
-            inner.write_bytes(FileType::Pack, &upload.id, upload.cacheable, upload.content);
+        let id = upload.id;
+        // A panic inside a foreign backend's own `write_bytes` (rclone's
+        // process handling, a filesystem edge case) must not unwind past
+        // this point: nothing below here would run, `in_flight` would
+        // never go back down, and — since no lock is held while the write
+        // itself is in progress — nothing would even be poisoned to reveal
+        // it, leaving `settle`/`Drop` waiting on the condvar forever for an
+        // upload that will never finish. Caught and turned into the same
+        // kind of failure a returned `Err` already is, so the rest of this
+        // function needs no separate panic-handling path of its own.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            inner.write_bytes(FileType::Pack, &upload.id, upload.cacheable, upload.content)
+        }))
+        .unwrap_or_else(|payload| Err(panic_error(id, payload)));
         // Reported before the upload counts as finished, and outside the
         // lock, so progress output never holds up the other workers.
         if result.is_ok() {
@@ -156,7 +183,7 @@ fn work(
         if let Ok(mut state) = lock.lock() {
             state.in_flight -= 1;
             if let Err(err) = result {
-                debug_log!(ENGINE, "upload of pack {} failed: {err}", upload.id);
+                debug_log!(ENGINE, "upload of pack {id} failed: {err}");
                 if state.failure.is_none() && !state.failed {
                     state.failure = Some(err);
                 }
@@ -293,6 +320,11 @@ mod tests {
         files: Mutex<Vec<(FileType, Id, usize)>>,
         /// Fail the pack write with this number (counting from 1).
         fail_pack: Option<usize>,
+        /// Panic on the pack write with this number (counting from 1),
+        /// instead of returning `Err` — REL-7's own scenario: a worker
+        /// unwinding out of `write_bytes` entirely, rather than merely
+        /// reporting a failure it caught itself.
+        panic_pack: Option<usize>,
         packs: AtomicUsize,
         busy: AtomicUsize,
         most_busy: AtomicUsize,
@@ -347,6 +379,9 @@ mod tests {
                         ErrorKind::Backend,
                         "the network went away",
                     ));
+                }
+                if Some(number) == self.panic_pack {
+                    panic!("the network went very, very away");
                 }
             }
             self.files.lock().unwrap().push((tpe, *id, content.size()));
@@ -436,5 +471,39 @@ mod tests {
 
         let files = slow.files.lock().unwrap();
         assert!(files.iter().all(|(kind, _, _)| *kind == FileType::Pack));
+    }
+
+    /// REL-7: a worker whose pack write panics, rather than returning
+    /// `Err`, used to unwind straight out of `work` before `in_flight` was
+    /// decremented — with no lock held while the write itself ran, nothing
+    /// was even poisoned to reveal it, so `settle` (called here by the
+    /// index write) waited on the condvar forever. Run on its own thread
+    /// with `recv_timeout` specifically so a regression hangs this one
+    /// assertion, not the whole test binary.
+    #[test]
+    fn a_panicking_upload_fails_the_index_rather_than_hanging_forever() {
+        let slow = Arc::new(Slow {
+            delay: Duration::from_millis(20),
+            panic_pack: Some(2),
+            ..Slow::default()
+        });
+        let uploads = ParallelUploads::with_connections(slow.clone(), SinkSlot::default(), 2);
+        for n in 0..4 {
+            let _ = uploads.write_bytes(FileType::Pack, &id(n), false, pack(n));
+        }
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = uploads.write_bytes(FileType::Index, &id(100), true, pack(100));
+            let _ = sender.send(result);
+        });
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("settle() must not hang forever just because a worker panicked");
+        assert!(
+            result.is_err(),
+            "the index must not name a pack whose upload panicked"
+        );
     }
 }

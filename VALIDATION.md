@@ -58,9 +58,10 @@ and a mode-0600 file.
 | `backup_reports_progress_ending_at_the_total` | Progress reports every byte of every regular file |
 | `throttle_sends_first_and_final` (`progress.rs`) | 1,000 rapid increments produce few reports, and the last one is exact |
 | `a_finished_upload_repeats_the_last_event_with_the_bytes_stored` (`progress.rs`) | A finished upload is reported even while reading stands still, so the progress card keeps moving |
-| `packs_upload_side_by_side` (`uploads.rs`) | Eight packs to storage that takes 200 ms per write go four at a time: four writes are seen in flight together, and the whole takes well under the 1.6 s one at a time would |
+| `packs_upload_side_by_side` (`uploads.rs`) | Eight packs to storage that takes 200 ms per write go four at a time: at some point during the run, four writes were genuinely in flight together (`most_busy == 4`), which sequential uploads could never produce regardless of how fast they ran — an elapsed-time assertion used to stand in for this and flaked on a busy runner for reasons that had nothing to do with whether uploads were actually concurrent |
 | `an_index_is_written_only_after_every_pack_arrived` (`uploads.rs`) | Writing an index waits for every pack in flight: all six are stored when it returns |
 | `a_failed_upload_fails_the_index_and_everything_after_it` (`uploads.rs`) | When one pack upload fails, the index write fails, so no index can name a missing pack, and so does every write after it; only packs reach the storage |
+| `a_panicking_upload_fails_the_index_rather_than_hanging_forever` (`uploads.rs`) | REL-7: a worker whose pack write *panics*, rather than returning `Err`, no longer unwinds past the `in_flight` bookkeeping and leaves `settle`/`Drop` waiting on the condvar forever — the index write returns `Err` (not a hang) within a 2-second `recv_timeout`, run on its own thread so a regression would hang only that one assertion |
 
 ### Browsing and restoring (`src/engine/tests.rs`)
 

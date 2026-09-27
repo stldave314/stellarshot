@@ -156,6 +156,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer hangs forever.** Its diagnostic output is now read continuously in
   the background instead of only after it finishes, so it can no longer fill
   up and block the backup mid-run.
+- **A pack upload that panics instead of merely failing no longer hangs the
+  backup forever.** The panic is now caught and treated as the same kind of
+  failure a returned error already was.
 - **An excluded path containing a wildcard character (`*`, `?`, `[`) in its
   actual name is now excluded correctly**, instead of being interpreted as a
   pattern that could match unrelated files — or, in one case, the backup's

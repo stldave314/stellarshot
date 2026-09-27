@@ -1563,6 +1563,16 @@ can't get it back" is a serious defect.
 
 ### REL-7. A panicking upload worker deadlocks the backup
 
+**Status: Done.** `work` now wraps the pack write in `catch_unwind`; a
+panic is turned into the same kind of `RusticError` a returned `Err`
+already is (`panic_error`), so the existing `in_flight -= 1`/`notify_all`
+code below it always runs — no separate drop guard needed, since nothing
+between the write and that code can unwind anymore, and the worker thread
+itself survives to keep taking packs rather than being lost from the
+pool. Proven with a real panic (not a returned `Err`) inside a test
+backend's `write_bytes`, on its own thread with `recv_timeout(2s)` so a
+regression hangs that one assertion rather than the whole test binary.
+
 **Medium · S · Verified**
 
 **Files:** `src/engine/uploads.rs:107-167,269-280`

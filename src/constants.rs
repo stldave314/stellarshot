@@ -141,6 +141,23 @@ pub const WEB_REPOSITORY_REQUEST_PERMITS: usize = 2;
 /// exits anyway. Comfortably under the unit's own `TimeoutStopSec`, so
 /// systemd never has to force it.
 pub const WEB_GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How often the web daemon checks whether its own binary has been
+/// replaced (a package upgrade), so it can exit and let `Restart=` start
+/// the new one instead of quietly running old code until the next login.
+pub const WEB_UPGRADE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// `stellarshot-web.service`'s own hardening, kept together so a value used
+/// in the unit text and asserted on in `web_daemon.rs`'s own test cannot
+/// drift apart. Restarting every 5 seconds forever (the previous
+/// `RestartSec`, with no start limit at all) turns a daemon that cannot
+/// even start — a bad TLS path, the port already in use, the binary
+/// removed — into a tight, endless restart loop instead of settling into
+/// `failed` the way a one-shot problem should.
+pub const WEB_UNIT_START_LIMIT_INTERVAL_SECS: u32 = 300;
+pub const WEB_UNIT_START_LIMIT_BURST: u32 = 5;
+pub const WEB_UNIT_RESTART_SECS: u32 = 30;
+pub const WEB_UNIT_LIMIT_NOFILE: u32 = 1024;
+pub const WEB_UNIT_MEMORY_MAX: &str = "1G";
 
 /// Shortest password Settings accepts for the web interface's shared
 /// password (OWASP ASVS 5.0 §6.2's minimum for a user-chosen password with

@@ -102,9 +102,13 @@ note in the [README](README.md).
   not come from this daemon's own origin is refused outright, before
   authentication is even attempted — see
   [Cross-site requests](docs/web-interface.md#cross-site-requests). It runs
-  as your own per-user systemd service — no elevated privileges — and an IP
-  allow-list can restrict it further than the network scope alone does. See
-  [docs/web-interface.md](docs/web-interface.md).
+  as your own per-user systemd service — no elevated privileges, `NoNewPrivileges`,
+  a private `UMask`, and a restricted address-family/file-descriptor/memory
+  budget on top — and an IP allow-list can restrict it further than the
+  network scope alone does. It also notices a package upgrade replacing
+  its own binary and restarts itself into the new one within a minute,
+  rather than an old, possibly since-fixed version running until the next
+  login. See [docs/web-interface.md](docs/web-interface.md).
 
 ## What it does not protect against
 

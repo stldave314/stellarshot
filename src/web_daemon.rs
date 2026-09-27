@@ -54,18 +54,34 @@ fn unit_dir() -> Option<PathBuf> {
 }
 
 fn service_text(executable: &Path) -> Option<String> {
+    use crate::constants::{
+        WEB_GRACEFUL_SHUTDOWN_TIMEOUT, WEB_UNIT_LIMIT_NOFILE, WEB_UNIT_MEMORY_MAX,
+        WEB_UNIT_RESTART_SECS, WEB_UNIT_START_LIMIT_BURST, WEB_UNIT_START_LIMIT_INTERVAL_SECS,
+    };
     let exec = exec_quote(executable)?;
+    // `TimeoutStopSec` is double the graceful-shutdown window `web::serve`
+    // itself waits out (see WEB-8), so systemd never has to force-kill a
+    // shutdown that is still within its own budget.
+    let timeout_stop = WEB_GRACEFUL_SHUTDOWN_TIMEOUT.as_secs() * 2;
     Some(format!(
         "# Written by Stellarshot; changes are overwritten.\n\
          [Unit]\n\
          Description=Stellarshot web interface\n\
+         StartLimitIntervalSec={WEB_UNIT_START_LIMIT_INTERVAL_SECS}\n\
+         StartLimitBurst={WEB_UNIT_START_LIMIT_BURST}\n\
          \n\
          [Service]\n\
          Type=simple\n\
          ExecStart={exec}\n\
          Restart=on-failure\n\
-         RestartSec=5\n\
-         TimeoutStopSec=60\n\
+         RestartSec={WEB_UNIT_RESTART_SECS}\n\
+         TimeoutStopSec={timeout_stop}\n\
+         NoNewPrivileges=yes\n\
+         UMask=0077\n\
+         LockPersonality=yes\n\
+         RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n\
+         LimitNOFILE={WEB_UNIT_LIMIT_NOFILE}\n\
+         MemoryMax={WEB_UNIT_MEMORY_MAX}\n\
          \n\
          [Install]\n\
          WantedBy=default.target\n"
@@ -221,6 +237,24 @@ mod tests {
         assert!(text.contains("Restart=on-failure\n"));
         assert!(text.contains("TimeoutStopSec=60\n"));
         assert!(text.contains("WantedBy=default.target\n"));
+    }
+
+    /// A daemon that cannot even start (a bad TLS path, the port already
+    /// taken, the binary removed) must settle into `failed`, not restart
+    /// every few seconds forever — the start limit and the hardening below
+    /// it are what `Restart=on-failure` alone does not provide.
+    #[test]
+    fn the_service_is_hardened_against_a_restart_loop_and_privilege_escalation() {
+        let text = service_text(Path::new("/usr/bin/stellarshot-web")).unwrap();
+        assert!(text.contains("StartLimitIntervalSec=300\n"));
+        assert!(text.contains("StartLimitBurst=5\n"));
+        assert!(text.contains("RestartSec=30\n"));
+        assert!(text.contains("NoNewPrivileges=yes\n"));
+        assert!(text.contains("UMask=0077\n"));
+        assert!(text.contains("LockPersonality=yes\n"));
+        assert!(text.contains("RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\n"));
+        assert!(text.contains("LimitNOFILE=1024\n"));
+        assert!(text.contains("MemoryMax=1G\n"));
     }
 
     #[test]

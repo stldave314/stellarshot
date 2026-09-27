@@ -148,6 +148,10 @@ cmd_uninstall() {
     as_root rm -rf "$PREFIX/share/licenses/$BIN_APP"
     as_root update-desktop-database "$PREFIX/share/applications" 2>/dev/null || true
     info "Removed. Settings in ~/.config/cosmic/$APP_ID and every repository were kept."
+    warn "Any per-user systemd unit (the web interface, a scheduled backup) is left" \
+        "running and installed, since it belongs to your user account, not this" \
+        "prefix. Stop and remove them yourself if you want to:"
+    warn "  systemctl --user disable --now 'stellarshot*'"
 }
 
 cmd_deb() {

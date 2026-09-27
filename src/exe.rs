@@ -24,6 +24,19 @@ pub fn installed_path() -> Result<PathBuf, std::io::Error> {
     Ok(strip_deleted_marker(&path).unwrap_or(path))
 }
 
+/// Whether this process's own binary has been replaced since it started —
+/// a package upgrade unlinked the file it was executing from, so
+/// `/proc/self/exe`'s target now carries the marker [`installed_path`]
+/// strips. A long-running process (the web daemon) polls this to notice an
+/// upgrade landed and exit for `Restart=` to pick up the new binary,
+/// something a short-lived one (a wizard step, a scheduled run) never
+/// needs to ask since it is done before an upgrade could matter.
+pub fn was_replaced() -> bool {
+    std::env::current_exe()
+        .ok()
+        .is_some_and(|path| strip_deleted_marker(&path).is_some())
+}
+
 /// `path` with the kernel's `" (deleted)"` marker removed, comparing as an
 /// `OsStr` rather than a lossy string.
 fn strip_deleted_marker(path: &Path) -> Option<PathBuf> {

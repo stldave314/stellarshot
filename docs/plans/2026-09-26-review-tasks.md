@@ -997,6 +997,27 @@ RSS (`ps -o rss`) stays bounded and extra requests get 503.
 
 ### WEB-10. Service unit hardening and upgrade handling
 
+**Status: Done.** `service_text` adds `StartLimitIntervalSec=300`/
+`StartLimitBurst=5`, `RestartSec=30` (was 5), `NoNewPrivileges=yes`,
+`UMask=0077`, `LockPersonality=yes`,
+`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` (`AF_UNIX` for the
+keyring's D-Bus session-bus connection), `LimitNOFILE=1024`,
+`MemoryMax=1G` — values kept in `constants.rs`, asserted on directly in a
+new `web_daemon` test. Added `exe::was_replaced`, checked every
+`WEB_UPGRADE_POLL_INTERVAL` (60s) by the same `wait_then_drain` WEB-8
+built for SIGTERM, now generalized to either trigger
+(`ShutdownReason::Signal`/`Upgraded`): an upgrade drains in-flight work the
+same way a signal does, then exits with a distinct non-zero code (`75`) so
+`Restart=on-failure` actually restarts into the new binary rather than the
+process quietly running old code until the next login. `install.sh
+uninstall` now prints the `systemctl --user disable --now 'stellarshot*'`
+cleanup command (as a suggestion, not run automatically — uninstall
+otherwise never touches anything outside the install prefix, and per-user
+systemd units belong to the account, not the prefix). Not run tonight:
+the live "point the TLS certificate at a missing file… ends in `failed`"
+and "replace the binary; the main PID changes within a minute" proofs
+(need a real running daemon and systemd).
+
 **Low · S · Verified**
 
 **Files:** `src/web_daemon.rs:56-72`, `install.sh:118-132`

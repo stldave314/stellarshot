@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only on the next manual restart — a regenerated token's old value used to
   keep working, and a removed allow-list entry used to keep reaching the
   daemon, until then.
+- **The web interface's service now notices when it has been replaced by a
+  package upgrade** and restarts itself into the new binary within a
+  minute, instead of quietly running the old one until the next login.
+- **A daemon that cannot even start no longer restarts every 5 seconds
+  forever.** It settles into a failed state after a few tries, and the
+  service is hardened further (no new privileges, a private `UMask`, and a
+  memory and open-file cap). `install.sh uninstall` now also prints the
+  command to remove any per-user systemd unit it leaves behind.
 - **Starting a backup that is already running over the web interface now
   answers `409`** instead of starting a second one that would only fail
   later, having run the password command again for nothing.

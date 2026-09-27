@@ -312,11 +312,16 @@ async fn serve(
     let router = app(config, origins, Arc::clone(&state))
         .into_make_service_with_connect_info::<SocketAddr>();
     let serving = server.handle(handle.clone()).serve(router);
-    let shutdown = wait_for_sigterm_then_drain(handle, state);
-    let (result, ()) = tokio::join!(serving, shutdown);
+    let shutdown = wait_then_drain(handle, state);
+    let (result, reason) = tokio::join!(serving, shutdown);
     if let Err(err) = result {
         error_log!(WEB, "server stopped: {err}");
         return ExitCode::FAILURE;
+    }
+    if reason == ShutdownReason::Upgraded {
+        // Not a failure — `Restart=on-failure` just needs a non-zero exit
+        // to actually restart into the binary that replaced this one.
+        return ExitCode::from(75);
     }
     ExitCode::SUCCESS
 }
@@ -327,22 +332,63 @@ async fn serve(
 /// to finish, rather than the previous behavior — nothing caught the
 /// signal at all, so the default action killed the process (and whatever
 /// backup it had started) with no chance to record anything.
-async fn wait_for_sigterm_then_drain(
+/// Why [`wait_then_drain`] returned: whether the process should exit as if
+/// nothing went wrong (a normal stop) or with a distinct, non-zero code so
+/// `Restart=on-failure` actually restarts it into the binary that replaced
+/// this one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShutdownReason {
+    Signal,
+    Upgraded,
+}
+
+/// Waits for either trigger, then drains in-flight work the same way for
+/// both: SIGTERM (sent by `systemctl stop`/`restart`, including the WEB-1
+/// restart-on-settings-change) had no handler at all before this — nothing
+/// caught it, so the default action killed the process, and whatever
+/// backup it had started, with no chance to record anything. A package
+/// upgrade unlinking this process's own binary is the same shape of
+/// problem with no signal to catch at all, so it is polled for instead
+/// ([`crate::exe::was_replaced`]).
+async fn wait_then_drain(
     handle: axum_server::Handle<SocketAddr>,
     state: Arc<routes::AppState>,
-) {
-    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-    {
-        Ok(signal) => signal,
-        Err(err) => {
-            error_log!(WEB, "could not install a SIGTERM handler: {err}");
-            return;
-        }
-    };
-    sigterm.recv().await;
-    debug_log!(WEB, "received SIGTERM; draining in-flight work");
+) -> ShutdownReason {
+    let reason = wait_for_shutdown_trigger().await;
+    debug_log!(WEB, "shutting down ({reason:?}); draining in-flight work");
     handle.graceful_shutdown(Some(crate::constants::WEB_GRACEFUL_SHUTDOWN_TIMEOUT));
     routes::drain_running_jobs(&state, crate::constants::WEB_GRACEFUL_SHUTDOWN_TIMEOUT).await;
+    reason
+}
+
+async fn wait_for_shutdown_trigger() -> ShutdownReason {
+    let sigterm = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(err) => {
+                error_log!(WEB, "could not install a SIGTERM handler: {err}");
+                // No way to be told to stop by signal now; still worth
+                // running so an upgrade is still noticed, but this arm
+                // must never win a `select!` against one that can.
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    let upgraded = async {
+        let mut interval = tokio::time::interval(crate::constants::WEB_UPGRADE_POLL_INTERVAL);
+        loop {
+            interval.tick().await;
+            if crate::exe::was_replaced() {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        () = sigterm => ShutdownReason::Signal,
+        () = upgraded => ShutdownReason::Upgraded,
+    }
 }
 
 async fn health() -> impl IntoResponse {

@@ -5,7 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-09-27
+
+A full security and reliability audit: hardening across secrets handling,
+the web interface, and file safety, plus the web interface actually
+reachable end to end for the first time — a systemd service, HTTPS with a
+real certificate, lockout protection, and a route to start an existing
+backup.
 
 ### Security
 

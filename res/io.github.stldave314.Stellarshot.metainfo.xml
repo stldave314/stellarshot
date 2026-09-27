@@ -66,6 +66,22 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.7.0" date="2026-09-27">
+      <description>
+        <p>A full security and reliability audit, and the web interface
+        actually reachable end to end for the first time.</p>
+        <ul>
+          <li>The web interface runs as its own systemd service, always reached over HTTPS, with a Start/Stop/Restart control and status in Settings</li>
+          <li>A new REST route starts an existing backup, the same as Back Up Now on the desktop</li>
+          <li>Repeated wrong passwords or tokens now lock an address out for longer each time, instead of the same short window every time</li>
+          <li>Changing the web interface's password, token, or allow-list now takes effect immediately, not just on the next restart</li>
+          <li>The repository password is wiped from memory as soon as it is no longer needed, and a crash can no longer write it to a core dump</li>
+          <li>A snapshot from a shared repository can no longer write outside the folder you chose when restoring</li>
+          <li>Importing a settings file from someone else can no longer run a command of its own</li>
+          <li>Opening a large file from a mounted snapshot, or downloading a folder, no longer reads it whole into memory first</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-09-26">
       <description>
         <p>Getting more out of a backup, and the start of a web interface.</p>

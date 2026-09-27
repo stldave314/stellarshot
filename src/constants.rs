@@ -28,6 +28,20 @@ pub const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_mil
 /// pipe open longer is a process it left behind.
 pub const DRAIN_AFTER_EXIT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How much of a `--run` child's stderr is kept while it runs (its tracing
+/// writes one line per unreadable file, per ownership failure on restore,
+/// and per line of rclone's own stderr). Older bytes are discarded as new
+/// ones arrive, rather than buffered without bound, and rather than left in
+/// the pipe until the child exits: a pipe's buffer is much smaller than
+/// this, and a child blocked writing to a full one would hold the
+/// repository lock for as long as nothing drains it.
+pub const CHILD_STDERR_TAIL: usize = 16 * 1024;
+
+/// How much of that tail reaches an error message or the event log. Capped
+/// well below `CHILD_STDERR_TAIL` so one very talkative failure cannot
+/// flood either.
+pub const CHILD_STDERR_DETAIL: usize = 4 * 1024;
+
 /// Pack files uploaded at once to storage reached through rclone (SFTP and
 /// cloud storage). rustic uploads one at a time, which leaves a slow
 /// connection idle between packs; restic's rclone backend uses 5. Each
@@ -94,3 +108,49 @@ pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3
 /// How long a scheduled run waits for the user to click its failure
 /// notification before exiting. Clicking opens the backup in Stellarshot.
 pub const NOTIFICATION_WAIT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// How long the web interface's server waits for a client to finish sending
+/// its request headers before giving up on the connection. Without an
+/// explicit timer, `axum_server`'s TLS listener has none at all (only a
+/// `warn!` that the default was dropped), so a client that opens a
+/// connection and sends nothing ties up a file descriptor forever — enough
+/// of those exhaust the service.
+pub const WEB_HEADER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub const WEB_HTTP2_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+pub const WEB_HTTP2_KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub const WEB_HTTP2_MAX_CONCURRENT_STREAMS: u32 = 32;
+/// Connections held open at once, across every client: past this, a new one
+/// is refused rather than accepted and left to queue behind the rest.
+pub const WEB_MAX_CONNECTIONS: usize = 64;
+/// How long a request may take end to end before the server gives up on it.
+pub const WEB_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// The API takes no request bodies today; large enough for one that
+/// legitimately needs a small JSON object later, nowhere near enough to let
+/// a client tie up memory with an oversized one.
+pub const WEB_REQUEST_BODY_LIMIT: usize = 16 * 1024;
+/// Requests that open a repository (snapshots, browsing) held at once, so a
+/// slow remote cannot tie up an unbounded number of blocking threads or
+/// multiply memory use under parallel load.
+pub const WEB_REPOSITORY_REQUEST_PERMITS: usize = 2;
+
+/// Shortest password Settings accepts for the web interface's shared
+/// password (OWASP ASVS 5.0 §6.2's minimum for a user-chosen password with
+/// no other strength check). The only rule before this was "not empty".
+pub const WEB_PASSWORD_MIN_LENGTH: usize = 12;
+
+/// The private address ranges an empty allow-list falls back to in `Lan`
+/// scope, and the ranges a cross-site `Origin` check also treats as
+/// same-machine-or-LAN rather than the public internet. IPv4 private ranges
+/// (RFC 1918), link-local (RFC 3927), unique local IPv6 (RFC 4193) and IPv6
+/// link-local: never the whole internet, even though the daemon is bound to
+/// every interface.
+pub const WEB_PRIVATE_RANGES: &[&str] = &[
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "127.0.0.0/8",
+    "fc00::/7",
+    "fe80::/10",
+    "::1/128",
+];

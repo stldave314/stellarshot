@@ -114,7 +114,7 @@ the top, then reports an error instead of looping.
 | Test | What it proves |
 | --- | --- |
 | `a_folder_marked_as_a_cache_is_excluded` | A folder holding a `CACHEDIR.TAG` file is left out whole |
-| `a_projects_own_gitignore_is_honoured_without_needing_a_git_repository` | A plain `.gitignore`, with no `.git` folder at all, still excludes what it lists; the `.gitignore` file itself is still backed up |
+| `a_projects_own_gitignore_is_honored_without_needing_a_git_repository` | A plain `.gitignore`, with no `.git` folder at all, still excludes what it lists; the `.gitignore` file itself is still backed up |
 | `files_larger_than_the_limit_are_excluded`, `case_insensitive_patterns_match_either_case`, `patterns_kept_in_a_file_are_applied` | The three extra exclusion rules each work; the case-insensitive and file-based ones needed a leading `!` added by Stellarshot itself, caught by a first version of the test failing because the unmodified pattern restricted the backup to only the excluded files instead of leaving them out |
 | `an_unchanged_backup_is_skipped_when_asked` | Backing up twice with nothing changed adds no second snapshot; a real change afterward still is recorded |
 | `a_dry_run_reports_size_without_writing_anything` | A dry run reports the size it would add and leaves the repository with no snapshot; a real backup right after adds exactly that much |
@@ -190,7 +190,7 @@ noted honestly in ROADMAP.md rather than claimed as verified live.
 | --- | --- |
 | `files_are_sized_by_their_own_length`, `a_folders_size_is_everything_under_it`, `largest_comes_first` (`src/engine/disk_tree.rs`) | A file's size is its own length; a folder's is the real sum of everything under it, against a real temporary tree; rows come back largest first |
 | `a_symlink_counts_its_own_size_and_is_never_followed`, `a_symlink_cycle_does_not_hang` (`src/engine/disk_tree.rs`) | A symlink is sized as itself, not the target, and is never walked into — checked against a real symlink cycle (a folder linking back to its own ancestor), which a walk that did follow symlinks would spin on forever rather than return from |
-| `cancelling_stops_the_walk`, `an_unreadable_root_reports_an_error_not_an_empty_list` (`src/engine/disk_tree.rs`) | A set cancel flag stops a walk in progress rather than being ignored; a folder that cannot even be opened is a real error, not silently reported as holding nothing |
+| `canceling_stops_the_walk`, `an_unreadable_root_reports_an_error_not_an_empty_list` (`src/engine/disk_tree.rs`) | A set cancel flag stops a walk in progress rather than being ignored; a folder that cannot even be opened is a real error, not silently reported as holding nothing |
 | `opening_lists_the_root`, `toggling_an_unlisted_folder_requests_its_children`, `toggling_an_expanded_folder_collapses_it_without_a_new_request`, `marking_bubbles_up_rather_than_being_applied_here` (`src/app/wizard/browse.rs`) | Opening the browser requests the root's own children; expanding an unlisted folder asks for its children exactly once, not again if it is already expanded or already loading; collapsing needs no new request; marking a folder excluded is not applied by this module itself, only handed up to the wizard that owns the actual exclude list |
 | `mark_of_a_plain_folder_is_included`, `mark_of_a_listed_exclude_is_excluded`, `mark_of_an_ancestor_of_an_exclude_is_partial`, `mark_of_an_unrelated_folder_is_included` (`src/app/wizard/browse.rs`) | The three-way mark (Included / Excluded / Partly included) matches the wizard's own exclude list correctly in each case, including a folder that is not itself excluded but has an exclusion somewhere inside it |
 | `excluded_bytes_sums_every_known_excluded_descendant`, `excluded_bytes_is_zero_for_an_exclude_never_sized_this_session` (`src/app/wizard/browse.rs`) | A folder's shown size is reduced by whatever excluded descendant has actually been sized (which includes every folder right under an already-open root, the common case), and stays unreduced — not guessed at — for one that never was |
@@ -243,12 +243,13 @@ The settings surface for a planned web interface and REST API: a network scope, 
 | `the_web_interface_defaults_to_off` (`src/app/config.rs`) | A fresh config, or one saved before this setting existed, always comes up with the network scope off — never silently listening by default |
 | `a_generated_tokens_hash_verifies_it`, `a_wrong_token_does_not_verify`, `two_generated_tokens_are_never_the_same`, `the_hash_never_equals_the_raw_token` (`src/web_token.rs`) | A generated API token's hash verifies exactly that token and no other, two generated tokens never collide, and the stored hash is never mistakable for the raw token itself |
 | `web_password_round_trip` (`tests/keyring.rs`) | The web interface's shared password round-trips through a real Secret Service (GNOME Keyring, unlocked, in this sandbox) — stored, read back, replaced, and restored to whatever was there before the test ran, since this secret (unlike a profile's) has no ID of its own to test against safely |
+| `the_web_interface_off_has_no_address_to_show`, `localhost_scope_points_at_the_loopback_address`, `lan_scope_points_at_this_machine_s_mdns_name` (`src/app.rs`) | The address shown on the Settings page for each scope: nothing when off, `127.0.0.1` and the port for localhost, this machine's `.local` mDNS name and the port for LAN. Found from a real report: turning the web interface on gave no indication anywhere of what to connect to |
 
-Not covered by an automated test: the Settings page's own new controls in `src/app.rs` (the scope radio buttons, the two toggles-with-detail for password and token, the allow-list add/remove row) — UI wiring, following the same pattern as every other settings control already in this section. Not proven at all: PAM authentication itself. Its checkbox exists and its setting persists, but nothing calls into PAM yet; whether verifying a Linux user's own password from an unprivileged per-user service actually works (via `pam_unix`'s `unix_chkpwd` helper, which by design only checks the calling user's own password) is design research recorded in ROADMAP.md, not a running, tested code path.
+Not covered by an automated test: the Settings page's own new controls in `src/app.rs` (the scope radio buttons, the two toggles-with-detail for password and token, the allow-list add/remove row) — UI wiring, following the same pattern as every other settings control already in this section. Also from a real report: saving the shared password gave no feedback beyond the field clearing itself, indistinguishable from nothing happening — fixed with a confirmation dialog on success, the same `Dialog::Info` already used for a generated API token. Not proven at all: PAM authentication itself. Its checkbox exists and its setting persists, but nothing calls into PAM yet; whether verifying a Linux user's own password from an unprivileged per-user service actually works (via `pam_unix`'s `unix_chkpwd` helper, which by design only checks the calling user's own password) is design research recorded in ROADMAP.md, not a running, tested code path.
 
 ### The web interface's own daemon (`src/web.rs`, `src/bin/web.rs`, `src/web_token.rs`)
 
-The `stellarshot-web` binary: binds according to the network scope setting, enforces the IP allow-list, then checks authentication — password and token for real, PAM not wired up yet — ahead of the one route that exists (a health check). Order matters and is proven, not assumed: the allow-list runs before authentication, so an address that was never going to be let in is rejected before its credentials are even looked at.
+The `stellarshot-web` binary: binds according to the network scope and port settings, enforces the IP allow-list, then checks authentication — password and token for real, PAM not wired up yet, throttled per address after repeated failures — ahead of every route, including the health check. Order matters and is proven, not assumed: the allow-list runs before authentication, so an address that was never going to be let in is rejected before its credentials are even looked at.
 
 | Test | What it proves |
 | --- | --- |
@@ -260,11 +261,92 @@ The `stellarshot-web` binary: binds according to the network scope setting, enfo
 
 Beyond the automated tests, this was verified against the actual compiled binary, isolating the layer under test the way a directory-permission claim needs isolating from a web-server config claim. With the allow-list empty and scope set to `Localhost`: `curl` with no credentials returned a real `200` (before authentication existed) or a real `401` (after); `curl` against the machine's own LAN address on the same port was refused outright (`Connection refused`), proving `Localhost` scope is not reachable from the network at all. With the allow-list set to an address that is not the loopback address, a request that previously succeeded came back a real `403`. With token authentication enabled and a real generated token's hash in the config: a request with no `Authorization` header came back `401`, one with the wrong token came back `401`, and one with the correct token came back `200` with the health body — run against the actual binary, not only the in-process test harness, and without ever touching this machine's real settings (a throwaway `XDG_CONFIG_HOME` for each run). The password path was proven the same way inside the automated tests but not against the real compiled binary, since doing so would exercise the real OS keyring the same "web interface password" entry `tests/keyring.rs`'s own round-trip test already has to carefully preserve and restore — not risked twice in one session. Not proven: `Lan` scope actually being reachable from a second machine on the network (this sandbox has no second machine to test from).
 
-Not built yet: a systemd unit to run this as the always-on per-user service the design calls for, PAM authentication itself, and a configurable port (fixed at `8737`). Changing an authentication setting or the shared password currently requires restarting the daemon by hand to take effect, since the password is read from the keyring once at startup rather than on every request.
+The port is now a setting (`StellarshotConfig.web.port`) rather than fixed: `a_chosen_port_is_used_for_either_scope` (`src/web.rs`) proves `bind_address` uses it for either network scope, and `app::tests::a_chosen_port_is_reflected_in_the_shown_address` proves Settings' own address line reflects it. `app::tests::a_plain_port_number_parses`, `zero_empty_and_out_of_range_ports_are_rejected` prove the Settings field's own validation: not empty, not out of `u16` range, and not `0` (a valid `u16` but not a real port), before it is ever saved.
 
-### The REST API's first routes (`src/web/routes.rs`)
+Not built yet: PAM authentication itself. Changing an authentication setting or the shared password currently requires restarting the daemon by hand to take effect, since the password is read from the keyring once at startup rather than on every request; Settings' own Restart button is that "by hand."
 
-`GET /api/v1/backups`, `GET /api/v1/backups/{id}/snapshots`, and `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse` — every one a thin wrapper over the same `status`/`engine`/`Browser` calls the desktop window already uses, so the goal here is proving the *wrapping* (routing, request extraction, JSON shape, error-to-status mapping), not re-proving engine logic `src/engine/tests.rs` already covers extensively.
+### Brute-force throttling (`src/web.rs`)
+
+Repeated *wrong* credentials from one address are throttled and escalated
+rather than left at one fixed rate: `MAX_ATTEMPTS` (5) within the current
+window locks that address out for `LOCKOUT_LEVEL_SECS[level]` (5 minutes,
+then 15, then 60, capped at 24 hours) — including a subsequently *correct*
+credential, since letting a correct guess straight through the moment it
+happened to be right would defeat the point of counting attempts at all.
+Returning after a lockout (or an unlocked accumulation window) has fully
+passed escalates `level` one step further, so a repeat offender's guesses
+get more expensive each time, rather than resetting to the same cheap rate
+forever. Only a request that actually presented a `Basic` or `Bearer`
+`Authorization` header counts against any of this at all — a credential-less
+request (what a same-origin page in the owner's own browser could otherwise
+fire on its own) is rejected with `401` but never reaches the throttle, and a
+cross-site request never reaches this far in the first place (see
+[Cross-site requests](#cross-site-requests-srcwebrs) below). The check and
+the increment happen under one lock (`Throttle::try_begin`), so concurrent
+requests cannot all read "not locked out yet" before any of them commits.
+
+| Test | What it proves |
+| --- | --- |
+| `fewer_than_the_maximum_failures_never_locks_out`, `the_maximum_failures_locks_out_until_the_window_passes` | The pure lockout decision, with an injected clock rather than real waiting: below the threshold never locks out; at the threshold, locked out for exactly the current level's window, down to the last second, and not a moment after it passes |
+| `failures_accumulate_within_a_window_and_escalate_once_it_passes`, `the_escalation_level_is_capped_at_the_longest_lockout` | Failures within the same window add up without moving the window's start or its level; once the window has fully passed, the next failure starts a fresh window one level higher, capped at the longest duration rather than escalating forever |
+| `repeated_wrong_passwords_from_one_address_eventually_lock_it_out` | Against real HTTP requests: five real wrong-password attempts, then a *sixth request using the correct password* still comes back `429` with a `Retry-After` header — proving the lockout blocks the address, not merely "further wrong guesses," which a test that only ever sent wrong passwords could not distinguish |
+| `an_address_that_never_fails_is_never_throttled` | Ten correct requests in a row all succeed — the counter only ever moves on a failure, so legitimate repeated use is never mistaken for an attack |
+| `a_correct_password_after_a_few_wrong_ones_clears_the_count` | A successful request wipes the address's history: a few mistyped passwords followed by the right one does not leave a partial count that a later mistake would add to |
+| `credential_less_requests_are_never_throttled_no_matter_how_many` | Ten requests with no `Authorization` header at all get `401` each, and do not cost the address anything: the correct password still works right after them — the fix for the core bug this task existed to close (anyone could otherwise lock the owner out with credential-less requests) |
+| `a_cross_site_request_is_forbidden_and_does_not_count_against_the_throttle` | Ten wrong-password attempts marked `Sec-Fetch-Site: cross-site` all get `403` from `reject_cross_site`, before authentication is even reached, and none of them count either |
+| `concurrent_attempts_give_at_most_max_attempts_worth_of_reservations` | 64 real OS threads calling `Throttle::try_begin` for the same address at once: at most `MAX_ATTEMPTS` are reserved, the rest refused — proving the reserve-before-verify design closes the race a separate check-then-increment would have left open. Genuine OS-thread parallelism, deliberately not real concurrent HTTP requests: this sandbox's loopback networking hangs when a test process both serves and opens more than one concurrent connection to itself over `tokio::net::TcpStream` — reproduced with a bare-minimum axum app with no Stellarshot code involved, and unaffected by using real separate `curl` processes instead, so it is a property of concurrent connects from *within* one process here, not of the daemon. Exercising the actual lock at the level that matters (`try_begin` itself) sidesteps that entirely, and is a more direct proof of the property in question than a socket round trip would have been anyway |
+
+The lockout window is real wall-clock time (`jiff::Timestamp::now`) in production, but every scenario above that depends on *when* a failure happened or a window expired is tested through the pure `lockout_remaining`/`next_attempts` functions with an explicit `now`, not by actually waiting for a real window in a test — the same separation of pure decision logic from real time already used throughout this project (`run_state::is_overdue`, `crate::scheduled`'s own tests). Only the real-request tests need genuine HTTP round trips, and those never need to wait out a real window: they only ever exercise the "still within the window" side, which is instant.
+
+Separately from any one address, a burst of failures across many addresses at once — `GLOBAL_BUDGET_MAX` (50) within `GLOBAL_BUDGET_WINDOW_SECS` (10 minutes) — pauses password authentication for everyone until the window passes; an API token is unaffected, since guessing a password proves nothing about a token. This is logged once, the moment the budget is exceeded, not on every request after.
+
+State is a `Mutex<HashMap<IpAddr, Attempts>>` plus a `Mutex<GlobalBudget>`, kept only in the daemon's own memory — a restart clears every address's count and the global budget, which is also the escape hatch if the daemon's own operator locks themselves out. Both locks use `unwrap_or_else(PoisonError::into_inner)` rather than `unwrap()`, so one worker panicking while holding the lock does not poison authentication for every request after it. The address map is pruned of entries untouched for `ATTEMPTS_MEMORY_SECS` (a week) on every insert, and capped at `MAX_TRACKED_ADDRESSES` (10,000) by dropping the least-recently-active entry, so it cannot grow without bound under a distributed attempt to fill it.
+
+Confirmed by hand too, against the real compiled binary on this machine's real `Localhost`-scoped daemon: five real `curl` requests with wrong passwords each came back `401`, and the sixth — still a wrong password — came back a real `429` with `retry-after: 300`, over an actual TLS connection, not the in-process test harness.
+
+### Cross-site requests (`src/web.rs`)
+
+A request is refused with `403` before authentication is even attempted when it identifies itself as cross-site: `Sec-Fetch-Site` (every current browser sends it) says anything other than `same-origin`/`none`, or, for a client old enough not to send that header, `Origin` is `null` or does not match this daemon's own origins (`allowed_origins`, built from the network scope and port at startup). A request with neither header — `curl`, a script, the documented API examples — is let through; this is what keeps those examples working while still closing the actual browser-based attack, since only a browser sends either header on a cross-origin request in the first place. There are no cookies and no CORS headers anywhere in this API for a cross-site page to ride on, which is what makes this check sufficient rather than one layer of several.
+
+| Test | What it proves |
+| --- | --- |
+| `a_same_origin_or_absent_sec_fetch_site_is_never_cross_site`, `no_sec_fetch_site_or_origin_header_at_all_is_let_through` | The two ways a legitimate same-origin or non-browser request is let through |
+| `a_cross_site_sec_fetch_site_is_rejected_even_with_no_origin_header` | `Sec-Fetch-Site` alone is enough to reject, whether or not `Origin` is even present |
+| `an_origin_of_null_is_rejected`, `an_origin_matching_the_allowed_set_is_let_through`, `an_origin_not_in_the_allowed_set_is_rejected` | The `Origin` fallback, for a client old enough not to send `Sec-Fetch-Site`: `null` (a redirected or sandboxed request) is always rejected, a matching origin is let through, anything else is rejected |
+
+`presented_credentials` and the scheme-matching in `basic_password`/`is_authenticated` compare `Basic`/`Bearer` case-insensitively (`eq_ignore_ascii_case`), per RFC 9110 §11.1 — `a_basic_or_bearer_scheme_presents_credentials_regardless_of_case` proves every case variant is recognized, and `an_unrecognized_scheme_presents_no_credentials` proves an unrelated scheme (`Digest`) is not mistaken for one.
+
+### TLS (`src/web_tls.rs`)
+
+The daemon is only ever reached over `https://`. A self-signed certificate is generated once, under this user's own data directory, and reused after — not regenerated on every restart, which would invalidate a browser's trust exception for the previous one — or a certificate and key of the user's own can be set instead.
+
+| Test | What it proves |
+| --- | --- |
+| `a_fresh_pair_is_generated_and_both_files_are_written` | The first time a certificate is needed, both a certificate and a key are actually written to disk, and both look like what they claim to be (contain `CERTIFICATE`/`PRIVATE KEY`) |
+| `an_existing_pair_is_reused_rather_than_regenerated` | A second call does not replace an already-generated certificate — the exact behavior that keeps a browser's trust exception valid across restarts |
+| `a_half_generated_pair_is_replaced_rather_than_served_broken` | If only one of the two files exists (an interrupted first run), a fresh pair is generated rather than trying to serve a certificate with no matching key or vice versa |
+| `the_private_key_is_not_readable_by_anyone_else` | The generated private key's file mode is exactly `0600` — not merely "not obviously wrong," a real `stat` of a real file |
+| `a_custom_certificate_and_key_are_used_when_both_are_given`, `a_missing_custom_certificate_fails_rather_than_falling_back` | A configured custom certificate is actually used, and a *broken* custom configuration fails loudly rather than silently falling back to the self-signed certificate, which would hide a real misconfiguration |
+
+Beyond `web_tls`'s own tests, `src/web.rs`'s `a_real_curl_request_over_tls_reaches_the_health_route` proves TLS is really terminated by the daemon's own `serve` function (the exact one `main` calls), not merely buildable in isolation: a real `curl` handshake, over a real socket, ending in a clean `401` (no auth method enabled). A garbled response, or `curl` failing the handshake, would mean the socket was not actually speaking TLS — isolating "TLS is really on" from "the response makes sense," which `web_tls`'s own tests already cover.
+
+Also confirmed by hand, running the real compiled `stellarshot-web` against this machine's own real settings: a generated certificate at `~/.local/share/stellarshot/web/`, `key.pem` a real `stat`-confirmed `0600` (the certificate itself, `cert.pem`, has no confidentiality to protect — it is the public half — and is written with the process's ordinary default permissions); the certificate's own Subject Alternative Names covering this machine's hostname, its `.local` name, and `localhost`; a plain `http://` request to the same port getting no valid HTTP response at all (`curl` exit `1`, no status line) — the port only ever speaks TLS, not a mix of the two; and a wrong password rejected with a real `401` and an empty body, not the real one leaked back in an error message.
+
+### The daemon as a systemd service (`src/web_daemon.rs`)
+
+`stellarshot-web.service`, installed and managed the same way `crate::schedule` already manages a backup's timer: written to `~/.config/systemd/user/`, using the exact same escaping and atomic-write-on-change discipline.
+
+| Test | What it proves |
+| --- | --- |
+| `the_service_runs_the_daemon_and_restarts_on_failure` | The generated unit runs `stellarshot-web` with no arguments, as a `Type=simple` service that restarts itself if it ever exits on its own |
+| `a_newline_in_the_executable_path_is_rejected`, `exec_paths_are_escaped_for_systemd` | The same injection-proofing already proven for a backup's own scheduled-run unit in `src/schedule.rs`, proven again here since this is a second, independent place a path is quoted into a unit file |
+| `a_written_unit_never_ends_up_empty_or_half_written` | The same atomic, no-op-avoiding write `crate::schedule`'s own units get |
+
+Not covered by an automated test (the same gap `crate::schedule`'s own `apply`/`remove` have): the actual `systemctl` calls in `start`/`stop`/`restart`, and the D-Bus status query in `status` — these shell out to, or talk to, the real system service manager, which a unit test does not stand up a fake instance of. Verified by hand instead, against this machine's real `systemctl --user` and a real `stellarshot-web` process, using the unit file exactly as `service_text` generates it (byte-for-byte, matching `the_service_runs_the_daemon_and_restarts_on_failure`'s own assertions): installing and starting it left a real process actually listening on `127.0.0.1:8737`, `systemctl --user show` reporting `ActiveState=active`/`LoadState=loaded` (the exact values `status`'s own D-Bus query maps to `Status::Active`), and a real `curl` over TLS answering `401` with no credentials, using this machine's own real Stellarshot settings (`scope: Localhost`, a real remembered password) — not a throwaway config. Stopping it (`start`'s and `stop`'s exact `systemctl` sequence) left nothing listening and removed the unit file entirely. A unit deliberately pointed at a nonexistent executable came up `ActiveState=failed`, matching `Status::Failed`; correcting the path and running the same sequence `restart` runs (`start`, then an explicit `systemctl restart`) brought it back to `active` and answering real requests again — proving Settings' Restart button genuinely recovers a failed daemon, not merely that the button exists. Everything installed for this was removed afterward; nothing was left running or configured beyond what was there before.
+
+### The REST API's routes (`src/web/routes.rs`)
+
+`GET /api/v1/backups`, `GET /api/v1/backups/{id}/snapshots`, `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse`, and `POST /api/v1/backups/{id}/run` — every one a thin wrapper over the same `status`/`engine`/`Browser`/`runner` calls the desktop window already uses, so the goal here is proving the *wrapping* (routing, request extraction, JSON shape, error-to-status mapping), not re-proving engine logic `src/engine/tests.rs` already covers extensively.
 
 | Test | What it proves |
 | --- | --- |
@@ -272,10 +354,21 @@ Not built yet: a systemd unit to run this as the always-on per-user service the 
 | `backup_by_id_finds_the_matching_profile_only` | Looking a backup up by ID returns exactly that one, and a missing ID is an error rather than a panic or the first profile by accident |
 | `a_real_request_lists_the_configured_backup`, `a_real_request_lists_the_one_real_snapshot`, `a_real_request_browses_the_backed_up_file` | Against a *real* repository — a real `engine::init`, a real backup of a real file, a real `axum::serve` on a real socket — an HTTP client sees exactly what was actually backed up: the right profile ID, one real snapshot, and the one real file's name, not fixture data standing in for a repository |
 | `a_real_request_for_an_unknown_backup_is_not_found` | A backup ID nothing configured maps to answers `404`, not `500` or a hang |
+| `a_real_post_starts_an_existing_backup_and_a_new_snapshot_appears` | A real `POST .../run` genuinely starts a real backup: answers `202` immediately, and a second real snapshot exists by the time the test's own poll loop sees one — not merely that the route returns without erroring |
+| `a_real_post_for_an_unknown_backup_is_not_found` | The same ID check as the read routes applies to starting one, `404` rather than trying to back up nothing |
+| `starting_a_backup_records_it_in_the_history_under_the_web_source` | A run started over the API lands on the History page marked `Source::Web`, the distinction the audit trail exists to make, not merely "some entry appeared" |
 
-The list of backups a running daemon serves is injected once at startup (`Arc<Vec<Profile>>`), the same choice already made for its auth settings — this is also what makes the routes above testable directly against a chosen list of profiles, with no dependency on this machine's real settings and no risk of a test touching real configuration the way the daemon-level tests avoid touching the real keyring.
+The list of backups (and the global exclusion patterns that apply to all of them) a running daemon serves is injected once at startup, the same choice already made for its auth settings — this is also what makes the routes above testable directly against a chosen list of profiles, with no dependency on this machine's real settings and no risk of a test touching real configuration the way the daemon-level tests avoid touching the real keyring. The one exception is `starting_a_backup_records_it_in_the_history_under_the_web_source`, which does touch this machine's real history store (`event_log` has no test-only namespace of its own to write into instead) — isolated with a fresh random profile ID per run rather than a fixed one, so it can never collide with a real backup's own history.
 
 The real end-to-end tests use a small hand-rolled HTTP/1.1 client over a raw `TcpStream`, the same approach already proven in `src/web.rs`'s own tests, rather than the `reqwest` crate: a first attempt using `reqwest::get` against this exact router, in this exact sandbox, consistently timed out connecting to `127.0.0.1` for reasons not fully diagnosed (no proxy environment variables were set) — switching to the raw-socket approach that already worked elsewhere resolved it immediately. Noted here in case `reqwest` is reached for again in this environment.
+
+### The new-backup Browse hint (`src/app/wizard/mod.rs`)
+
+A real report: exclusions and the size estimate live behind the Browse button next to a source folder, and nothing else on the "what to include" step says so — easy to never discover, since "Browse…" reads as generic file-picker boilerplate rather than a feature of its own.
+
+Not covered by an automated test: the popover's own on-screen appearance (the same category of gap as every other new settings control in this file — UI wiring, not logic). What is covered, as pure `Wizard` state:
+- Creating a new backup starts with the hint not yet dismissed; opening or editing an existing one starts with it already dismissed, since the hint is about a *brand new* backup's first folder specifically.
+- Dismissing it directly, or browsing the first (and only, at that point) source folder, both mark it dismissed; browsing a *different* source does not, since the hint only ever points at the first one.
 
 Not covered: `search`, `versions`, `diff`, and `missing` (`Browser` can already do all four; no route calls them yet, and `FileVersion`/`DiffEntry`/`MissingEntry` need a `Serialize` derive first), starting a backup or a restore through the API, and reading the History page's own data through it. Unlike the daemon-level scope/allow-list/auth work, this slice's "for real" proof is an in-process real server in the test suite, not also a separately launched `stellarshot-web` process reached with `curl` — the risk this slice actually carries (axum routing, request extraction, and JSON serialization) is fully exercised either way, and a hand-crafted settings file for a manual run would mostly re-prove config loading already proven for the daemon's other settings.
 
@@ -336,7 +429,7 @@ Reading the real state (`upower_state`, `network_state`, `read_state`) and decid
 Not covered by an automated test, and verified by hand instead, since both are real system integration rather than logic this project's own code decides:
 
 - **The applet binary starts cleanly.** Run standalone (not registered with a running panel, to avoid changing a real session's panel configuration) in this project's own development environment, which has a real COSMIC session (`cosmic-comp`, `cosmic-panel`) and real UPower and NetworkManager services: it ran for 5 seconds with no panic and no error output, then was killed and left nothing behind. This exercises the same `cosmic::applet::run` startup path a panel would use to load it.
-- **Single-instance activation works for real.** With the window running, launching `stellarshot` a second time exited in 16ms with no output, and the first instance was still running afterward with no crash — confirming `App::dbus_activation`'s "a window already exists" branch (`window::gain_focus` + `window::minimize(id, false)`) runs cleanly on a real system bus, not just that it compiles. Not verified the same way: the "window was closed to the panel, reopen it" branch (`window::open`, then `core.set_main_window_id`), since reaching that state needs an interactive window close this environment cannot reliably script (see this file's own note on AT-SPI-based UI testing), and the applet's popup layout and icon-swapping, since neither can be seen without registering the applet in a real panel, which was deliberately not done here to avoid changing a real, currently-running session.
+- **Single-instance activation works for real.** With the window running, launching `stellarshot` a second time exited in 16ms with no output, and the first instance was still running afterward with no crash — confirming `App::dbus_activation`'s "a window already exists" branch (`window::gain_focus` + `window::minimize(id, false)`) runs cleanly on a real system bus, not just that it compiles. Not verified the same way at the time: the "window was closed to the panel, reopen it" branch (`window::open`, then `core.set_main_window_id`), since reaching that state needs an interactive window close this environment cannot reliably script (see this file's own note on AT-SPI-based UI testing), and the applet's popup layout and icon-swapping, since neither can be seen without registering the applet in a real panel, which was deliberately not done here to avoid changing a real, currently-running session. **This gap was real**: that exact branch built its reopened window from a bare `iced::window::Settings::default()` (`decorations: true`, asking the compositor to draw its own title bar) instead of the client-side-only decoration `cosmic::app::Settings` gives the window the app starts with (`client_decorations: true` by default, which libcosmic turns into `decorations: false`) — a real user hit it as a double title bar after minimizing to the panel and reopening. Fixed by setting `decorations: false` on that window explicitly, confirmed by reading both `iced`'s and `libcosmic`'s own source for their respective defaults rather than assumed; still not proven by an automated or interactive test, for the same scripting-limitation reason as before.
 - **`stellarshot-applet`'s release build strips developer logging too**, not just the window's: `scripts/verify-release-build.sh` now checks both binaries, and the applet's own build genuinely does reach a `debug_log!` call somewhere in the shared library (the check found the log path present without `release-build` and gone with it, the same as the window) — not a check that would have passed regardless of what the feature flag did.
 
 ### Hooks (`src/hooks.rs`, `src/runner.rs`, `tests/runner.rs`, `src/app/wizard/mod.rs`)
@@ -402,9 +495,10 @@ These run the real `stellarshot` binary, the way the window does.
 | `backup_finishes_after_the_window_goes_away` | Closing the reading end of the pipe mid-backup does not stop it; the snapshot is recorded |
 | `runner_restores_a_selection_keeping_both` | A selective restore through the child process, as the Restore button runs it: `done` carries the counts, the existing file is untouched, and exactly one dated copy appears |
 | `a_backup_streams_started_progress_and_done` | The window's stream yields `Started`, progress, then `Done` |
-| `cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Canceled`, with no snapshot left behind |
+| `canceling_a_backup_ends_it_as_canceled_without_a_snapshot` | Cancel from the window's handle ends the stream as `Canceled`, with no snapshot left behind |
 | `a_missing_executable_is_reported_not_hung` | If the child cannot start, the stream ends with an error instead of waiting forever |
-| `cancelling_a_backup_through_rclone_ends_it_and_stops_rclone` (`tests/rclone.rs`) | Cancel during a backup through rclone ends the stream as `Canceled` within 30 seconds, and no `rclone serve` for the repository is left running. **Proven able to fail:** before the child ran in its own process group, the stream never ended (the orphaned rclone held its output open) and the test timed out |
+| `a_replaced_executable_says_the_app_needs_restarting` | A path ending in the kernel's `(deleted)` marker — what `current_exe()` returns once a package upgrade has replaced the running app's own binary — is reported as `AppUpdated`, not a bare `Io` error, before a spawn is even attempted |
+| `canceling_a_backup_through_rclone_ends_it_and_stops_rclone` (`tests/rclone.rs`) | Cancel during a backup through rclone ends the stream as `Canceled` within 30 seconds, and no `rclone serve` for the repository is left running. **Proven able to fail:** before the child ran in its own process group, the stream never ended (the orphaned rclone held its output open) and the test timed out |
 
 ### Backup profiles (`src/profile.rs`)
 
@@ -455,7 +549,7 @@ absent (`missing_drive_is_unavailable`), and a profile pointing at it reports
 
 ### Déjà Dup import (`src/dejadup.rs`)
 
-Fixtures modelled on a real Déjà Dup 50 Flatpak keyfile and on `dconf dump`
+Fixtures modeled on a real Déjà Dup 50 Flatpak keyfile and on `dconf dump`
 output. They prove that missing keys take Déjà Dup's schema defaults
 (`$HOME` included, Trash and Downloads excluded); that `$DOWNLOAD` and the
 other tokens follow `user-dirs.dirs` rather than English folder names; that a
@@ -519,13 +613,49 @@ never called `tracing_log::LogTracer::init`, so nothing from `log` (all of
 rustic_core, rustic_backend and rclone) ever reached it; this test would have
 found an empty file.
 
-Both this log and the developer debug log sit at a fixed, predictable path
-under `/tmp`, so `debug::open_private_log_file` — the one place either is
-opened — refuses to follow a symlink already there and creates the file mode
-`0600`. `a_symlink_already_at_the_path_is_not_followed` plants a symlink to a
+The developer debug log still sits at a fixed, predictable path under `/tmp`
+(off by default, and stripped from release builds entirely, so the exposure
+is a developer's own debugging session, not an ordinary user's). The backend
+log moved to `$XDG_STATE_HOME/stellarshot/backend.log` (or
+`~/.local/state/stellarshot/backend.log`), since it is always on: two real
+users of a shared machine sharing one fixed `/tmp` path would otherwise
+collide, each inheriting whatever permissions the other happened to leave the
+file with. `debug::open_private_log_file` — the one place either log is
+opened — refuses to follow a symlink already at its path, creates the file
+mode `0600`, and (new) refuses a pre-existing regular file this user does not
+own via `fstat`, since `O_CREAT` without `O_EXCL` opens rather than fails on
+one. `a_symlink_already_at_the_path_is_not_followed` plants a symlink to a
 throwaway file first and checks both that opening it is refused and that the
 symlink's target is untouched; `the_log_file_is_private` checks the mode bits
-of a freshly opened one.
+of a freshly opened one; `a_pre_existing_file_owned_by_someone_else_is_refused`
+proves the *matching*-uid case still opens (the mismatched case needs a second
+real uid, so it is not exercised directly — see SEC-5 in the review plan).
+The backend log's own state directory is created and verified private by
+`engine::lock::create_private_dir`, shared with the write-lock directory: see
+"The lock and log directories are verified private" below for its own tests.
+
+### The lock and log directories are verified private (`src/engine/lock.rs`)
+
+`runtime_dir` (the write lock, and the progress files a window reads a
+scheduled backup's status from) and `rustic_log_path` (above) no longer fall
+back to a shared, world-writable location like `/tmp` when `$XDG_RUNTIME_DIR`
+or `$XDG_STATE_HOME` is unset — `$HOME/.cache` or `$HOME/.local/state`
+instead. Either way, `create_private_dir` verifies the directory it is about
+to use, not just the one it creates: `DirBuilder::mode` only applies when the
+call actually creates the directory, so a *pre-existing* one — plausible on a
+shared machine, or if something else already created the fallback path —
+needed its own check. **Proven able to fail:** before this, a pre-existing
+world-writable or symlinked directory at the fallback location was accepted
+without complaint, and every lock and progress file after it inherited
+whatever an attacker who created that directory first could arrange (holding
+`flock` on a predictable lock file name to make a real backup look
+permanently `Locked`, or a symlink a progress-file write would follow).
+
+| Test | What it proves |
+| --- | --- |
+| `a_world_writable_pre_existing_directory_is_refused` | A directory already there, mode `0777`, is rejected rather than used as-is |
+| `a_pre_existing_symlink_is_refused_rather_than_followed` | A symlink at the target path is rejected, not followed to whatever it points at |
+| `a_private_pre_existing_directory_is_still_accepted` | The ordinary case — a directory this user already made and locked down — keeps working; the two checks above are not so strict they also reject the correct state |
 
 ### Language selection (`src/core/localization.rs`)
 

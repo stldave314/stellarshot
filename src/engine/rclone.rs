@@ -45,6 +45,8 @@ fn redact(args: &[&str]) -> Vec<String> {
 
 /// rclone's exit status for "directory not found".
 const EXIT_DIRECTORY_NOT_FOUND: i32 = 3;
+/// rclone's exit status for "file not found".
+const EXIT_FILE_NOT_FOUND: i32 = 4;
 
 /// Stellarshot's own rclone configuration file.
 pub fn config_path() -> PathBuf {
@@ -64,8 +66,21 @@ pub fn target(remote: &str, path: &str) -> String {
 
 /// Run rclone with Stellarshot's configuration.
 fn rclone(config: &Path, args: &[&str]) -> Result<Output, EngineError> {
+    rclone_with_env(config, args, &[])
+}
+
+/// [`rclone`], with extra environment variables set on the child. Used only
+/// by [`sign_in`], to pass the OAuth client ID and secret without ever
+/// putting them on argv (see its own doc comment).
+fn rclone_with_env(
+    config: &Path,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Output, EngineError> {
     debug_log!(ENGINE, "rclone {}", redact(args).join(" "));
     Command::new(RCLONE)
+        .env("LC_ALL", "C")
+        .envs(envs.iter().copied())
         .arg("--config")
         .arg(config)
         .args(args)
@@ -83,8 +98,13 @@ fn rclone(config: &Path, args: &[&str]) -> Result<Output, EngineError> {
 /// finished within `limit`. For commands that only look: a location that does
 /// not answer must turn into an explanation, not a wait without end.
 fn rclone_within(config: &Path, args: &[&str], limit: Duration) -> Result<Output, EngineError> {
-    debug_log!(ENGINE, "rclone {} (within {limit:?})", args.join(" "));
+    debug_log!(
+        ENGINE,
+        "rclone {} (within {limit:?})",
+        redact(args).join(" ")
+    );
     let mut child = Command::new(RCLONE)
+        .env("LC_ALL", "C")
         .arg("--config")
         .arg(config)
         .args(RCLONE_LOOK_FLAGS)
@@ -130,7 +150,7 @@ fn rclone_within(config: &Path, args: &[&str], limit: Duration) -> Result<Output
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            debug_log!(ENGINE, "rclone {} timed out", args.join(" "));
+            debug_log!(ENGINE, "rclone {} timed out", redact(args).join(" "));
             return Err(EngineError::new(
                 ErrorKind::TimedOut,
                 limit.as_secs().to_string(),
@@ -161,7 +181,7 @@ fn stderr(output: &Output) -> String {
 pub fn probe(config: &Path, remote: &str, path: &str) -> Result<Probe, EngineError> {
     let output = rclone_within(
         config,
-        &["lsf", "--max-depth", "1", &target(remote, path)],
+        &["lsf", "--max-depth", "1", "--", &target(remote, path)],
         PROBE_TIMEOUT,
     )?;
     if !output.status.success() {
@@ -214,9 +234,17 @@ pub fn delete_repository(config: &Path, remote: &str, path: &str) -> Result<(), 
         } else {
             "purge"
         };
-        let output = rclone(config, &[command, &entry])?;
-        // An entry the repository never created is not an error.
-        if !output.status.success() && output.status.code() != Some(EXIT_DIRECTORY_NOT_FOUND) {
+        let output = rclone(config, &[command, "--", &entry])?;
+        // An entry the repository never created is not an error. The exit
+        // code is checked first (language-independent); the message is only
+        // a fallback, and reliable now that `LC_ALL=C` guarantees it is in
+        // English rather than the operator's own locale.
+        if !output.status.success()
+            && !matches!(
+                output.status.code(),
+                Some(EXIT_DIRECTORY_NOT_FOUND | EXIT_FILE_NOT_FOUND)
+            )
+        {
             let message = stderr(&output);
             if !message.contains("not found") {
                 return Err(EngineError::new(ErrorKind::DestinationUnavailable, message));
@@ -224,7 +252,7 @@ pub fn delete_repository(config: &Path, remote: &str, path: &str) -> Result<(), 
         }
     }
     // Removes the folder only if nothing else is left in it.
-    let _ = rclone(config, &["rmdir", &target(remote, path)]);
+    let _ = rclone(config, &["rmdir", "--", &target(remote, path)]);
     Ok(())
 }
 
@@ -261,6 +289,18 @@ fn quote(value: &str) -> String {
     } else {
         value.to_owned()
     }
+}
+
+/// Whether Stellarshot's own rclone configuration already has a section
+/// named `name`. Reads the file directly rather than asking rclone, so it
+/// works even before rclone is confirmed to be installed, and cannot be
+/// fooled by anything rclone itself might do with a crafted section name.
+pub(crate) fn remote_exists(config: &Path, name: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return false;
+    };
+    let header = format!("[{name}]");
+    text.lines().any(|line| line.trim() == header)
 }
 
 /// The remotes in the user's own rclone configuration.
@@ -335,16 +375,31 @@ fn make_private(config: &Path) -> Result<(), EngineError> {
 /// browser for the provider's login page and receives the token on
 /// localhost; the token is stored only in Stellarshot's configuration.
 /// Blocks until the sign-in finishes or fails.
+///
+/// `credentials` (an OAuth client ID and secret, for a user's own Google
+/// Cloud project rather than rclone's bundled one) are passed as
+/// `RCLONE_<PROVIDER>_CLIENT_ID`/`_SECRET` environment variables, never as
+/// `client_id=…`/`client_secret=…` arguments: argv is world-readable for the
+/// process's lifetime through `/proc/<pid>/cmdline`, while `/proc/<pid>/environ`
+/// is readable only by its own user.
 pub fn sign_in(
     config: &Path,
     name: &str,
     provider: &str,
     params: &[&str],
+    credentials: Option<(&str, &str)>,
 ) -> Result<(), EngineError> {
     make_private(config)?;
-    let mut args = vec!["config", "create", name, provider];
+    let mut args = vec!["config", "create", "--", name, provider];
     args.extend_from_slice(params);
-    let output = rclone(config, &args)?;
+    let provider_upper = provider.to_ascii_uppercase();
+    let id_var = format!("RCLONE_{provider_upper}_CLIENT_ID");
+    let secret_var = format!("RCLONE_{provider_upper}_CLIENT_SECRET");
+    let envs: Vec<(&str, &str)> = match credentials {
+        Some((id, secret)) => vec![(id_var.as_str(), id), (secret_var.as_str(), secret)],
+        None => Vec::new(),
+    };
+    let output = rclone_with_env(config, &args, &envs)?;
     if output.status.success() {
         Ok(())
     } else {
@@ -354,7 +409,7 @@ pub fn sign_in(
 
 /// Remove a remote Stellarshot created.
 pub fn delete_remote(config: &Path, name: &str) -> Result<(), EngineError> {
-    let output = rclone(config, &["config", "delete", name])?;
+    let output = rclone(config, &["config", "delete", "--", name])?;
     if output.status.success() {
         Ok(())
     } else {
@@ -389,6 +444,21 @@ mod tests {
                 "client_secret=<redacted>",
             ]
         );
+    }
+
+    #[test]
+    fn remote_exists_matches_only_a_real_section() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("rclone.conf");
+        std::fs::write(&config, "[stellarshot-deadbeef]\ntype = drive\n").unwrap();
+
+        assert!(remote_exists(&config, "stellarshot-deadbeef"));
+        assert!(!remote_exists(&config, "stellarshot-deadbee0"));
+        assert!(!remote_exists(&config, "not-a-real-section"));
+        assert!(!remote_exists(
+            dir.path().join("missing.conf").as_path(),
+            "x"
+        ));
     }
 
     fn mode(path: &Path) -> u32 {

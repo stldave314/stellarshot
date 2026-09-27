@@ -210,6 +210,35 @@ fn every_locale_keeps_the_same_placeholders() {
 }
 
 #[test]
+fn no_locale_has_a_fluent_syntax_error() {
+    // The hand-written `parse` above only looks for identifiers and
+    // `$name` references; it cannot see a genuine Fluent syntax error, such
+    // as an unindented continuation line, which the real parser drops as a
+    // "junk" entry rather than an error — so the key silently loses part of
+    // its value in every language, with nothing here to catch it.
+    for locale in locales() {
+        let path = locale_file(&locale);
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+        let resource = fluent_syntax::parser::parse(source.as_str())
+            .unwrap_or_else(|(_, errors)| panic!("`{locale}` failed to parse: {errors:?}"));
+        let junk: Vec<&str> = resource
+            .body
+            .iter()
+            .filter_map(|entry| match entry {
+                fluent_syntax::ast::Entry::Junk { content } => Some(*content),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            junk.is_empty(),
+            "`{locale}` has junk Fluent entries (a syntax error dropped this text \
+             silently rather than failing the build): {junk:?}"
+        );
+    }
+}
+
+#[test]
 fn no_locale_repeats_a_key() {
     // `parse` asserts on duplicates; this makes the intent explicit and covers
     // every locale rather than only the ones the other tests happen to read.

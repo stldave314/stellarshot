@@ -19,7 +19,7 @@ use crate::{keyring, password_command};
 pub const DEFAULT_HOME_EXCLUDES: &[&str] = &[".cache", ".local/share/Trash", "Downloads"];
 
 /// Where a profile's repository lives.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Destination {
     /// A folder on this computer.
     Local { path: PathBuf },
@@ -52,6 +52,55 @@ pub enum Destination {
         /// basic auth (`http://user:pass@host:port/repo/`).
         url: String,
     },
+}
+
+/// Hand-written so `Rest`'s `url` (which can carry HTTP basic auth
+/// credentials, `http://user:pass@host:port/repo/`) is redacted the same way
+/// `engine::Location`'s own `Debug` already redacts it, rather than a
+/// `#[derive]` printing the password straight into a log line, an error
+/// detail, or `format!("{:?}", …)` anywhere this type ends up.
+impl std::fmt::Debug for Destination {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local { path } => f.debug_struct("Local").field("path", path).finish(),
+            Self::Removable {
+                uuid,
+                relative_path,
+                label,
+            } => f
+                .debug_struct("Removable")
+                .field("uuid", uuid)
+                .field("relative_path", relative_path)
+                .field("label", label)
+                .finish(),
+            Self::Sftp {
+                host,
+                user,
+                port,
+                path,
+            } => f
+                .debug_struct("Sftp")
+                .field("host", host)
+                .field("user", user)
+                .field("port", port)
+                .field("path", path)
+                .finish(),
+            Self::Rclone {
+                remote,
+                path,
+                provider,
+            } => f
+                .debug_struct("Rclone")
+                .field("remote", remote)
+                .field("path", path)
+                .field("provider", provider)
+                .finish(),
+            Self::Rest { url } => f
+                .debug_struct("Rest")
+                .field("url", &crate::engine::redact_url(url))
+                .finish(),
+        }
+    }
 }
 
 impl Destination {
@@ -127,7 +176,16 @@ impl Destination {
                     path.clone(),
                 ))
             }
-            Self::Rclone { remote, path, .. } => Ok(Location::rclone(remote.clone(), path.clone())),
+            Self::Rclone { remote, path, .. } => {
+                if !valid_rclone_remote(remote) {
+                    // Covers a hand-edited settings file as well as an
+                    // imported one `settings_export::merge` already rejects:
+                    // a remote outside this shape can smuggle rclone
+                    // connection options or flags (see SEC-1 in the review).
+                    return Err(EngineError::new(ErrorKind::InvalidRemote, remote.clone()));
+                }
+                Ok(Location::rclone(remote.clone(), path.clone()))
+            }
             Self::Rest { url } => Ok(Location::Rest { url: url.clone() }),
         }
     }
@@ -506,8 +564,39 @@ impl Profile {
             skip_if_unchanged: self.skip_if_unchanged,
             dry_run: false,
             time: None,
+            profile_tag: crate::engine::profile_tag(&self.id),
         }
     }
+}
+
+/// A profile ID safe to put in a unit name and a command line: non-empty,
+/// letters, digits and dashes only, at most 64 characters. Shared by
+/// `schedule` (a systemd unit name and `--scheduled <id>` argument) and
+/// `settings_export::merge` (an imported profile's ID is untrusted).
+pub(crate) fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// Whether `name` is a remote Stellarshot itself could have created — the
+/// exact shape `new_remote_name()` in `app/wizard/place.rs` produces
+/// (`stellarshot-` plus 8 lowercase hex digits) — and it actually has a
+/// matching section in Stellarshot's own rclone configuration.
+///
+/// `Destination::Rclone.remote` is used verbatim as `"{remote}:{path}"`, the
+/// last argument to `rclone serve restic`. A value outside this shape (from
+/// a hand-edited settings file, or one imported from another installation;
+/// see [`crate::settings_export::merge`]) could otherwise be interpreted by
+/// rclone as connection options (`:sftp,host=h,ssh="…"`) or, if it starts
+/// with `--`, as a flag.
+pub fn valid_rclone_remote(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix("stellarshot-") else {
+        return false;
+    };
+    let shape_ok = suffix.len() == 8
+        && suffix
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    shape_ok && rclone::remote_exists(&rclone::config_path(), name)
 }
 
 /// The default exclusions for a profile that backs up `home`.
@@ -787,6 +876,41 @@ mod tests {
         assert_eq!(profile.schedule, Schedule::Manual);
         assert!(profile.hooks.is_empty());
         assert_eq!(profile.compression, Compression::Default);
+    }
+
+    #[test]
+    fn a_remote_outside_the_wizards_own_shape_is_rejected() {
+        assert!(!valid_rclone_remote(":local"));
+        assert!(!valid_rclone_remote("--config=/x"));
+        assert!(!valid_rclone_remote("stellarshot-tooshort"));
+        assert!(!valid_rclone_remote("stellarshot-UPPERCASE"));
+        assert!(!valid_rclone_remote("not-stellarshot-deadbeef"));
+    }
+
+    #[test]
+    fn an_rclone_destination_with_an_invalid_remote_fails_to_locate() {
+        for remote in [
+            ":local",
+            "--config=/x",
+            ":sftp,host=h,ssh=\"touch /tmp/pwn\"",
+        ] {
+            let destination = Destination::Rclone {
+                remote: remote.into(),
+                path: "backups".into(),
+                provider: "Custom".into(),
+            };
+            let err = destination.location().unwrap_err();
+            assert_eq!(err.kind, ErrorKind::InvalidRemote, "remote {remote:?}");
+        }
+    }
+
+    #[test]
+    fn valid_ids_are_alphanumeric_and_dashes_only() {
+        assert!(valid_id("a-valid-id-123"));
+        assert!(!valid_id(""));
+        assert!(!valid_id("../x"));
+        assert!(!valid_id("has spaces"));
+        assert!(!valid_id(&"x".repeat(65)));
     }
 
     #[test]

@@ -351,7 +351,7 @@ mod tests {
 
     fn entry(kind: EntryKind, size: u64) -> MountEntry {
         MountEntry {
-            name: "x".to_owned(),
+            name: "x".into(),
             kind,
             size,
             modified: Some(1_700_000_000),

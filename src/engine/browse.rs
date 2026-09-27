@@ -8,10 +8,11 @@
 //! re-read the index each time.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
-use rustic_core::repofile::SnapshotFile;
+use rustic_core::repofile::{Node, NodeType, SnapshotFile};
 use rustic_core::{IndexedFullStatus, LsOptions, Repository, TreeId};
 use serde::{Deserialize, Serialize};
 
@@ -44,9 +45,15 @@ pub struct TreeEntry {
 /// ([`crate::engine::mount`]): like [`TreeEntry`], but with what a real
 /// filesystem needs and the tree browser does not — a symlink's target,
 /// and the original Unix permission bits.
+///
+/// `name` is an `OsString`, not a `String`: FUSE `readdir` hands it
+/// straight to the kernel, which must see the entry's exact bytes. A lossy
+/// `to_string_lossy` here would let `readdir` list a non-UTF-8 name that a
+/// later `lookup` for that same (now-mangled) name could never match,
+/// which is exactly "can see it, can't open it" for a mounted snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountEntry {
-    pub name: String,
+    pub name: std::ffi::OsString,
     pub kind: EntryKind,
     pub size: u64,
     pub modified: Option<i64>,
@@ -139,7 +146,7 @@ fn entry(path: PathBuf, node: &rustic_core::repofile::Node) -> TreeEntry {
 
 fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
     MountEntry {
-        name: node.name().to_string_lossy().into_owned(),
+        name: node.name().into_owned(),
         kind: kind_of(node),
         size: node.meta.size,
         modified: node.meta.mtime.map(|time| time.as_second()),
@@ -150,18 +157,44 @@ fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
     }
 }
 
-fn not_found(what: &str) -> EngineError {
-    EngineError::new(
-        ErrorKind::Internal,
-        format!("{what} is not in this snapshot"),
-    )
+/// Resolve `path` to its [`Node`] within `snapshot`, comparing each
+/// component as an `OsStr` — never through `Repository::node_from_snapshot_and_path`,
+/// whose public signature only takes a `&str` and so loses a name that is
+/// not valid UTF-8 to `to_string_lossy`'s replacement character before the
+/// comparison even starts. This mirrors that method's own internal
+/// algorithm (`Tree::node_from_path`, not itself public): start at a
+/// synthetic root node standing for `snapshot.tree`, then descend one
+/// `Component::Normal` at a time; every other component (`/`, `.`, `..`)
+/// is skipped, since a path built from a snapshot's own recorded names or
+/// this app's own UI never legitimately contains one.
+pub(super) fn node_at(
+    repo: &Repository<IndexedFullStatus>,
+    snapshot: &SnapshotFile,
+    path: &Path,
+) -> Result<Node, EngineError> {
+    let mut node = Node::new_node(OsStr::new(""), NodeType::Dir, Default::default());
+    node.subtree = Some(snapshot.tree);
+    let missing = || not_found(&path.display().to_string());
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let subtree = node.subtree.ok_or_else(missing)?;
+        let tree = repo.get_tree(&subtree)?;
+        node = tree
+            .nodes
+            .into_iter()
+            .find(|node| &*node.name() == name)
+            .ok_or_else(missing)?;
+    }
+    Ok(node)
 }
 
-fn wrong_kind(path: &Path, expected: &str) -> EngineError {
-    EngineError::new(
-        ErrorKind::Internal,
-        format!("{} is not a {expected} in this snapshot", path.display()),
-    )
+/// `what` is a bare snapshot ID or path: [`crate::app::errors::explain`]'s
+/// own `error-not-found` message already supplies "is not in this
+/// snapshot," so it must not be repeated here.
+fn not_found(what: &str) -> EngineError {
+    EngineError::new(ErrorKind::NotFound, what)
 }
 
 impl Repo {
@@ -217,7 +250,7 @@ impl Browser {
     pub fn list(&self, snapshot: &str, dir: &Path) -> Result<Vec<TreeEntry>, EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let node = repo.node_from_snapshot_and_path(file, &dir.to_string_lossy())?;
+        let node = node_at(&repo, file, dir)?;
         let subtree = node
             .subtree
             .ok_or_else(|| not_found(&dir.display().to_string()))?;
@@ -242,7 +275,7 @@ impl Browser {
     pub fn mount_stat(&self, snapshot: &str, path: &Path) -> Result<MountEntry, EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let node = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        let node = node_at(&repo, file, path)?;
         Ok(mount_entry(&node))
     }
 
@@ -251,7 +284,7 @@ impl Browser {
     pub fn mount_list(&self, snapshot: &str, dir: &Path) -> Result<Vec<MountEntry>, EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let node = repo.node_from_snapshot_and_path(file, &dir.to_string_lossy())?;
+        let node = node_at(&repo, file, dir)?;
         let subtree = node
             .subtree
             .ok_or_else(|| not_found(&dir.display().to_string()))?;
@@ -268,9 +301,9 @@ impl Browser {
     pub fn read_file(&self, snapshot: &str, path: &Path) -> Result<Vec<u8>, EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let node = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        let node = node_at(&repo, file, path)?;
         if !node.is_file() {
-            return Err(wrong_kind(path, "file"));
+            return Err(not_found(&path.display().to_string()));
         }
         let mut buffer = Vec::new();
         repo.dump(&node, &mut buffer)?;
@@ -287,9 +320,9 @@ impl Browser {
     ) -> Result<(), EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let node = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        let node = node_at(&repo, file, path)?;
         if !node.is_file() {
-            return Err(wrong_kind(path, "file"));
+            return Err(not_found(&path.display().to_string()));
         }
         let mut out = std::fs::File::create(destination)?;
         repo.dump(&node, &mut out)?;
@@ -307,9 +340,9 @@ impl Browser {
     ) -> Result<(), EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let root = repo.node_from_snapshot_and_path(file, &path.to_string_lossy())?;
+        let root = node_at(&repo, file, path)?;
         if !root.is_dir() {
-            return Err(wrong_kind(path, "folder"));
+            return Err(not_found(&path.display().to_string()));
         }
         let out = std::fs::File::create(destination)?;
         let gzip = flate2::write::GzEncoder::new(out, flate2::Compression::default());
@@ -363,7 +396,7 @@ impl Browser {
         }
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
-        let root = repo.node_from_snapshot_and_path(file, "/")?;
+        let root = node_at(&repo, file, Path::new("/"))?;
         let mut found = Vec::new();
         for item in repo.ls(&root, &LsOptions::default())? {
             let (path, node) = item?;
@@ -438,7 +471,7 @@ impl Browser {
         let mut versions: Vec<FileVersion> = Vec::new();
         let mut newer_content = None;
         for (file, summary) in &self.snapshots {
-            let Ok(node) = repo.node_from_snapshot_and_path(file, &path.to_string_lossy()) else {
+            let Ok(node) = node_at(&repo, file, path) else {
                 newer_content = None;
                 continue;
             };
@@ -482,7 +515,7 @@ impl Browser {
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut missing = Vec::new();
         for (file, summary) in self.snapshots.iter().filter(|(_, s)| s.time >= since) {
-            let Ok(node) = repo.node_from_snapshot_and_path(file, &scope.to_string_lossy()) else {
+            let Ok(node) = node_at(&repo, file, scope) else {
                 continue;
             };
             if !node.is_dir() {
@@ -520,18 +553,25 @@ fn diff_trees(
     if a == b {
         return Ok(());
     }
-    let by_name =
-        |id: TreeId| -> Result<BTreeMap<String, rustic_core::repofile::Node>, EngineError> {
-            Ok(repo
-                .get_tree(&id)?
-                .nodes
-                .into_iter()
-                .map(|node| (node.name().to_string_lossy().into_owned(), node))
-                .collect())
-        };
+    // Keyed by `OsString`, not a lossy `String`: two distinct names that
+    // both happen to contain non-UTF-8 bytes can otherwise collapse to the
+    // identical replacement-character string, and a plain `BTreeMap`
+    // collect silently keeps only the last of them (see REL-6).
+    let by_name = |id: TreeId| -> Result<
+        BTreeMap<std::ffi::OsString, rustic_core::repofile::Node>,
+        EngineError,
+    > {
+        Ok(repo
+            .get_tree(&id)?
+            .nodes
+            .into_iter()
+            .map(|node| (node.name().into_owned(), node))
+            .collect())
+    };
     let old = by_name(a)?;
     let new = by_name(b)?;
-    let names: std::collections::BTreeSet<&String> = old.keys().chain(new.keys()).collect();
+    let names: std::collections::BTreeSet<&std::ffi::OsString> =
+        old.keys().chain(new.keys()).collect();
     for name in names {
         let path = prefix.join(name);
         match (old.get(name), new.get(name)) {

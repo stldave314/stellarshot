@@ -51,6 +51,10 @@ pub fn explain(error: &EngineError) -> String {
             fl!("error-conditions-not-met", reason = error.detail.clone())
         }
         ErrorKind::HookFailed => fl!("error-hook-failed", reason = error.detail.clone()),
+        ErrorKind::AppUpdated => fl!("error-app-updated"),
+        ErrorKind::InvalidRemote => fl!("error-invalid-remote"),
+        ErrorKind::UnsafePath => fl!("error-unsafe-path", path = error.detail.clone()),
+        ErrorKind::NotFound => fl!("error-not-found", path = error.detail.clone()),
         ErrorKind::Io | ErrorKind::Internal => {
             fl!("error-details", details = error.detail.clone())
         }

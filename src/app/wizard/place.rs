@@ -234,9 +234,11 @@ impl Place {
             }
             Kind::Rest => {
                 let url = self.rest_url.trim();
-                (!url.is_empty()).then(|| Destination::Rest {
-                    url: url.to_owned(),
-                })
+                let parsed = url::Url::parse(url).ok()?;
+                matches!(parsed.scheme(), "http" | "https")
+                    .then(|| Destination::Rest {
+                        url: url.to_owned(),
+                    })
             }
         }
     }
@@ -906,5 +908,34 @@ mod tests {
             }
             other => panic!("expected an rclone destination, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_rest_url_that_does_not_parse_is_not_a_usable_destination() {
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Rest));
+        place.update(Message::RestUrl("not a url at all".into()));
+        assert!(place.destination().is_none());
+    }
+
+    #[test]
+    fn a_rest_url_with_neither_http_nor_https_is_not_a_usable_destination() {
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Rest));
+        place.update(Message::RestUrl("ftp://nas:21/repo/".into()));
+        assert!(place.destination().is_none());
+    }
+
+    #[test]
+    fn a_well_formed_rest_url_is_a_usable_destination() {
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Rest));
+        place.update(Message::RestUrl("https://alex:s3cret@nas:8000/repo/".into()));
+        assert_eq!(
+            place.destination(),
+            Some(Destination::Rest {
+                url: "https://alex:s3cret@nas:8000/repo/".into()
+            })
+        );
     }
 }

@@ -197,6 +197,12 @@ pub struct Wizard {
     advance_when_checked: bool,
     /// Opening a backup Déjà Dup made.
     pub importing: bool,
+    /// A hint pointing at the first source's Browse button, dismissed by
+    /// using it or by dismissing it directly: exclusions and the size
+    /// estimate live behind it, and nothing else on this step says so. Only
+    /// ever shown for a brand new backup, on its first (Home directory)
+    /// source — not every source, and not while editing an existing one.
+    browse_hint_dismissed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +210,7 @@ pub enum Message {
     AddSources,
     SourcesChosen(Vec<PathBuf>),
     RemoveSource(usize),
+    DismissBrowseHint,
     AddExcludes,
     ExcludesChosen(Vec<PathBuf>),
     RemoveExclude(usize),
@@ -284,6 +291,7 @@ pub struct Finish {
 impl Wizard {
     fn new(mode: Mode) -> Self {
         let step = mode.steps()[0];
+        let creating = matches!(mode, Mode::Create);
         Self {
             mode,
             step,
@@ -340,6 +348,7 @@ impl Wizard {
             busy_since: None,
             advance_when_checked: false,
             importing: false,
+            browse_hint_dismissed: !creating,
         }
     }
 
@@ -727,6 +736,10 @@ impl Wizard {
                 }
                 self.restart_estimate()
             }
+            Message::DismissBrowseHint => {
+                self.browse_hint_dismissed = true;
+                Vec::new()
+            }
             Message::RemoveExclude(index) => {
                 if index < self.excludes.len() {
                     self.excludes.remove(index);
@@ -812,6 +825,11 @@ impl Wizard {
                 effects
             }
             Message::Browse(message) => {
+                if let browse::Message::Open(path) = &message
+                    && self.sources.first() == Some(path)
+                {
+                    self.browse_hint_dismissed = true;
+                }
                 let effects = self.browse.update(message);
                 let mut result = Vec::new();
                 for effect in effects {
@@ -1099,7 +1117,16 @@ impl Wizard {
                 .and_then(|sizes| sizes.get(index))
                 .map(|bytes| format::bytes(*bytes))
                 .unwrap_or_default();
-            include = include.add(source_row(source, size, index));
+            let row = source_row(source, size, index);
+            let row = if index == 0 && !self.browse_hint_dismissed {
+                widget::popover(row)
+                    .popup(browse_hint_bubble())
+                    .position(widget::popover::Position::Bottom)
+                    .into()
+            } else {
+                row
+            };
+            include = include.add(row);
         }
         include = include
             .add(widget::button::text(fl!("wizard-add-folders")).on_press(Message::AddSources));
@@ -1583,6 +1610,28 @@ fn path_row(path: &Path, detail: String, remove: Message) -> Element<'_, Message
                 .on_press(remove),
         )
         .into()
+}
+
+/// Points at the first source's Browse button: exclusions and the size
+/// estimate live behind it, and a "Browse…" button is easy to skip past
+/// without ever pressing.
+fn browse_hint_bubble() -> Element<'static, Message> {
+    let spacing = theme::active().cosmic().spacing;
+    widget::container(
+        widget::row::with_capacity(2)
+            .spacing(spacing.space_xs)
+            .align_y(Alignment::Center)
+            .push(widget::text::body(fl!("wizard-browse-hint")).width(Length::Fixed(220.0)))
+            .push(
+                widget::button::icon(widget::icon::from_name("window-close-symbolic"))
+                    .tooltip(fl!("dismiss"))
+                    .name(fl!("dismiss"))
+                    .on_press(Message::DismissBrowseHint),
+            ),
+    )
+    .padding(spacing.space_s)
+    .class(theme::Container::Tooltip)
+    .into()
 }
 
 /// A source's row: the same as [`path_row`], with an added button to

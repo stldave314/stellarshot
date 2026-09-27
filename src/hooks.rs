@@ -12,10 +12,12 @@
 //! [`HOOK_TIMEOUT`] rather than blocking on it.
 
 use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::constants::HOOK_TIMEOUT;
+use crate::constants::{DRAIN_AFTER_EXIT, HOOK_TIMEOUT};
 use crate::profile::{Hook, HookTiming};
 
 /// What happened running one hook.
@@ -88,6 +90,10 @@ fn run_command(command: &str) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
+        // Its own process group, so a background process the hook starts
+        // (`sh -c 'mydaemon &'`) can be reached too: see `kill_group` and
+        // `wait_with_timeout`'s own doc comment.
+        .process_group(0)
         .spawn()
         .map_err(|err| format!("hook: {err}"))?;
     let (status, stderr) = wait_with_timeout(child, HOOK_TIMEOUT)?;
@@ -102,18 +108,39 @@ fn run_command(command: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Waits for `child`, killing it if it runs longer than `timeout`. Reads
-/// stderr on its own thread while waiting, so a hook that writes more than
-/// fits in the pipe's buffer cannot deadlock against a poll loop that never
-/// drains it.
+/// Kill every process in `child`'s own group (see `run_command`'s
+/// `process_group(0)`), not only `child` itself: a hook like
+/// `sh -c 'mydaemon &'` returns at once, but a background process it
+/// started keeps running, and keeps stderr's write end open, in the same
+/// group.
+fn kill_group(child: &Child) {
+    if let Some(pid) = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+}
+
+/// Waits for `child`, killing its whole process group if it runs longer
+/// than `timeout`. Reads stderr on its own thread the whole time, so a hook
+/// that writes more than fits in the pipe's buffer cannot deadlock against
+/// a poll loop that never drains it; once `child` itself has exited, that
+/// read is bounded to at most `DRAIN_AFTER_EXIT` more, since what is
+/// holding the pipe open past that point is something the hook left
+/// running behind it, not the hook itself finishing up. If even killing the
+/// group does not free the pipe (it always should), the read still returns
+/// once the kernel actually closes the last write end, rather than being
+/// abandoned outright.
 fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus, String), String> {
     let mut stderr = child.stderr.take();
-    let stderr_thread = std::thread::spawn(move || {
-        let mut buffer = String::new();
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buffer = Vec::new();
         if let Some(stderr) = stderr.as_mut() {
-            let _ = stderr.read_to_string(&mut buffer);
+            let _ = stderr.read_to_end(&mut buffer);
         }
-        buffer
+        let _ = sender.send(String::from_utf8_lossy(&buffer).into_owned());
     });
     let start = Instant::now();
     let status = loop {
@@ -121,7 +148,7 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
             Ok(Some(status)) => break Ok(status),
             Ok(None) => {
                 if start.elapsed() >= timeout {
-                    let _ = child.kill();
+                    kill_group(&child);
                     let _ = child.wait();
                     break Err(format!("timed out after {}s", timeout.as_secs()));
                 }
@@ -130,7 +157,13 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
             Err(err) => break Err(format!("hook: {err}")),
         }
     }?;
-    let stderr = stderr_thread.join().unwrap_or_default();
+    let stderr = match receiver.recv_timeout(DRAIN_AFTER_EXIT) {
+        Ok(text) => text,
+        Err(_) => {
+            kill_group(&child);
+            receiver.recv().unwrap_or_default()
+        }
+    };
     Ok((status, stderr))
 }
 
@@ -234,6 +267,78 @@ mod tests {
         let hooks = vec![hook("bad", "echo '", HookTiming::Before)];
         let err = run_before(&hooks).unwrap_err();
         assert!(err[0].detail.contains("hook"));
+    }
+
+    #[test]
+    fn a_backgrounded_process_does_not_block_on_a_full_stderr_pipe() {
+        // The hook itself (`sh`) exits at once; `yes` keeps writing to
+        // stderr in the background, in the same process group. Before
+        // REL-4, joining the stderr-reading thread waited for every holder
+        // of the pipe to close it, which `yes` never does on its own.
+        let hooks = vec![hook(
+            "backgrounds a talkative child",
+            "sh -c '(yes 1>&2 &); true'",
+            HookTiming::Before,
+        )];
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(run_before(&hooks));
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(10));
+        assert!(
+            result.is_ok(),
+            "must not hang waiting for a backgrounded child's stderr"
+        );
+        assert!(result.unwrap().unwrap()[0].ok);
+    }
+
+    #[test]
+    fn a_timeout_kills_the_whole_group_not_just_the_direct_child() {
+        // A UUID, not the thread ID, so the path is both unique (this test
+        // shares a process, and even a `std::process::id()` alone, with
+        // every other test in the crate) and shell-safe: `ThreadId`'s own
+        // `Debug` form contains parentheses, which break unquoted use in
+        // the shell command below.
+        let marker = std::env::temp_dir().join(format!(
+            "stellarshot-hook-group-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "sleep 300 & echo $! > {}; sleep 300",
+                marker.display()
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        // Give the background grandchild a moment to start and record its
+        // own PID before the direct child (the outer `sh`) is timed out.
+        for _ in 0..50 {
+            if marker.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let grandchild_pid = std::fs::read_to_string(&marker).unwrap().trim().to_owned();
+
+        let _ = wait_with_timeout(child, Duration::from_millis(200));
+
+        let still_alive = Command::new("kill")
+            .args(["-0", &grandchild_pid])
+            .status()
+            .unwrap()
+            .success();
+        let _ = std::fs::remove_file(&marker);
+        assert!(
+            !still_alive,
+            "the timeout must kill the whole group, including a backgrounded \
+             grandchild, not just the direct child"
+        );
     }
 
     #[test]

@@ -11,38 +11,57 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  # Never canceled mid-flight: an in-progress publish must finish rather than
+  # leave a tag half-released.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  package:
-    name: Build and publish packages
+  # Read-only: builds and tests the tagged commit and uploads the packages as
+  # a workflow artifact. Only `publish`, below, holds `contents: write`, so a
+  # `build.rs` anywhere in the dependency tree (including a git dependency)
+  # never runs with a token that could push to this repository.
+  build:
+    name: Build packages
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
 
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            desktop-file-utils appstream dbus gnome-keyring rclone
+            desktop-file-utils appstream dbus gnome-keyring rclone rpm2cpio
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      # `lookup-only: true`: a release build only ever reads a cache another
+      # (branch) workflow run already produced, never writes one of its own.
+      # A tag push is exactly the kind of run a cache-poisoning attack would
+      # target to plant a cache entry a future run trusts.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          lookup-only: true
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: cargo-deb,cargo-generate-rpm
 
       # The metainfo's newest release must be the version being shipped, or
-      # software centres advertise an old version indefinitely.
+      # software centers advertise an old version indefinitely.
       - name: Validate metadata
         run: ./scripts/validate-metadata.sh
 
@@ -65,7 +84,12 @@ jobs:
       - name: Build all packages
         run: ./install.sh package
 
-      - name: List artefacts
+      # See ci.yml's own comment: proves the actual shipped files, not just
+      # that the feature mechanism works in the abstract.
+      - name: Verify the shipped packages strip debug logging
+        run: ./scripts/verify-packaged-binaries-strip-logging.sh
+
+      - name: List artifacts
         run: ls -lh dist/
 
       # The release notes are the version's section of CHANGELOG.md, so the
@@ -86,13 +110,52 @@ jobs:
             exit 1
           fi
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+      - name: Upload packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          draft: false
-          body_path: release-notes.md
-          files: |
-            dist/*.deb
-            dist/*.rpm
-            dist/*.tar.gz
+          name: packages
+          path: dist/
+          if-no-files-found: error
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  # The only job with `contents: write`, and the only one that touches
+  # anything outside this run: it does not build anything itself, only
+  # downloads what `build` already produced and tested.
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # only this job needs it, to create the GitHub release
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: packages
+          path: dist
+
+      - name: Download release notes
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-notes
+
+      # `gh` is preinstalled on the runner, so this needs no third-party
+      # action (and one fewer supply-chain dependency) for what is otherwise
+      # a single API call.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            dist/*.deb dist/*.rpm dist/*.tar.gz

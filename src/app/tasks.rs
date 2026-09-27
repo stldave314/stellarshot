@@ -58,6 +58,21 @@ pub async fn pick_folder(title: String) -> Option<PathBuf> {
     }
 }
 
+/// Ask for a single existing file.
+pub async fn pick_file(title: String) -> Option<PathBuf> {
+    match file_chooser::open::Dialog::new()
+        .title(title)
+        .open_file()
+        .await
+    {
+        Ok(response) => url_to_path(response.url()),
+        Err(err) => {
+            debug_log!(UI, "file chooser: {err}");
+            None
+        }
+    }
+}
+
 pub async fn probe(destination: Destination) -> Result<Probe, EngineError> {
     blocking(move || engine::probe(&destination.location()?)).await
 }
@@ -152,12 +167,20 @@ pub async fn choose_import_path(title: String) -> Option<PathBuf> {
 /// `schedule::write_if_changed`'s own doc comment for why a plain
 /// `fs::write` is not enough), so an interrupted export leaves either the
 /// old file or the new one, never an empty one.
+///
+/// Used only for a settings export today, which can carry a hook's command
+/// line (and so, indirectly, whatever credentials that command needs, such
+/// as `mysqldump -pX`), so the file is tightened to owner-only right after
+/// the write, whatever mode a shared umask would otherwise have left it at.
 pub async fn write_file(path: PathBuf, text: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
         atomicwrites::AtomicFile::new(&path, atomicwrites::AllowOverwrite)
             .write(|file| file.write_all(text.as_bytes()))
-            .map_err(|err| std::io::Error::from(err).to_string())
+            .map_err(|err| std::io::Error::from(err).to_string())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|err| err.to_string())
     })
     .await
     .map_err(|err| err.to_string())?
@@ -342,6 +365,18 @@ mod tests {
             },
             sources,
         )
+    }
+
+    #[test]
+    fn an_exported_settings_file_is_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("export.ron");
+
+        block_on(write_file(path.clone(), "(profiles: [])".into())).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "an export can carry a hook's own credentials");
     }
 
     #[test]

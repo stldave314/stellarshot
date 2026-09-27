@@ -67,6 +67,6 @@ It also covers importing a Déjà Dup backup (restic format only; passwords are 
 - Settings are read from the Flatpak keyfile, then from `dconf dump /org/gnome/deja-dup/`.
 - They map to a profile: sources, excludes, destination (`local`, `drive`, `remote` sftp, `google`, `rclone`), with `$TOKENS` resolved through the XDG user directories.
 - **Where it appears:** "Import from Déjà Dup" on the first screen when settings are found. It opens the wizard in Open mode, pre-filled, and Google needs a sign-in first.
-- **Tests:** a fixture keyfile modelled on a real Déjà Dup 50 install, a `dconf dump` fixture, schema defaults, token resolution, and unsupported backends refused.
+- **Tests:** a fixture keyfile modeled on a real Déjà Dup 50 install, a `dconf dump` fixture, schema defaults, token resolution, and unsupported backends refused.
 
 ### Task 6: Verify, document, commit, push

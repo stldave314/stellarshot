@@ -1,0 +1,110 @@
+[graph]
+all-features = true
+
+[advisories]
+# Transitive-only, from libcosmic's own text-rendering stack: not something
+# stellarshot depends on directly, and not ours to fix (see the review
+# plan's own "Standards baseline" section). Each is a specific advisory ID,
+# not a blanket exemption for the crate, so a *different*, more serious
+# future advisory against any of them still fails the check.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled in transitively through wgpu, not a direct dependency" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; pulled in transitively through libcosmic's text stack, not a direct dependency" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled in transitively through libcosmic's text stack, not a direct dependency" },
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "Zlib",
+    "GPL-3.0-only",
+    "CDLA-Permissive-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+
+# Every one of these is a pop-os git dependency (already allow-listed under
+# [sources] below) whose Cargo.toml carries no `license` field at all, so the
+# check below has nothing to read without a manual clarification. Each
+# expression was confirmed by reading the LICENSE file at that dependency's
+# own repository root directly, not guessed: `libcosmic` and
+# `dbus-settings-bindings` are MPL-2.0, `cosmic-panel` is GPL-3.0-only (this
+# project's own license), and `window_clipboard` is MIT. `license-files = []`
+# is deliberate: cargo-deny's own file-hash verification needs the license
+# file to live inside the crate's own manifest directory, which none of
+# these monorepo sub-crates do (their LICENSE sits at the repository root,
+# one or more directories up) — asserting the expression without a hash is
+# an honest reflection of "verified by hand," not "verified by the tool."
+[[licenses.clarify]]
+crate = "cosmic-config"
+expression = "MPL-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "cosmic-config-derive"
+expression = "MPL-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "cosmic-theme"
+expression = "MPL-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "iced_accessibility"
+expression = "MPL-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "cosmic-settings-daemon"
+expression = "MPL-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "cosmic-panel-config"
+expression = "GPL-3.0-only"
+license-files = []
+
+[[licenses.clarify]]
+crate = "xdg-shell-wrapper-config"
+expression = "GPL-3.0-only"
+license-files = []
+
+[[licenses.clarify]]
+crate = "dnd"
+expression = "MIT"
+license-files = []
+
+[[licenses.clarify]]
+crate = "mime"
+expression = "MIT"
+license-files = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    # A transitive pin from iced/accesskit_winit's own dependency tree
+    # (accessibility support), not something stellarshot chose directly;
+    # not under pop-os or jackpot51, so listed explicitly rather than by org.
+    "https://github.com/wash2/accesskit",
+    # Same story: a transitive pin from iced's own text-shaping stack.
+    "https://github.com/iced-rs/cryoglyph.git",
+]
+
+[sources.allow-org]
+github = ["pop-os", "jackpot51"]

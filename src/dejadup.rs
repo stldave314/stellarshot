@@ -100,7 +100,7 @@ fn parse(text: &str) -> Settings {
     for line in text.lines() {
         let line = line.trim();
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            section = normalise_section(name);
+            section = normalize_section(name);
             continue;
         }
         let (Some(section), Some((key, value))) = (&section, line.split_once('=')) else {
@@ -117,7 +117,7 @@ fn parse(text: &str) -> Settings {
 /// `[org/gnome/deja-dup/google]` (keyfile) and `[google]` (`dconf dump` of the
 /// schema path) both become `google`; `[org/gnome/deja-dup]` and `[/]` become
 /// the empty string. Anything else is not Déjà Dup's.
-fn normalise_section(name: &str) -> Option<String> {
+fn normalize_section(name: &str) -> Option<String> {
     if name == "/" || name == SCHEMA_PATH {
         return Some(String::new());
     }
@@ -379,7 +379,7 @@ fn sftp(uri: &str, folder: &str) -> Option<Place> {
 mod tests {
     use super::*;
 
-    /// Modelled on a real Déjà Dup 50 Flatpak keyfile: Google Drive, a long
+    /// Modeled on a real Déjà Dup 50 Flatpak keyfile: Google Drive, a long
     /// exclude list, and no `include-list`, `tool` or `periodic` keys, so
     /// those take their schema defaults.
     const FLATPAK: &str = r#"[org/gnome/deja-dup]

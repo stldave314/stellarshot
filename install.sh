@@ -86,6 +86,9 @@ stage() {
     "${runner[@]}" install -Dm644 "res/$APP_ID.metainfo.xml" \
         "$root$PREFIX/share/metainfo/$APP_ID.metainfo.xml"
 
+    "${runner[@]}" install -Dm644 docs/web-interface.md \
+        "$root$PREFIX/share/doc/$BIN_APP/web-interface.md"
+
     "${runner[@]}" install -Dm644 LICENSE \
         "$root$PREFIX/share/licenses/$BIN_APP/LICENSE"
 }
@@ -168,7 +171,7 @@ cmd_tarball() {
     mkdir -p "$stagedir"
 
     PREFIX=/usr stage "$stagedir"
-    install -Dm755 install.sh "$stagedir/install.sh"
+    install -Dm755 install-tarball.sh "$stagedir/install-tarball.sh"
     install -Dm644 README.md "$stagedir/README.md"
 
     tar -czf "$DIST/$name.tar.gz" -C "$DIST" "$name"

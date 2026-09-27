@@ -561,17 +561,17 @@ backup without sitting at the machine, plus a REST API behind it.
       same History page other actions do, marked as such, from the moment it
       exists — see 0.3's History page entry
 - [x] **A daemon**: a new `stellarshot-web` binary (axum), binding according
-      to the network scope setting and enforcing the IP allow-list before any
-      route is reached — proven against a real socket, both by an
-      integration test that serves the real router on an ephemeral port and
-      by running the actual compiled binary and reaching it (and failing to
-      reach it) with real `curl` requests. Not yet a systemd service of its
-      own: today it only runs if started by hand; installing and managing it
-      as a per-user unit (the way `crate::schedule` already does for backup
-      timers) is not started. It has exactly one route (a health check) and
-      no authentication at all yet — everything reaching it is let through
-      once past the allow-list, which is acceptable only because nothing
-      behind it does anything yet
+      to the network scope setting and chosen port, and enforcing the IP
+      allow-list before any route is reached — proven against a real socket,
+      both by an integration test that serves the real router on an
+      ephemeral port and by running the actual compiled binary and reaching
+      it (and failing to reach it) with real `curl` requests. Installed and
+      managed as a per-user systemd service (`stellarshot-web.service`), the
+      same way `crate::schedule` already does for backup timers: turning the
+      network scope on or off starts or stops it immediately, and Settings
+      shows its live status (`crate::web_daemon::status`, over the session
+      D-Bus, the same way a scheduled backup's next run time is read) with
+      explicit Start/Stop/Restart controls
 - [x] **A network scope setting**: off, localhost-only, or LAN-reachable, as
       a choice in Settings (`StellarshotConfig.web.scope`) and now genuinely
       enforced by the daemon above. Defaults to off, proven with a test that
@@ -579,6 +579,18 @@ backup without sitting at the machine, plus a REST API behind it.
       `Localhost`-scoped daemon answers `curl` on `127.0.0.1` and refuses a
       connection on the machine's own LAN address, not merely "untested but
       presumably fine"
+- [x] **A configurable port** (`StellarshotConfig.web.port`, defaulting to
+      8737), validated in Settings before it is saved (not `0`, not out of
+      `u16` range) and shown as part of the full address ("Will listen at
+      `https://…`") so there is never a guessing game about where to connect
+- [x] **TLS**, always: the daemon is only ever reached over `https://`, never
+      plain HTTP. A self-signed certificate is generated once and reused
+      after (`crate::web_tls`) — regenerating it on every restart would
+      invalidate a browser's trust exception for the previous one — or a
+      certificate and key of the user's own can be set instead. Proven
+      against a real socket: a real `curl` TLS handshake, through the exact
+      function the daemon's own entry point calls, not merely that a
+      `rustls::ServerConfig` can be built in isolation
 - [x] **Password and token authentication**: the shared password (HTTP
       Basic; the username is ignored) and the API token
       (`Authorization: Bearer`) are both genuinely checked by the daemon now,
@@ -596,32 +608,41 @@ backup without sitting at the machine, plus a REST API behind it.
       startup, so changing it currently needs a restart to take effect —
       whether that is good enough long-term, or the daemon should notice a
       change without one, is unresolved
+- [x] **Brute-force throttling**: 5 failed attempts from one address within 5
+      minutes locks that address out for the rest of the window, including a
+      subsequently *correct* credential — otherwise an attacker's next guess
+      would simply be let through the moment it happened to be right — with a
+      `429` and a `Retry-After` header, and a real end-to-end test proving it
+      against real HTTP requests, not only the pure lockout-window logic. A
+      correct credential clears an address's count, so a few mistyped
+      attempts do not linger against the real owner. Kept in memory only: a
+      daemon restart (or Settings' own Restart button) clears every address
 - [x] **An IP allow-list**: addresses or CIDR ranges, added and removed in
       Settings the same way a global exclusion pattern is, and enforced by
       the daemon before any route runs — proven both by an integration test
       and by a real `curl` request rejected with a real `403` from the
       actual running binary
-- [x] **A REST API, started**: `GET /api/v1/backups` (every backup's status),
-      `GET /api/v1/backups/{id}/snapshots` (a backup's snapshots), and
+- [x] **A REST API**: `GET /api/v1/backups` (every backup's status),
+      `GET /api/v1/backups/{id}/snapshots` (a backup's snapshots),
       `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse?path=...` (a
-      folder's contents in a snapshot) — every one of them calling the same
-      `engine`/`Browser` code the desktop window already reads through, off
-      the async runtime the same way the window's own background reads are.
-      Proven against a real repository: a real backup is made, a real
-      `axum::serve` on a real socket answers real HTTP requests for it, and
-      the response is checked against what was actually backed up, not a
-      fixture standing in for one. **Not built yet**: starting a backup,
-      restoring, or reading the History page's own data — this is read-only,
-      and only three of the many things `Browser` can already do
-      (`search`, `versions`, `diff`, `missing` are not routes yet, and
-      several of their types need a `Serialize` derive first). The list of
-      backups is read once at daemon startup, like its auth settings — a
-      backup added after the daemon starts needs a restart to appear
+      folder's contents in a snapshot), and `POST /api/v1/backups/{id}/run`
+      (start an existing backup, answering before it finishes; recorded in
+      History under `Source::Web`) — every one of them calling the same
+      `engine`/`runner` code the desktop window already reads and writes
+      through, off the async runtime the same way the window's own
+      background reads are. Proven against a real repository: a real backup
+      is made, a real server on a real socket answers real HTTP requests for
+      it, and the response — including a genuinely new snapshot after
+      `run` — is checked against what actually happened, not a fixture
+      standing in for it. **Not built yet**: creating a new backup or
+      restoring one — deliberately excluded from the first pass — or reading
+      the History page's own data over the API. `search`, `versions`,
+      `diff` and `missing` are not routes yet either, and several of their
+      types need a `Serialize` derive first. The list of backups is read
+      once at daemon startup, like its auth settings — a backup added after
+      the daemon starts needs a restart to appear
 - [ ] **A web UI** on top of the API: browse, restore, and see the same
       History page the desktop app shows. Not started
-- [ ] **TLS**, if the network scope ever grows beyond a trusted LAN. Not
-      started; deliberately deferred until the scope that needs it is
-      actually offered
 
 ## 1.0 — Hardening
 
@@ -670,7 +691,7 @@ backup without sitting at the machine, plus a REST API behind it.
 - **A low-memory profile** for machines that back up millions of files, once
   it is clear what rustic lets a caller limit
 - **A privileged helper for system folders** (`/etc`, `/var/lib/docker`):
-  a small root service reached over D-Bus and authorised by Polkit, so the
+  a small root service reached over D-Bus and authorized by Polkit, so the
   window never runs as root. Container volumes (pausing a container, backing
   up its volume, resuming it) build on it, recorded under a stable path
   (`as_path`) even when read from a temporary snapshot of the volume

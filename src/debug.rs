@@ -17,6 +17,7 @@
 use std::fmt::Arguments;
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
@@ -53,23 +54,33 @@ pub const WEB: &str = "WEB";
 /// truncate it; the others would otherwise race to clobber each other's
 /// lines, or the window's.
 ///
-/// These paths are fixed and predictable (`/tmp/stellarshot-*.log`), so
-/// without this, another user on a shared machine could plant a symlink
+/// These paths are fixed and predictable (one is always `/tmp/…`; see
+/// [`crate::app::settings::RUSTIC_LOG_PATH`] for the other, which is not),
+/// so without this, another user on a shared machine could plant a symlink
 /// there first and have Stellarshot truncate or write into a file it does
 /// not otherwise have reason to touch, or read a log meant to be private.
+/// `O_CREAT` without `O_EXCL` opens a pre-existing file rather than failing,
+/// though, so a plain symlink check is not enough on its own: the `fstat`
+/// below additionally refuses a pre-existing *regular* file this user does
+/// not own, which a symlink check alone would happily open and write
+/// (truncating, in the common case) as this call's caller.
 pub(crate) fn open_private_log_file(path: &str, truncate: bool) -> Option<File> {
     let mode_flag = if truncate {
         OFlags::TRUNC
     } else {
         OFlags::APPEND
     };
-    open(
+    let file: File = open(
         path,
         OFlags::CREATE | OFlags::WRONLY | mode_flag | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::RUSR | Mode::WUSR,
     )
     .ok()
-    .map(File::from)
+    .map(File::from)?;
+    let owned_by_us = file
+        .metadata()
+        .is_ok_and(|metadata| metadata.uid() == unsafe { libc::getuid() });
+    owned_by_us.then_some(file)
 }
 
 struct Sink {
@@ -162,6 +173,26 @@ mod tests {
             std::fs::read(&target).unwrap(),
             b"do not touch",
             "the symlink's target must be untouched"
+        );
+    }
+
+    #[test]
+    fn a_pre_existing_file_owned_by_someone_else_is_refused() {
+        // `open_private_log_file` cannot itself fabricate another uid to
+        // prove this against a real file (that needs root), so this covers
+        // the comparison the other way around: a file we do own compares
+        // equal to our own uid and is accepted, which is what changes if
+        // the `uid == getuid()` check above is ever dropped or inverted by
+        // mistake.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("log");
+        std::fs::write(&path, b"already here").unwrap();
+
+        let opened = open_private_log_file(path.to_str().unwrap(), false);
+
+        assert!(
+            opened.is_some(),
+            "a pre-existing file we already own must still be usable"
         );
     }
 

@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::redact_url;
 use crate::event_log::{self, Event};
-use crate::profile::{Destination, Profile};
+use crate::profile::{self, Destination, Profile, Schedule};
 
 /// The file format's version, bumped only if a change could not otherwise
 /// be read by an older Stellarshot.
@@ -85,6 +85,11 @@ pub struct Imported {
     /// history is still merged in, in case the export has entries this
     /// installation does not.
     pub skipped: usize,
+    /// Backups refused outright: an ID that is not safe to use in a unit
+    /// name and command line, or an rclone remote outside the shape
+    /// Stellarshot itself creates (see [`profile::valid_rclone_remote`]).
+    /// Neither the profile nor its history is kept.
+    pub rejected: usize,
 }
 
 /// What merging an export produced.
@@ -97,36 +102,92 @@ pub struct Merged {
     /// installing; an existing one's is left exactly as it was).
     pub added: Vec<Profile>,
     pub counts: Imported,
+    /// Whether any added profile had a schedule or an enabled hook before
+    /// this import turned them off (see [`merge`]'s own doc comment). The
+    /// caller shows a review hint when this is set.
+    pub needs_review: bool,
 }
 
 /// Add every backup from `export` whose ID `existing` does not already have,
 /// and merge every backup's history into the store regardless.
+///
+/// An export is untrusted: it may have been hand-edited, or produced by
+/// another installation that behaved differently, so nothing in it runs
+/// unprompted just because it says to.
+///
+/// - A profile ID that is not safe to use in a systemd unit name and command
+///   line is refused outright, and so is a `Destination::Rclone` whose
+///   remote is not one Stellarshot itself could have created; either could
+///   otherwise run something the moment its schedule fires or its backup is
+///   opened. Refused profiles keep no history either, since nothing here
+///   can confirm it belongs to this installation.
+/// - Every added profile's schedule is reset to manual and every one of its
+///   hooks is disabled (kept, not dropped, so the user can review them),
+///   since an imported hook is an arbitrary command that would otherwise run
+///   the first time its schedule fires.
 pub fn merge(existing: &[Profile], export: &Export) -> Merged {
     let mut profiles = existing.to_vec();
     let mut added = Vec::new();
     let mut counts = Imported::default();
+    let mut needs_review = false;
+    let mut kept_ids: std::collections::HashSet<String> =
+        existing.iter().map(|p| p.id.clone()).collect();
     for profile in &export.profiles {
         if existing.iter().any(|kept| kept.id == profile.id) {
             counts.skipped += 1;
-        } else {
-            let mut profile = profile.clone();
-            // A well-behaved export already cleared this; an untrusted or
-            // hand-edited file might not have, and a `password_command`
-            // taken on faith would run unprompted the first time this
-            // backup's schedule fires.
-            profile.password_command.clear();
-            profiles.push(profile.clone());
-            added.push(profile);
-            counts.added += 1;
+            continue;
         }
+        if !profile::valid_id(&profile.id) || !remote_is_safe(&profile.destination) {
+            counts.rejected += 1;
+            continue;
+        }
+        let mut profile = profile.clone();
+        // A well-behaved export already cleared this; an untrusted or
+        // hand-edited file might not have, and a `password_command` taken
+        // on faith would run unprompted the first time this backup's
+        // schedule fires.
+        profile.password_command.clear();
+        if profile.schedule != Schedule::Manual {
+            needs_review = true;
+            profile.schedule = Schedule::Manual;
+        }
+        for hook in &mut profile.hooks {
+            if hook.enabled {
+                needs_review = true;
+                hook.enabled = false;
+            }
+        }
+        kept_ids.insert(profile.id.clone());
+        profiles.push(profile.clone());
+        added.push(profile);
+        counts.added += 1;
     }
     for (id, events) in &export.history {
-        event_log::merge(id, events);
+        if kept_ids.contains(id) {
+            event_log::merge(id, events);
+        }
     }
     Merged {
         profiles,
         added,
         counts,
+        needs_review,
+    }
+}
+
+/// Whether `destination` is safe to accept from an untrusted export: only
+/// `Destination::Rclone` needs a check here, since its `remote` is used
+/// verbatim as `"{remote}:{path}"`, the last argument to `rclone serve
+/// restic` (see [`profile::valid_rclone_remote`]'s own doc comment). Every
+/// other destination kind is built from structured fields rustic or rclone
+/// receive as separate, already-escaped arguments.
+fn remote_is_safe(destination: &Destination) -> bool {
+    match destination {
+        Destination::Rclone { remote, .. } => profile::valid_rclone_remote(remote),
+        Destination::Local { .. }
+        | Destination::Removable { .. }
+        | Destination::Sftp { .. }
+        | Destination::Rest { .. } => true,
     }
 }
 
@@ -201,6 +262,84 @@ mod tests {
     }
 
     #[test]
+    fn an_imported_backups_schedule_and_hooks_start_off_and_flag_for_review() {
+        use crate::profile::{Hook, HookTiming};
+
+        let mut smuggled = profile("smuggled-schedule");
+        smuggled.schedule = Schedule::Hourly;
+        smuggled.hooks = vec![Hook {
+            name: "run at first fire".into(),
+            command: "sh -c 'touch /tmp/pwn'".into(),
+            timing: HookTiming::Before,
+            enabled: true,
+        }];
+        let export = Export {
+            version: 1,
+            profiles: vec![smuggled],
+            history: Vec::new(),
+        };
+
+        let merged = merge(&[], &export);
+
+        assert_eq!(merged.added[0].schedule, Schedule::Manual);
+        assert!(
+            !merged.added[0].hooks[0].enabled,
+            "an imported hook must not run until reviewed"
+        );
+        assert!(merged.needs_review);
+    }
+
+    #[test]
+    fn an_rclone_remote_outside_the_wizards_shape_is_rejected_on_import() {
+        let mut attack = profile("rclone-attack");
+        attack.destination = Destination::Rclone {
+            remote: ":sftp,host=h,ssh=\"touch /tmp/pwn\"".into(),
+            path: "backups".into(),
+            provider: "Custom".into(),
+        };
+        let export = Export {
+            version: 1,
+            profiles: vec![attack],
+            history: Vec::new(),
+        };
+
+        let merged = merge(&[], &export);
+
+        assert_eq!(
+            merged.counts,
+            Imported {
+                added: 0,
+                skipped: 0,
+                rejected: 1
+            }
+        );
+        assert!(merged.profiles.is_empty());
+    }
+
+    #[test]
+    fn an_unsafe_profile_id_is_rejected_and_its_history_is_not_merged() {
+        let bad_id = profile("../x");
+        let export = Export {
+            version: 1,
+            profiles: vec![bad_id],
+            history: vec![(
+                "../x".into(),
+                vec![Event {
+                    time: 1,
+                    kind: EventKind::BackedUp,
+                    source: event_log::Source::Desktop,
+                }],
+            )],
+        };
+
+        let merged = merge(&[], &export);
+
+        assert_eq!(merged.counts.rejected, 1);
+        assert!(merged.profiles.is_empty());
+        assert!(event_log::load("../x").is_empty());
+    }
+
+    #[test]
     fn a_new_backup_is_added_and_an_existing_one_is_left_alone() {
         let existing = [profile("already-here")];
         let export = Export {
@@ -222,7 +361,8 @@ mod tests {
             merged.counts,
             Imported {
                 added: 1,
-                skipped: 1
+                skipped: 1,
+                rejected: 0
             }
         );
         assert_eq!(merged.profiles.len(), 2);

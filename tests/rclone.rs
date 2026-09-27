@@ -162,7 +162,7 @@ fn signing_in_never_writes_into_a_readable_configuration() {
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
 
     // `local` needs no browser; a cloud sign-in writes its token the same way.
-    stellarshot::engine::rclone::sign_in(&config, "probe", "local", &[]).unwrap();
+    stellarshot::engine::rclone::sign_in(&config, "probe", "local", &[], None).unwrap();
 
     let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "rclone keeps an existing file's mode");
@@ -180,7 +180,7 @@ fn running_with(needle: &str) -> bool {
 }
 
 #[test]
-fn cancelling_a_backup_through_rclone_ends_it_and_stops_rclone() {
+fn canceling_a_backup_through_rclone_ends_it_and_stops_rclone() {
     use cosmic::iced::futures::StreamExt;
     use stellarshot::app::child::{self, ChildEvent};
     use stellarshot::engine::Phase;

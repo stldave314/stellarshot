@@ -32,14 +32,20 @@ note in the [README](README.md).
 - **No lock-in.** Every repository can be read with the `restic` or `rustic`
   command-line tools, so a bug in, or the end of, this app does not strand your
   backups.
-- **Passwords are never written to Stellarshot's own files.** A password is
-  either typed each session or, when you choose **Remember password**, kept in
-  the desktop keyring (the Secret Service: GNOME Keyring or KWallet), which
+- **The repository password is never written to Stellarshot's own files.** It
+  is either typed each session or, when you choose **Remember password**, kept
+  in the desktop keyring (the Secret Service: GNOME Keyring or KWallet), which
   encrypts it with your login password. The keyring item is labeled with the
   backup's name and removed when you remove the backup. Backups run in a
   separate process; the password is handed to it on its standard input, never
   on its command line or in its environment, which other programs running as
-  you can read from `/proc`.
+  you can read from `/proc`. **One destination is the exception:** a
+  rest-server or rustic-server backup's full address, including any username
+  and password in it (`http://user:pass@host:port/repo/`), is stored as
+  typed, in Stellarshot's own settings file, readable only by you. If your
+  server needs a password, consider a URL without one and a server-side
+  mechanism (a client certificate, or a network restriction) instead, until
+  this is addressed.
 - **Deletion only touches the repository.** Deleting a backup's data needs its
   name typed exactly, holds the repository's lock, removes the entries the
   repository format creates and nothing else, and does not follow symlinks. Creating a repository in a folder that already holds other files is
@@ -82,6 +88,23 @@ note in the [README](README.md).
 - **Release builds cannot carry debug logging.** Developer logging is compiled
   out by the `release-build` feature that every packaging target passes. CI
   proves this by checking the built binary, not by trusting the source.
+- **The web interface is off by default, and reached only over TLS.** Turning
+  it on requires an explicit choice of network scope; with no authentication
+  method enabled it rejects every request rather than becoming an open API by
+  omission, and a wrong password or token is compared by hashing both sides
+  first, so neither its timing nor even its length gives anything away. A
+  request with no credentials at all — the way a same-origin page in your own
+  browser could otherwise probe this daemon — is rejected without counting
+  against anything. Repeated *wrong* guesses from one address are throttled
+  and escalate the longer they keep coming back (5 minutes, 15, 60, capped at
+  a day), and a burst of failures across many addresses at once pauses
+  password authentication for everyone until it passes. A request that did
+  not come from this daemon's own origin is refused outright, before
+  authentication is even attempted — see
+  [Cross-site requests](docs/web-interface.md#cross-site-requests). It runs
+  as your own per-user systemd service — no elevated privileges — and an IP
+  allow-list can restrict it further than the network scope alone does. See
+  [docs/web-interface.md](docs/web-interface.md).
 
 ## What it does not protect against
 
@@ -102,6 +125,11 @@ note in the [README](README.md).
   reused password strong.
 - **Data that was never backed up.** Files you cannot read (other users'
   files, some system files) are skipped.
+- **The self-signed certificate the web interface generates by default is
+  not backed by a certificate authority.** Your browser or `curl` has to
+  trust it on first use, the same as any self-signed certificate; if that
+  trust-on-first-use model does not fit your situation, set your own
+  certificate instead.
 
 ## Handling of your data
 

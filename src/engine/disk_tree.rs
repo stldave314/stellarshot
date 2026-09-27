@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_stops_the_walk() {
+    fn canceling_stops_the_walk() {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("a")).unwrap();
         std::fs::create_dir_all(dir.path().join("b")).unwrap();

@@ -115,12 +115,14 @@ snapshot you ever made.
 
 ## What is coming
 
-A web interface and REST API — the settings and a daemon exist (off by
-default; see [Settings](#settings)), but there is no web page to visit yet
-and authentication beyond a password or token is not wired up. Also: a
-clearer picture of every backup, finer control over what is backed up, more
-storage options and alerts beyond the desktop, on the way to 1.0. The detail
-is in [ROADMAP.md](ROADMAP.md).
+A web interface and REST API — off by default (see [Settings](#settings)),
+it can start an existing backup and report on every backup's status; there
+is no web page to browse or restore from yet, and signing in with this
+computer's own password (PAM) is not wired up. See
+[docs/web-interface.md](docs/web-interface.md) for what it can do today.
+Also: a clearer picture of every backup, finer control over what is backed
+up, more storage options and alerts beyond the desktop, on the way to 1.0.
+The detail is in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -137,6 +139,9 @@ is in [ROADMAP.md](ROADMAP.md).
 other cloud storage, and is recommended by the packages. Folders and USB drives
 work without it.
 
+`fuse3` is needed for **Mount as Folder**, and is also recommended by the
+packages. Everything else works without it.
+
 ## Installing
 
 ### Packages
@@ -147,6 +152,16 @@ work without it.
 ```sh
 sudo apt install ./stellarshot_*.deb      # Debian, Ubuntu, Pop!_OS
 sudo dnf install ./stellarshot-*.rpm      # Fedora
+```
+
+For the portable tarball, extract it and run its own installer — not
+`install.sh` (this project's own build script, needs cargo and the full
+source):
+
+```sh
+tar xf stellarshot-*.tar.gz
+cd stellarshot-*/
+./install-tarball.sh
 ```
 
 ### From source
@@ -187,7 +202,8 @@ right-click menu).
 
 1. **What.** Your home folder is included, with `~/.cache`, the Trash and
    `~/Downloads` left out. **Add Folders…** under *Include* or *Exclude* adds
-   more (you can pick several at once). **Browse…** on an included folder
+   more (you can pick several at once). A hint points at **Browse…** the
+   first time you set up a new backup, since it is easy to pass over. It
    opens a disk-usage tree rooted there instead: every row sized as it is
    expanded, marked **Included**, **Excluded**, or **Partly included**, with
    a button to flip it — an easier way to find what is actually taking up
@@ -396,12 +412,17 @@ Add **Stellarshot** from COSMIC Settings' panel applet list for a status icon:
 plain when everything is fine, a sync icon while a backup (scheduled or
 started from the window) is running, and a warning icon if one has failed or
 fallen overdue. Its popup lists every backup with when each last succeeded,
-and an **Open Stellarshot** button.
+and **Open Stellarshot** and **Quit** buttons.
 
 Closing the window minimizes it to the panel rather than quitting — the
 process, and any backup in progress, keeps running. Opening Stellarshot again,
 from the applet or the launcher, brings the same window back rather than
-starting a second one.
+starting a second one. **Quit** (in the window's menu, <kbd>Ctrl</kbd>+<kbd>Q</kbd>,
+or the applet's popup) closes it for real; if a backup is running it asks
+first, since the backup keeps going in its own process either way, but
+nothing is left watching it or showing its progress. Quitting the applet
+itself never affects a backup, which the window (or a scheduled run) runs
+independently of it.
 
 ### Hooks
 
@@ -494,6 +515,8 @@ next to it keeps one however old it gets, until unpinned.
 | <kbd>Ctrl</kbd>+<kbd>I</kbd> | About |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | New window — a genuinely separate one, not just refocusing this one |
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel; see [The panel applet](#the-panel-applet)) |
+| <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit for real, rather than minimizing to the panel. Asks first if a backup is running — it keeps going in its own process either way, but nothing is left watching it |
+| <kbd>F1</kbd> | Help |
 
 ### Command line
 
@@ -505,7 +528,7 @@ next to it keeps one however old it gets, until unpinned.
 | `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
 | `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable or a laptop condition is not met |
 | `stellarshot-applet` | The panel applet; run by the panel itself, not normally launched directly |
-| `stellarshot-web` | The web interface's daemon: reads the Web interface setting and, unless it is Off, binds and serves the REST API. No systemd service yet — run by hand to try it |
+| `stellarshot-web` | The web interface's daemon: reads the Web interface setting and, unless it is Off, binds and serves the REST API over HTTPS. Managed as a systemd user service, started and stopped from Settings; not normally run by hand |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
 ### Reading your backups without Stellarshot
@@ -518,6 +541,26 @@ restic -r /path/to/backup snapshots
 restic -r /path/to/backup restore latest --target ~/restored
 ```
 
+Each snapshot carries a `stellarshot-profile:<id>` tag, visible in `rustic
+snapshots` or `restic snapshots`. It is how Stellarshot tells its own
+backups apart when two of them are pointed at the same repository (see
+[Opening an existing backup](#opening-an-existing-backup)), so that cleaning
+up one never touches the other's history.
+
+**Reading with `restic` or `rustic` is always safe. Never run `restic prune`
+or `restic forget --prune` against a repository Stellarshot may be writing
+to.** rustic (what Stellarshot itself uses) does not take or honor restic's
+lock, and deletes unreferenced data only after a grace period (23 hours by
+default) specifically so a concurrent write has time to finish; restic's own
+`prune` deletes at once instead, relying on a lock rustic never takes. Run
+against a repository Stellarshot is backing up to at that moment, it can
+delete packs Stellarshot just wrote before they are referenced, corrupting
+the repository. See rustic's own [FAQ on restic
+compatibility](https://rustic.cli.rs/docs/FAQ.html) for the same warning in
+more detail. Cleaning up is always safe from inside Stellarshot itself
+(**Clean Up Now**, or the automatic clean-up after a scheduled backup): both
+run rustic's own `forget`/`prune`, never restic's.
+
 ---
 
 ## Settings
@@ -527,7 +570,7 @@ restic -r /path/to/backup restore latest --target ~/restored
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 | Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
 | Cache location | rustic's own default (`~/.cache/rustic`) | Another folder, or no local cache at all, for every repository this computer opens |
-| Web interface | Off | Network scope (off, this computer only, or reachable on the network), a shared password, an API token, PAM, and an address allow-list, for the `stellarshot-web` daemon. Still in progress: no web page exists yet, PAM is not checked, and the daemon has to be started by hand — see [ROADMAP.md](ROADMAP.md) |
+| Web interface | Off | Network scope (off, this computer only, or reachable on the network), the port, a TLS certificate (self-signed by default, or one of your own), a shared password, an API token, PAM, and an address allow-list, for the `stellarshot-web` daemon — see [docs/web-interface.md](docs/web-interface.md). Still in progress: no web page exists yet and PAM is not checked — see [ROADMAP.md](ROADMAP.md) |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in
@@ -723,10 +766,10 @@ written to stderr too.
              each backup's status straight off disk (run history, and
              whether something holds its repository's lock), the same way
              the window itself does; no D-Bus link to the window at all
-  web     ── stellarshot-web, a separate daemon (off by default, run by hand
-             for now). Reads settings and snapshots the same way the window
-             does; a write would go through the same runner as its child
-             process, once the REST API grows write routes
+  web     ── stellarshot-web, a separate daemon (off by default; a systemd
+             user service when on). Reads settings and snapshots the same
+             way the window does; starting a backup runs in-process, through
+             the same runner as the window's own child process
 ```
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
@@ -770,8 +813,10 @@ running as you can read.
 | `app::child` | Spawns `--run` in its own process group, streams its events into the UI, cancels it and everything it started |
 | `app::errors` | A localized explanation for every kind of engine error |
 | `app::migrate` | One-time moves of settings from older versions |
-| `web` | `stellarshot-web`, a separate daemon: binds according to the network scope setting, enforces the address allow-list, then a shared password or API token, ahead of every route |
-| `web::routes` | The REST API's own routes: a backup's status, its snapshots, and browsing a folder in one — read-only so far |
+| `web` | `stellarshot-web`, a separate daemon: serves the REST API over HTTPS, binds according to the network scope and port settings, enforces the address allow-list, then a shared password or API token, ahead of every route |
+| `web::routes` | The REST API's own routes: a backup's status, its snapshots, browsing a folder, and starting an existing backup |
+| `web_tls` | The daemon's TLS certificate: a self-signed one generated once and reused, or one of the user's own |
+| `web_daemon` | Installing, starting, stopping and reading the status of `stellarshot-web` as a systemd user service |
 | `web_token` | Generating and verifying the web interface's API token; only its hash is ever stored |
 
 ---

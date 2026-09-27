@@ -35,10 +35,11 @@ pub use disk_tree::{DiskEntry, list_with_sizes};
 pub use error::{EngineError, ErrorKind};
 pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdown};
 pub use keys::KeySummary;
-pub use maintenance::{ForgetReport, KeepRules, PruneReport, hostname};
+pub use maintenance::{ForgetReport, KeepRules, PruneReport, hostname, profile_tag};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
 pub use repo::{
     Location, Probe, Repo, Secret, delete_repository, init, init_with, open, probe, redact_url,
+    scrub_url_credentials,
 };
 pub use restore::{ConflictPolicy, Ownership, RestorePreview, RestoreRequest, Target};
 pub use snapshots::SnapshotSummary;

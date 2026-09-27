@@ -5,6 +5,121 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Importing a settings file from someone else can no longer run
+  commands.** An imported backup now always starts with its schedule set to
+  Manual and every hook turned off (kept, not discarded, so they can be
+  reviewed first), with a dialog explaining why. A remote destination in the
+  import is only accepted if it already exists in Stellarshot's own rclone
+  configuration, closing off a crafted remote string that could otherwise
+  make rclone run a command of its own. Exported settings files are now
+  written readable only by their owner.
+- **The web interface now refuses a cross-site request outright**, before
+  authentication is even attempted, so a page open in your browser on some
+  other site cannot use your own still-valid access against this API.
+- **A page in your own browser can no longer lock you out of the web
+  interface.** Only a request that actually presented a password or token
+  counts against the lockout now; a credential-less request is still
+  refused, but does not cost the address anything.
+- **Repeated wrong passwords or tokens now lock an address out for longer
+  each time it comes back**: 5 minutes, then 15, then 60, capped at a day —
+  instead of the same 5-minute window every time. A burst of failures across
+  many addresses at once now also pauses password authentication for
+  everyone until it passes.
+- **The web interface's shared password now needs at least 12 characters.**
+- **The LAN network scope's empty IP allow-list now means "private network
+  addresses only"**, not everyone: it binds every network interface on this
+  machine, and the allow-list wording and this fallback now say so.
+
+### Added
+
+- **A settings icon in the header bar**, right-aligned next to the window
+  controls, matching where COSMIC Store and COSMIC Files put theirs. It
+  opens the same Settings page as View → Settings.
+- **The web interface can now actually be reached**, not just configured:
+  - It runs as a per-user systemd service, started and stopped automatically
+    when the network scope is turned on or off, with a status indicator and
+    Start/Stop/Restart controls in Settings.
+  - Its port is now a setting, shown as part of the full address so there is
+    no guessing where to connect.
+  - It is always reached over `https://`: a self-signed certificate is
+    generated automatically and reused across restarts, or a certificate and
+    key of your own can be set instead.
+  - A new `POST /api/v1/backups/{id}/run` route starts an existing backup —
+    not a new one, and not a restore — the same thing "Back Up Now" does on
+    the desktop, recorded on the History page.
+  - Repeated wrong passwords or tokens from the same address are throttled
+    and locked out for a while, told how long to wait (see Security, above,
+    for exactly how).
+  - [A new page](docs/web-interface.md) documents the whole thing: settings,
+    the daemon, and the API, linked from Settings itself.
+- **A hint points at the Browse button** the first time you set up a new
+  backup, next to the folder it starts with. Exclusions and the size
+  estimate live behind it, and nothing else on that page says so. It
+  disappears the first time you use Browse, or if you dismiss it directly,
+  and only ever shows once, for a brand new backup's first folder — not for
+  every folder, and not while editing an existing backup.
+
+### Fixed
+
+- **Two profiles sharing one repository no longer prune each other's
+  snapshots.** Every new snapshot now carries a tag identifying which backup
+  made it, and cleanup only ever removes snapshots carrying the current
+  backup's tag (or, for a snapshot made before this change, one whose
+  recorded source folders still match).
+- **A hook meant to run after a backup ("start the database back up") now
+  always runs**, even when the backup itself couldn't start — a wrong
+  password or an unreachable destination no longer leaves a stopped service
+  stopped.
+- **A backup of a folder with hundreds of unreadable files or subfolders no
+  longer hangs forever.** Its diagnostic output is now read continuously in
+  the background instead of only after it finishes, so it can no longer fill
+  up and block the backup mid-run.
+- **An excluded path containing a wildcard character (`*`, `?`, `[`) in its
+  actual name is now excluded correctly**, instead of being interpreted as a
+  pattern that could match unrelated files — or, in one case, the backup's
+  own repository, causing it to back up into itself.
+- **Files and folders with names that aren't valid UTF-8 text can now be
+  browsed, mounted, and restored individually**, instead of being skipped.
+- **Checking a backup's status no longer occasionally reports a running
+  backup as "Locked" and fails it.**
+- **A repository's lock now recognizes the same local folder consistently**,
+  even when it's reached through a symlink or a relative path, so two
+  profiles pointing at the same folder in different ways correctly take
+  turns instead of racing.
+- **The applet's Open button now always opens the actual window**, instead
+  of occasionally launching a second, useless instance of the applet itself.
+- **There is now a way to quit Stellarshot entirely** (Ctrl+Q, and a Quit
+  entry in the window menu), rather than only minimizing to the panel
+  applet or closing the last window.
+- **Deleting a snapshot now asks for confirmation first**, matching every
+  other destructive action in the app.
+- **A rare Fluent syntax error no longer silently drops the "this word is
+  only shown once" warning** from every language's translation file.
+- **The web interface's Settings page now shows the address it will listen
+  at** once a network scope other than Off is chosen, instead of leaving you
+  to guess the port.
+- **Saving the web interface's shared password now confirms it was saved.**
+  The field clearing itself was the only feedback; it now looks the same
+  whether the save quietly succeeded or nothing happened at all.
+- **A window reopened from the panel applet no longer shows two title
+  bars.** Closing the window (minimizing it to the panel) and reopening it
+  from there used a plain window configuration that asked the compositor to
+  draw its own title bar on top of the app's own, instead of the
+  client-side-only decoration the window starts with. Only the reopen path
+  was affected; a fresh launch was never doubled.
+- **A backup or restore started right after Stellarshot itself was updated
+  now says so, instead of a bare "os error 2".** Every operation runs in a
+  child process spawned from the app's own executable path; once a package
+  upgrade replaces that file out from under an already-running window, the
+  path can no longer be launched. This is now recognized and reported as
+  "Stellarshot was updated while it was running" rather than the raw
+  operating-system error, with a clear next step: quit the app completely
+  and open it again.
+
 ## [0.6.0] - 2026-09-26
 
 Getting more out of a backup: mounting a snapshot as a folder, a History
@@ -336,7 +451,7 @@ checks and notifications.
 - **A repository can no longer be created in a folder that holds other
   files.** The folder must be empty, not yet exist, or already be a
   repository.
-- **A wrong password never re-initialises an existing repository.** Upstream
+- **A wrong password never re-initializes an existing repository.** Upstream
   initialized whenever opening failed, for any reason.
 
 ### Added

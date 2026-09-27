@@ -52,6 +52,53 @@ fn setup(files: usize) -> (TempDir, Job) {
     (dir, job)
 }
 
+/// `count` unreadable subdirectories under the source: each one makes
+/// rustic_core log a warning to the child's stderr, which is how REL-3's
+/// regression test reproduces a pipe full enough to block a `write(2)` that
+/// never gets drained.
+fn setup_with_unreadable_dirs(count: usize) -> (TempDir, Job) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    for index in 0..count {
+        let sub = source.join(format!("locked-{index}"));
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let location = Location::local(dir.path().join("repo"));
+    engine::init(&location, &Secret::new(PASSWORD)).unwrap();
+    let job = Job {
+        request: Some(BackupRequest {
+            sources: vec![source],
+            ..BackupRequest::default()
+        }),
+        ..Job::new(location, Secret::new(PASSWORD))
+    };
+    (dir, job)
+}
+
+#[test]
+fn a_backup_does_not_hang_on_a_full_stderr_pipe() {
+    let (_dir, job) = setup_with_unreadable_dirs(2000);
+
+    let result = runtime().block_on(async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            child::run_with(exe(), Operation::Backup, job).collect::<Vec<_>>(),
+        )
+        .await
+    });
+
+    let events = result
+        .expect("the backup must finish inside the timeout, not deadlock on a full stderr pipe");
+    assert!(
+        matches!(events.last(), Some(ChildEvent::Event(Event::Done { .. }))),
+        "last event: {:?}",
+        events.last()
+    );
+}
+
 #[test]
 fn a_backup_streams_started_progress_and_done() {
     let (_dir, job) = setup(2);
@@ -78,7 +125,7 @@ fn a_backup_streams_started_progress_and_done() {
 }
 
 #[test]
-fn cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot() {
+fn canceling_a_backup_ends_it_as_canceled_without_a_snapshot() {
     let (_dir, job) = setup(48);
     let location = job.repository.clone();
 
@@ -113,6 +160,24 @@ fn cancelling_a_backup_ends_it_as_cancelled_without_a_snapshot() {
         snapshots.is_empty(),
         "a canceled backup must not leave a snapshot"
     );
+}
+
+#[test]
+fn a_replaced_executable_says_the_app_needs_restarting() {
+    let (_dir, job) = setup(0);
+    let events: Vec<ChildEvent> = runtime().block_on(
+        child::run_with(
+            Ok(PathBuf::from("/usr/bin/stellarshot (deleted)")),
+            Operation::Backup,
+            job,
+        )
+        .collect(),
+    );
+
+    match events.as_slice() {
+        [ChildEvent::Ended(error)] => assert_eq!(error.kind, ErrorKind::AppUpdated),
+        other => panic!("expected a single error, got {other:?}"),
+    }
 }
 
 #[test]

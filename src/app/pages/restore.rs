@@ -1755,7 +1755,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelling_drops_the_rest_of_the_queue() {
+    fn canceling_drops_the_rest_of_the_queue() {
         let mut page = page_with_snapshots();
         page.running = Some(Running {
             handle: None,

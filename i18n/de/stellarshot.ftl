@@ -75,6 +75,7 @@ wizard-include = Einschließen
 wizard-exclude = Ausschließen
 wizard-exclude-outside = Liegt in keinem eingeschlossenen Ordner und ändert daher nichts
 wizard-add-folders = Ordner hinzufügen …
+wizard-browse-hint = Durchsuchen, um zu sehen, was Platz beansprucht, und ausschließen, was nicht gebraucht wird.
 browse-open = Durchsuchen …
 browse-close = Schließen
 browse-scanning = Wird gescannt … bisher { $count } gefunden
@@ -118,6 +119,7 @@ back = Zurück
 next = Weiter
 edit = Bearbeiten
 remove = Entfernen
+dismiss = Verwerfen
 delete = Löschen
 cancel = Abbrechen
 password = Passwort
@@ -125,6 +127,8 @@ remove-title = „{ $name }“ entfernen?
 remove-body = Stellarshot vergisst diese Sicherung und ihr gespeichertes Passwort. Die Sicherung und ihre Momentaufnahmen werden nicht gelöscht und können später wieder geöffnet werden.
 delete-title = „{ $name }“ und alle Daten löschen?
 delete-body = Dadurch werden die Sicherung und jede Momentaufnahme darin endgültig gelöscht. Andere Dateien im selben Ordner bleiben unberührt. Gib { $name } zur Bestätigung ein.
+delete-snapshot-title = Diese Momentaufnahme löschen?
+delete-snapshot-body = Die Momentaufnahme vom { $time } wird endgültig gelöscht. Dateien darin, die keine andere Momentaufnahme braucht, werden bei der nächsten Aufräumaktion freigegeben.
 
 # Errors
 error-title = Etwas ist schiefgelaufen
@@ -163,7 +167,10 @@ file = Datei
 menu-new-backup = Neue Sicherung …
 new-backup = Neue Sicherung
 new-window = Neues Fenster
+menu-close-window = Fenster schließen
 quit = Verlassen
+quit-confirm-title = Beenden, während etwas läuft?
+quit-confirm-body = Eine Sicherung oder ein anderer Schreibvorgang läuft gerade. Er läuft in einem eigenen Prozess weiter, auch nachdem Stellarshot beendet wurde, aber niemand beobachtet ihn mehr oder zeigt seinen Fortschritt an.
 view = Ansicht
 menu-settings = Einstellungen
 menu-about = Informationen über Stellarshot
@@ -430,6 +437,10 @@ notify-open = Öffnen
 error-timed-out = Innerhalb von { $seconds } Sekunden kam keine Antwort. Die Verbindung ist vielleicht langsam, oder der Speicherdienst begrenzt die Anfragen. Prüfe deine Verbindung und versuche es erneut.
 error-conditions-not-met = Die Bedingungen wurden nicht erfüllt: { $reason }
 error-hook-failed = Ein Hook ist fehlgeschlagen, daher wurde die Sicherung nicht ausgeführt: { $reason }
+error-app-updated = Stellarshot wurde aktualisiert, während es lief, und kann diesen Vorgang deshalb nicht mehr starten. Beende es vollständig und öffne es erneut.
+error-invalid-remote = Das Cloud-Speicher-Remote dieser Sicherung wird von Stellarshot nicht als eigenes erkannt und kann deshalb nicht geöffnet werden.
+error-unsafe-path = Eine Datei in dieser Sicherung verweist auf einen Ort außerhalb des Wiederherstellungsordners ({ $path }), daher wurde nichts wiederhergestellt.
+error-not-found = { $path } ist nicht in dieser Sicherung enthalten.
 place-checking-for = Wird geprüft … { $time }
 wizard-creating = Wird erstellt … { $time }
 wizard-opening = Wird geöffnet … { $time }
@@ -526,8 +537,13 @@ settings-import-done-body = { $added ->
     [0] {""}
     [1] Eine war schon vorhanden und wurde unverändert gelassen.
    *[other] { $skipped } waren schon vorhanden und wurden unverändert gelassen.
+} { $rejected ->
+    [0] {""}
+    [1] Eine konnte nicht sicher importiert werden und wurde übersprungen.
+   *[other] { $rejected } konnten nicht sicher importiert werden und wurden übersprungen.
 }
 settings-import-failed = Die Einstellungen konnten nicht importiert werden.
+settings-import-hooks-disabled = Importierte Sicherungen starten mit ausgeschaltetem Zeitplan und ausgeschalteten Hooks. Prüfe sie, bevor du sie einschaltest.
 home = Übersicht
 home-backups-title = Sicherungen
 home-backup-detail = { $status } · { $last }
@@ -582,11 +598,19 @@ web-scope-localhost = Nur dieser Computer
 web-scope-localhost-description = Nur von diesem Computer selbst erreichbar, zum Beispiel über einen eigenen SSH-Tunnel.
 web-scope-lan = Im Netzwerk erreichbar
 web-scope-lan-description = Von jedem anderen Gerät im selben Netzwerk erreichbar.
+web-port = Port
+web-port-description = Auf welchem Port die Weboberfläche lauscht.
+web-port-invalid = Das ist keine gültige Portnummer. Sie muss zwischen 1 und 65535 liegen.
+web-address = Wird auf { $url } erreichbar sein.
 web-auth-password = Gemeinsames Passwort
 web-auth-password-description = Ein Passwort, getrennt vom Passwort jeder Sicherung, zum Anmelden erforderlich.
 web-password-set = Passwort festlegen
 web-password-placeholder = Neues Passwort
+web-password-saved-title = Passwort gespeichert
+web-password-saved-body = Die Weboberfläche verwendet es beim nächsten Start.
 web-password-failed = Das Passwort der Weboberfläche konnte nicht gespeichert werden.
+web-password-too-short-title = Passwort zu kurz
+web-password-too-short-body = Verwenden Sie mindestens { $minimum } Zeichen.
 web-auth-token = API-Token
 web-auth-token-description = Ein erzeugtes Token für die programmgesteuerte Nutzung der API der Weboberfläche.
 web-token-generate = Token
@@ -596,12 +620,30 @@ web-token-none = Es wurde noch kein Token erzeugt.
 web-token-title = Neues API-Token
 web-token-body = { $token }
 
-Dies wird nur einmal angezeigt. Bewahre es sicher auf: ein weiteres erzeugtes Token ersetzt dieses.
+    Dies wird nur einmal angezeigt. Bewahre es sicher auf: ein weiteres erzeugtes Token ersetzt dieses.
 web-auth-pam = Die eigene Anmeldung dieses Computers
 web-auth-pam-description = Mit demselben Passwort anmelden, mit dem man sich an diesem Computer anmeldet.
 web-allowed-title = Erlaubte Adressen
 web-allowed-description = Nur diese Adressen oder Bereiche dürfen die Weboberfläche erreichen. Leer bedeutet jede Adresse, die die obige Einstellung bereits erlaubt.
 web-allowed-placeholder = Adresse oder Bereich, zum Beispiel 192.168.1.0/24
+web-tls-title = TLS-Zertifikat
+web-tls-description = Die Weboberfläche wird immer über HTTPS erreicht. Standardmäßig erzeugt und verwendet sie ein eigenes selbstsigniertes Zertifikat; ein Browser benötigt dafür einmalig eine Vertrauensausnahme. Lege stattdessen ein eigenes Zertifikat und einen eigenen Schlüssel fest, falls du eines hast, zum Beispiel von einer Zertifizierungsstelle, der deine Geräte bereits vertrauen.
+web-tls-cert = Zertifikat
+web-tls-key = Privater Schlüssel
+web-tls-default = Selbstsigniert (automatisch erzeugt)
+web-tls-cert-title = Zertifikatsdatei auswählen
+web-tls-key-title = Datei mit privatem Schlüssel auswählen
+web-daemon-title = Dienst
+web-daemon-status = Status
+web-daemon-status-active = Läuft
+web-daemon-status-inactive = Angehalten
+web-daemon-status-failed = Start fehlgeschlagen
+web-daemon-status-unknown = Nicht installiert
+web-daemon-start = Starten
+web-daemon-stop = Anhalten
+web-daemon-restart = Neu starten
+web-daemon-action-failed = Der Dienst der Weboberfläche konnte nicht gesteuert werden.
+web-docs-link = Mehr über die Weboberfläche und ihre API erfahren
 pin-snapshot-failed = Die Pinnung der Momentaufnahme konnte nicht geändert werden.
 pin-snapshot = Anheften, damit das Aufräumen diese Momentaufnahme nie entfernt
 unpin-snapshot = Loslösen, damit das Aufräumen diese Momentaufnahme wieder entfernen kann

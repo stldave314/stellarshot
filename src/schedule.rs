@@ -16,7 +16,7 @@ use std::process::Command;
 use atomicwrites::{AllowOverwrite, AtomicFile};
 
 use crate::debug::SCHED;
-use crate::profile::{Destination, Profile, Schedule};
+use crate::profile::{Destination, Profile, Schedule, valid_id};
 use crate::{debug_log, error_log};
 
 const PREFIX: &str = "stellarshot-backup-";
@@ -28,11 +28,6 @@ fn unit_dir() -> Option<PathBuf> {
         .filter(|path| path.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
         .map(|config| config.join("systemd/user"))
-}
-
-/// A profile ID safe to put in a unit name and a command line.
-fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// A filesystem UUID safe to put in a unit file's `PathExists=` line. Real
@@ -144,13 +139,63 @@ pub fn path_text(id: &str, uuid: &str) -> Option<String> {
 /// This program's path, for the service to run. After a package upgrade
 /// replaces the binary, Linux reports the old one as "… (deleted)"; the
 /// path itself is still where the new one is.
+///
+/// Refuses a path that is not [`trusted_executable`]: running the portable
+/// tarball from `/tmp`, `/var/tmp` or `/dev/shm` would otherwise write a
+/// systemd unit whose `ExecStart` points there, and once a reboot wipes that
+/// location, any local user can recreate the exact same path and have the
+/// timer run their own binary as this one's owner.
 pub fn executable() -> Result<PathBuf, String> {
-    let path = std::env::current_exe().map_err(|err| err.to_string())?;
-    let text = path.to_string_lossy();
-    Ok(match text.strip_suffix(" (deleted)") {
-        Some(original) => PathBuf::from(original),
-        None => path,
-    })
+    let path = crate::exe::installed_path().map_err(|err| err.to_string())?;
+    if trusted_executable(&path) {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{} is not in a trustworthy location for a scheduled unit to run \
+             (it, or a folder above it, could be replaced by another user). \
+             Install Stellarshot before scheduling backups.",
+            path.display()
+        ))
+    }
+}
+
+/// `path` is safe to name as a scheduled unit's `ExecStart`: neither `path`
+/// itself nor any directory above it is writable by anyone but its owner,
+/// unless that directory is also sticky (like `/tmp` itself, mode `1777`) —
+/// sticky means only its own owner can rename or delete an entry inside it,
+/// which is enough to stop another user from swapping out a *file* another
+/// user already placed there, though not from placing a brand new one at a
+/// path nobody has used yet. `path` itself must always be owned by root or
+/// the current user, sticky parent or not.
+fn trusted_executable(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    fn safe_from_others(metadata: &std::fs::Metadata) -> bool {
+        let mode = metadata.mode();
+        let group_or_other_writable = mode & 0o022 != 0;
+        let sticky_root_directory = metadata.is_dir() && mode & 0o1000 != 0 && metadata.uid() == 0;
+        !group_or_other_writable || sticky_root_directory
+    }
+
+    let Ok(file_metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    let current_uid = unsafe { libc::getuid() };
+    let owned_by_root_or_us = file_metadata.uid() == 0 || file_metadata.uid() == current_uid;
+    if !owned_by_root_or_us || !safe_from_others(&file_metadata) {
+        return false;
+    }
+    let mut dir = path.parent();
+    while let Some(directory) = dir {
+        let Ok(metadata) = std::fs::metadata(directory) else {
+            return false;
+        };
+        if !safe_from_others(&metadata) {
+            return false;
+        }
+        dir = directory.parent();
+    }
+    true
 }
 
 fn systemctl(args: &[&str]) -> Result<(), String> {
@@ -385,8 +430,46 @@ pub fn reconcile(profiles: &[Profile]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::TempDir;
 
     const ID: &str = "0b9c7a52-3c1e-4d4f-9a55-0f6f8f1c2d3e";
+
+    #[test]
+    fn a_binary_under_a_world_writable_directory_is_not_trusted() {
+        let dir = TempDir::new().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let binary = dir.path().join("stellarshot");
+        std::fs::write(&binary, b"").unwrap();
+
+        assert!(!trusted_executable(&binary));
+    }
+
+    #[test]
+    fn a_binary_under_a_private_directory_is_trusted() {
+        let dir = TempDir::new().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let binary = dir.path().join("stellarshot");
+        std::fs::write(&binary, b"").unwrap();
+
+        assert!(trusted_executable(&binary));
+    }
+
+    #[test]
+    fn a_real_system_binary_is_trusted() {
+        assert!(trusted_executable(Path::new("/usr/bin/true")));
+    }
+
+    #[test]
+    fn a_world_writable_binary_itself_is_not_trusted_even_in_a_private_directory() {
+        let dir = TempDir::new().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let binary = dir.path().join("stellarshot");
+        std::fs::write(&binary, b"").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        assert!(!trusted_executable(&binary));
+    }
 
     #[test]
     fn timer_units_catch_up_missed_runs() {

@@ -97,14 +97,31 @@ pub enum NetworkScope {
     Lan,
 }
 
+/// Where the web interface listens unless a setting says otherwise. A
+/// `const` rather than a magic number in three places (the default below,
+/// the settings page, and whatever a fresh `WebConfig` gets in a test).
+pub const DEFAULT_WEB_PORT: u16 = 8737;
+
+fn default_web_port() -> u16 {
+    DEFAULT_WEB_PORT
+}
+
 /// The web interface's settings: never a secret itself, only what is turned
 /// on. The shared password lives in the keyring (`crate::keyring`); an API
 /// token is kept here only as a hash, since the hash alone is enough to
 /// check one without ever storing the raw value anywhere but the moment it
 /// is generated.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+///
+/// New fields need `#[serde(default = ...)]` (or to be an `Option`): this
+/// struct is not itself version-gated the way `StellarshotConfig` is, so an
+/// old config missing a field added later must still deserialize, rather
+/// than the whole section silently reverting to defaults and dropping
+/// whatever the user already turned on.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WebConfig {
     pub scope: NetworkScope,
+    #[serde(default = "default_web_port")]
+    pub port: u16,
     pub password_enabled: bool,
     pub token_enabled: bool,
     pub pam_enabled: bool,
@@ -116,6 +133,43 @@ pub struct WebConfig {
     /// of whatever `scope` itself already allows. Empty means every address
     /// `scope` allows, unrestricted.
     pub allowed_addresses: Vec<String>,
+    /// A certificate and private key to use instead of the daemon's own
+    /// self-signed one, generated once and kept under its data directory
+    /// (see `crate::web_tls`). Either both are set or neither is: one
+    /// without the other falls back to the self-signed certificate.
+    #[serde(default)]
+    pub tls_cert_path: Option<PathBuf>,
+    #[serde(default)]
+    pub tls_key_path: Option<PathBuf>,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            scope: NetworkScope::default(),
+            port: DEFAULT_WEB_PORT,
+            password_enabled: false,
+            token_enabled: false,
+            pam_enabled: false,
+            token_hash: None,
+            allowed_addresses: Vec::new(),
+            tls_cert_path: None,
+            tls_key_path: None,
+        }
+    }
+}
+
+impl WebConfig {
+    /// Both a certificate and a key are configured, and neither path is
+    /// empty. A mismatched pair (one set, one not) is treated as "use the
+    /// self-signed certificate instead" rather than an error: it means a
+    /// field was cleared but its neighbor was not saved yet.
+    pub fn custom_tls(&self) -> Option<(&std::path::Path, &std::path::Path)> {
+        match (&self.tls_cert_path, &self.tls_key_path) {
+            (Some(cert), Some(key)) => Some((cert.as_path(), key.as_path())),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -127,5 +181,45 @@ mod tests {
         // A fresh install, or one that predates this setting entirely, must
         // never come up listening on a network by surprise.
         assert_eq!(WebConfig::default().scope, NetworkScope::Off);
+    }
+
+    #[test]
+    fn a_config_saved_before_the_port_and_tls_fields_existed_still_loads() {
+        // What `WebConfig` serialized to before this change: the port and
+        // TLS fields are simply absent, the way a real config saved by an
+        // older Stellarshot would be, not merely `null`.
+        let old = r#"{
+            "scope": "Lan",
+            "password_enabled": true,
+            "token_enabled": false,
+            "pam_enabled": false,
+            "token_hash": null,
+            "allowed_addresses": []
+        }"#;
+        let config: WebConfig = serde_json::from_str(old).unwrap();
+        assert_eq!(config.scope, NetworkScope::Lan, "the old settings survive");
+        assert!(config.password_enabled);
+        assert_eq!(
+            config.port, DEFAULT_WEB_PORT,
+            "a missing port defaults rather than failing the whole section"
+        );
+        assert_eq!(config.tls_cert_path, None);
+        assert_eq!(config.tls_key_path, None);
+    }
+
+    #[test]
+    fn custom_tls_needs_both_a_certificate_and_a_key() {
+        let mut config = WebConfig::default();
+        assert_eq!(config.custom_tls(), None);
+        config.tls_cert_path = Some(PathBuf::from("/etc/stellarshot/cert.pem"));
+        assert_eq!(config.custom_tls(), None, "a key alone is not enough");
+        config.tls_key_path = Some(PathBuf::from("/etc/stellarshot/key.pem"));
+        assert_eq!(
+            config.custom_tls(),
+            Some((
+                std::path::Path::new("/etc/stellarshot/cert.pem"),
+                std::path::Path::new("/etc/stellarshot/key.pem")
+            ))
+        );
     }
 }

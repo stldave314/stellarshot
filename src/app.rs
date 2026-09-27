@@ -31,6 +31,7 @@ use crate::run_state::{self, RunState};
 use crate::runner::{Event as RunnerEvent, Job, Operation};
 use crate::schedule;
 use crate::settings_export;
+use crate::web_daemon;
 use crate::{debug_log, error_log, fl};
 
 pub mod applet;
@@ -82,6 +83,12 @@ pub struct App {
     /// The Settings page's own draft fields, before they are saved.
     web_password_input: String,
     web_allowed_address_input: String,
+    web_port_input: String,
+    /// Whether the daemon is running, for Settings' status indicator.
+    /// Queried fresh each time Settings is opened, and after every
+    /// Start/Stop/Restart: nothing pushes a live update the rest of the
+    /// time, so a stale answer only shows while the page is closed.
+    web_daemon_status: web_daemon::Status,
 }
 
 /// What a sidebar entry leads to.
@@ -111,6 +118,9 @@ pub enum Message {
     Modifiers(Modifiers),
     WindowClose,
     WindowNew,
+    /// Quit outright, rather than minimizing to the panel. Confirms first
+    /// if a backup or other write is in progress anywhere.
+    Quit,
     Tick,
     NewBackup,
     OpenExisting,
@@ -157,6 +167,20 @@ pub enum Message {
     WebAllowedAddressInput(String),
     AddWebAllowedAddress,
     RemoveWebAllowedAddress(usize),
+    WebPortInput(String),
+    SaveWebPort,
+    ChooseWebTlsCert,
+    WebTlsCertChosen(Option<PathBuf>),
+    ClearWebTlsCert,
+    ChooseWebTlsKey,
+    WebTlsKeyChosen(Option<PathBuf>),
+    ClearWebTlsKey,
+    WebDaemonStart,
+    WebDaemonStop,
+    WebDaemonRestart,
+    /// A Start/Stop/Restart button's own systemd call finished.
+    WebDaemonActed(Result<(), String>),
+    WebDaemonStatus(web_daemon::Status),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -195,6 +219,17 @@ pub enum Dialog {
     /// Cancel was pressed in the wizard: keep the draft to finish later, or
     /// discard it.
     WizardCancel,
+    /// Quit was chosen while a backup or other write was in progress
+    /// somewhere. `--run` children survive their parent exiting, by
+    /// design, so confirming here only asks whether to stop watching.
+    Quit,
+    /// The trash icon next to one snapshot was pressed. `label` is its
+    /// time, already formatted (see `profile::Effect::ConfirmDeleteSnapshot`).
+    DeleteSnapshot {
+        id: String,
+        snapshot: String,
+        label: String,
+    },
     /// Editing a backup's `password_command`: `text` is the field as typed.
     PasswordCommand { id: String, text: String },
     /// Changing a backup's password: it must already be unlocked, since
@@ -281,6 +316,7 @@ pub enum Action {
     Help,
     WindowClose,
     WindowNew,
+    Quit,
 }
 
 impl MenuAction for Action {
@@ -295,6 +331,7 @@ impl MenuAction for Action {
             Action::Settings => Message::ToggleContextPage(ContextPage::Settings),
             Action::WindowClose => Message::WindowClose,
             Action::WindowNew => Message::WindowNew,
+            Action::Quit => Message::Quit,
         }
     }
 }
@@ -404,6 +441,31 @@ impl App {
                 NetworkScope::Lan,
             ))
             .add(
+                widget::settings::item::builder(fl!("web-port"))
+                    .description(fl!("web-port-description"))
+                    .control(
+                        widget::row::with_capacity(2)
+                            .spacing(spacing.space_xs)
+                            .push(
+                                widget::text_input(
+                                    self.config.web.port.to_string(),
+                                    &self.web_port_input,
+                                )
+                                .on_input(Message::WebPortInput)
+                                .on_submit(|_| Message::SaveWebPort)
+                                .width(Length::Fixed(120.0)),
+                            )
+                            .push(
+                                widget::button::standard(fl!("save"))
+                                    .on_press(Message::SaveWebPort),
+                            ),
+                    ),
+            )
+            .add_maybe(
+                web_address(self.config.web.scope, self.config.web.port)
+                    .map(|url| widget::text::body(fl!("web-address", url = url))),
+            )
+            .add(
                 widget::settings::item::builder(fl!("web-auth-password"))
                     .description(fl!("web-auth-password-description"))
                     .toggler(
@@ -485,6 +547,87 @@ impl App {
                 .push(widget::button::standard(fl!("add")).on_press(Message::AddWebAllowedAddress)),
         );
 
+        let choose_or_reset = |chosen: bool, choose: Message, reset: Message| {
+            widget::row::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .push(widget::button::standard(fl!("settings-cache-dir-choose")).on_press(choose))
+                .push_maybe(chosen.then(|| {
+                    widget::button::standard(fl!("settings-cache-dir-reset")).on_press(reset)
+                }))
+        };
+        let web_tls = widget::settings::section()
+            .title(fl!("web-tls-title"))
+            .add(widget::text::body(fl!("web-tls-description")))
+            .add(
+                widget::settings::item::builder(fl!("web-tls-cert"))
+                    .description(
+                        self.config
+                            .web
+                            .tls_cert_path
+                            .as_ref()
+                            .map(|path| format::path(path))
+                            .unwrap_or_else(|| fl!("web-tls-default")),
+                    )
+                    .control(choose_or_reset(
+                        self.config.web.tls_cert_path.is_some(),
+                        Message::ChooseWebTlsCert,
+                        Message::ClearWebTlsCert,
+                    )),
+            )
+            .add(
+                widget::settings::item::builder(fl!("web-tls-key"))
+                    .description(
+                        self.config
+                            .web
+                            .tls_key_path
+                            .as_ref()
+                            .map(|path| format::path(path))
+                            .unwrap_or_else(|| fl!("web-tls-default")),
+                    )
+                    .control(choose_or_reset(
+                        self.config.web.tls_key_path.is_some(),
+                        Message::ChooseWebTlsKey,
+                        Message::ClearWebTlsKey,
+                    )),
+            );
+
+        let daemon_status = match self.web_daemon_status {
+            web_daemon::Status::Active => fl!("web-daemon-status-active"),
+            web_daemon::Status::Inactive => fl!("web-daemon-status-inactive"),
+            web_daemon::Status::Failed => fl!("web-daemon-status-failed"),
+            web_daemon::Status::Unknown => fl!("web-daemon-status-unknown"),
+        };
+        let web_daemon_section = widget::settings::section()
+            .title(fl!("web-daemon-title"))
+            .add(
+                widget::settings::item::builder(fl!("web-daemon-status"))
+                    .description(daemon_status)
+                    .control(
+                        widget::row::with_capacity(3)
+                            .spacing(spacing.space_xs)
+                            .push_maybe(
+                                (self.web_daemon_status != web_daemon::Status::Active).then(|| {
+                                    widget::button::standard(fl!("web-daemon-start"))
+                                        .on_press(Message::WebDaemonStart)
+                                }),
+                            )
+                            .push_maybe(
+                                (self.web_daemon_status == web_daemon::Status::Active).then(|| {
+                                    widget::button::standard(fl!("web-daemon-stop"))
+                                        .on_press(Message::WebDaemonStop)
+                                }),
+                            )
+                            .push(
+                                widget::button::standard(fl!("web-daemon-restart"))
+                                    .on_press(Message::WebDaemonRestart),
+                            ),
+                    ),
+            )
+            .add(
+                widget::button::link(fl!("web-docs-link"))
+                    .on_press(Message::LaunchUrl(WEB_DOCS_URL.to_owned())),
+            );
+
         widget::settings::view_column(vec![
             widget::settings::section()
                 .title(fl!("appearance"))
@@ -518,6 +661,8 @@ impl App {
             cache.into(),
             global_excludes.into(),
             web.into(),
+            web_tls.into(),
+            web_daemon_section.into(),
             web_allowed.into(),
         ])
         .into()
@@ -866,6 +1011,29 @@ impl App {
         }
     }
 
+    /// Run a `web_daemon` systemd call (blocking: it shells out to
+    /// `systemctl`) off the UI thread, reporting what happened through
+    /// [`Message::WebDaemonActed`].
+    fn web_daemon_task(&self, call: fn() -> Result<(), String>) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(call)
+                    .await
+                    .unwrap_or_else(|err| Err(err.to_string()))
+            },
+            |result| app(Message::WebDaemonActed(result)),
+        )
+    }
+
+    /// Ask systemd how the daemon is doing, off the UI thread (it is a D-Bus
+    /// round trip, not truly blocking, but still not something `view` should
+    /// wait on).
+    fn web_daemon_status_task() -> Task<Message> {
+        Task::perform(web_daemon::status(), |status| {
+            app(Message::WebDaemonStatus(status))
+        })
+    }
+
     /// Something on screen shows a running time.
     fn waiting(&self) -> bool {
         self.wizard.as_ref().is_some_and(Wizard::waiting)
@@ -970,16 +1138,12 @@ impl App {
                 Task::perform(
                     tasks::blocking(move || {
                         let config = engine::rclone::config_path();
-                        let mut params = vec!["scope=drive".to_owned()];
-                        if let Some((id, secret)) = &credentials {
-                            // rclone accepts these as plain `key=value`
-                            // config parameters, the same way `scope=drive`
-                            // is passed; there is no separate API for them.
-                            params.push(format!("client_id={id}"));
-                            params.push(format!("client_secret={secret}"));
-                        }
-                        let params: Vec<&str> = params.iter().map(String::as_str).collect();
-                        engine::rclone::sign_in(&config, &name, "drive", &params).map(|()| name)
+                        let params = ["scope=drive"];
+                        let credentials = credentials
+                            .as_ref()
+                            .map(|(id, secret)| (id.as_str(), secret.as_str()));
+                        engine::rclone::sign_in(&config, &name, "drive", &params, credentials)
+                            .map(|()| name)
                     }),
                     move |result| to_wizard(place::Message::SignedIn(result)),
                 )
@@ -1356,6 +1520,17 @@ impl App {
                         ))
                     })
                 }
+                profile::Effect::ConfirmDeleteSnapshot {
+                    id: snapshot,
+                    label,
+                } => {
+                    self.dialog = Some(Dialog::DeleteSnapshot {
+                        id: id.clone(),
+                        snapshot,
+                        label,
+                    });
+                    Task::none()
+                }
                 profile::Effect::SetPinned(secret, snapshot_id, pinned) => {
                     let repository = match profile.location() {
                         Ok(location) => location,
@@ -1535,6 +1710,8 @@ impl App {
                         Ok(location) => Job {
                             keep: profile.retention.keep_rules(),
                             prune: !self.runs.get(&id).is_some_and(|run| run.damaged),
+                            profile_tag: engine::profile_tag(&profile.id),
+                            profile_sources: profile.sources.clone(),
                             ..Job::new(location, secret)
                         },
                         Err(err) => {
@@ -1724,6 +1901,16 @@ impl App {
                         self.dialog = None;
                         Task::none()
                     }
+                    Dialog::Quit => cosmic::iced::exit(),
+                    Dialog::DeleteSnapshot { id, snapshot, .. } => {
+                        self.dialog = None;
+                        let effects = self
+                            .pages
+                            .get_mut(&id)
+                            .map(|page| page.delete_snapshot_confirmed(snapshot))
+                            .unwrap_or_default();
+                        self.run_profile_effects(&id, effects)
+                    }
                     Dialog::PasswordCommand { id, text } => {
                         self.dialog = None;
                         if let Some(mut profile) = self.config.profile(&id).cloned() {
@@ -1894,9 +2081,49 @@ fn open_copy(
     engine::open(&profile.location()?, secret)?
         .restore(&request, std::sync::Arc::new(engine::NoProgress))?;
     let copy = folder.join(path.file_name().unwrap_or_default());
+    // A snapshot's node can claim to be a symlink (see SEC-2 in the review
+    // plan): for a repository shared with someone else, that is not
+    // necessarily this process's own doing. `symlink_metadata` (unlike
+    // `metadata`) does not follow it, so this refuses to chmod or open
+    // whatever it points at — `~/.ssh`, say — instead of trusting that
+    // "restored into a private folder this process just created" also means
+    // "definitely a plain file".
+    if !std::fs::symlink_metadata(&copy)?.is_file() {
+        return Err(EngineError::new(
+            engine::ErrorKind::Internal,
+            format!("{} did not restore as a plain file", copy.display()),
+        ));
+    }
     std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o400))?;
     open::that_detached(&copy)?;
     Ok(())
+}
+
+/// Launch a genuinely new window rather than reactivating this one.
+///
+/// `crate::exe::installed_path`, not a raw `current_exe`, so this still
+/// finds the right binary if it was replaced on disk while this process
+/// kept running (a package upgrade). Launched through `cosmic::process::spawn`,
+/// which double-forks so the new window is never left as a zombie once this
+/// process exits, unlike a plain `Command::spawn` that nothing here `wait`s
+/// on.
+async fn spawn_new_window() {
+    let exe = match crate::exe::installed_path() {
+        Ok(exe) => exe,
+        Err(err) => {
+            error_log!(UI, "failed to find this app's own executable: {err}");
+            return;
+        }
+    };
+    // Single-instance activation (see `Cargo.toml`'s comment on the
+    // `libcosmic` `single-instance` feature) is what lets the applet reopen
+    // a window closed to the panel, but it would also swallow an explicit
+    // "new window" into just refocusing this one. Opt this one launch out.
+    let mut command = process::Command::new(&exe);
+    command.env("COSMIC_SINGLE_INSTANCE", "false");
+    if cosmic::process::spawn(command).await.is_none() {
+        error_log!(UI, "failed to execute {exe:?}");
+    }
 }
 
 /// The user's home folder, the default thing to back up.
@@ -1904,6 +2131,44 @@ fn home_dir() -> Option<PathBuf> {
     env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
+}
+
+/// Documentation for the web interface, its API and its daemon, linked from
+/// Settings rather than duplicated there.
+const WEB_DOCS_URL: &str = concat!(
+    env!("CARGO_PKG_REPOSITORY"),
+    "/blob/main/docs/web-interface.md"
+);
+
+/// A valid port number typed into the web interface's port field: not empty,
+/// not out of `u16` range, and not `0` (not a real port to listen on, even
+/// though `0_u16` parses fine on its own).
+fn parse_port(text: &str) -> Option<u16> {
+    text.trim().parse::<u16>().ok().filter(|&port| port != 0)
+}
+
+/// Whether `password` meets Settings' own minimum for the web interface's
+/// shared password (OWASP ASVS 5.0 §6.2). Counted in characters, not bytes,
+/// so a password using non-ASCII characters is not penalized for it.
+fn password_long_enough(password: &str) -> bool {
+    password.chars().count() >= crate::constants::WEB_PASSWORD_MIN_LENGTH
+}
+
+/// Where the web interface will be reachable at `scope`, or `None` when it
+/// is off. Always `https`: the daemon serves TLS unconditionally, a
+/// self-signed certificate by default. `Lan` uses this machine's mDNS name
+/// (`.local`, resolved by `avahi`/`systemd-resolved` on the same network)
+/// rather than an actual IP address, since a machine can have several and the
+/// address alone would not say which one to use.
+fn web_address(scope: NetworkScope, port: u16) -> Option<String> {
+    match scope {
+        NetworkScope::Off => None,
+        NetworkScope::Localhost => Some(format!("https://127.0.0.1:{port}")),
+        NetworkScope::Lan => Some(format!(
+            "https://{}.local:{port}",
+            gethostname::gethostname().to_string_lossy(),
+        )),
+    }
 }
 
 impl Application for App {
@@ -1944,6 +2209,13 @@ impl Application for App {
             None => {
                 let (id, open) = window::open(window::Settings {
                     size: cosmic::iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT),
+                    // `cosmic::app::Settings` sets this for the window the
+                    // app starts with (client-side decorations, the default
+                    // for a COSMIC app); a bare `window::Settings::default()`
+                    // does not, so this reopened window got both the
+                    // compositor's own title bar and the app's own — a
+                    // double one.
+                    decorations: false,
                     ..window::Settings::default()
                 });
                 self.core.set_main_window_id(Some(id));
@@ -1954,6 +2226,15 @@ impl Application for App {
 
     fn header_start(&self) -> Vec<Element<'_, Self::Message>> {
         vec![menu::menu_bar(&self.key_binds)]
+    }
+
+    fn header_end(&self) -> Vec<Element<'_, Self::Message>> {
+        vec![
+            widget::button::icon(widget::icon::from_name("preferences-system-symbolic"))
+                .tooltip(fl!("settings"))
+                .on_press(Message::ToggleContextPage(ContextPage::Settings))
+                .into(),
+        ]
     }
 
     fn nav_model(&self) -> Option<&nav_bar::Model> {
@@ -2010,6 +2291,8 @@ impl Application for App {
             history: None,
             web_password_input: String::new(),
             web_allowed_address_input: String::new(),
+            web_port_input: String::new(),
+            web_daemon_status: web_daemon::Status::default(),
         };
         app.reload_runs();
         app.rebuild_nav(flags.select.as_deref());
@@ -2120,6 +2403,16 @@ impl Application for App {
                     widget::button::destructive(fl!("wizard-discard"))
                         .on_press(Message::Dialog(DialogMessage::DiscardWizard)),
                 ),
+            Dialog::Quit => widget::dialog()
+                .title(fl!("quit-confirm-title"))
+                .body(fl!("quit-confirm-body"))
+                .primary_action(widget::button::destructive(fl!("quit")).on_press_maybe(confirm))
+                .secondary_action(cancel),
+            Dialog::DeleteSnapshot { label, .. } => widget::dialog()
+                .title(fl!("delete-snapshot-title"))
+                .body(fl!("delete-snapshot-body", time = label.clone()))
+                .primary_action(widget::button::destructive(fl!("delete")).on_press_maybe(confirm))
+                .secondary_action(cancel),
             Dialog::PasswordCommand { text, .. } => widget::dialog()
                 .title(fl!("password-source-title"))
                 .body(fl!("password-source-body"))
@@ -2440,14 +2733,16 @@ impl Application for App {
             Message::ImportRead(Ok(export)) => {
                 let merged = settings_export::merge(&self.config.profiles, &export);
                 self.save_profiles(merged.profiles);
-                self.dialog = Some(Dialog::Info(
-                    fl!("settings-import-done-title"),
-                    fl!(
-                        "settings-import-done-body",
-                        added = (merged.counts.added as i64),
-                        skipped = (merged.counts.skipped as i64)
-                    ),
-                ));
+                let mut body = fl!(
+                    "settings-import-done-body",
+                    added = (merged.counts.added as i64),
+                    skipped = (merged.counts.skipped as i64),
+                    rejected = (merged.counts.rejected as i64)
+                );
+                if merged.needs_review {
+                    body = format!("{body}\n\n{}", fl!("settings-import-hooks-disabled"));
+                }
+                self.dialog = Some(Dialog::Info(fl!("settings-import-done-title"), body));
                 // Each newly added backup's own schedule, exactly as an
                 // existing one gets it when the wizard creates or edits it.
                 return Task::batch(
@@ -2533,7 +2828,22 @@ impl Application for App {
                 }
             }
             Message::HistoryLoaded(entries) => self.history = Some(entries),
-            Message::WebScope(scope) => self.update_web(|web| web.scope = scope),
+            Message::WebScope(scope) => {
+                let was_off = self.config.web.scope == NetworkScope::Off;
+                self.update_web(|web| web.scope = scope);
+                // Off really means off, right away, not "on until the next
+                // restart" — and turning it on should not need a separate,
+                // easy-to-miss trip to Start after choosing a scope in the
+                // very settings that imply it. Switching between Localhost
+                // and Lan while already on still needs the explicit Restart
+                // button: it only changes which address is bound, not
+                // whether anything is listening at all.
+                return match (was_off, scope == NetworkScope::Off) {
+                    (true, false) => self.web_daemon_task(web_daemon::start),
+                    (false, true) => self.web_daemon_task(web_daemon::stop),
+                    _ => Task::none(),
+                };
+            }
             Message::WebPasswordEnabled(enabled) => {
                 self.update_web(|web| web.password_enabled = enabled);
             }
@@ -2543,13 +2853,28 @@ impl Application for App {
                 if password.is_empty() {
                     return Task::none();
                 }
+                if !password_long_enough(&password) {
+                    self.dialog = Some(Dialog::Info(
+                        fl!("web-password-too-short-title"),
+                        fl!(
+                            "web-password-too-short-body",
+                            minimum = (crate::constants::WEB_PASSWORD_MIN_LENGTH as i64)
+                        ),
+                    ));
+                    return Task::none();
+                }
                 let secret = Secret::new(password);
                 return Task::perform(
                     async move { crate::keyring::store_web_password(&secret).await },
                     |result| app(Message::WebPasswordSaved(result)),
                 );
             }
-            Message::WebPasswordSaved(Ok(())) => {}
+            Message::WebPasswordSaved(Ok(())) => {
+                self.dialog = Some(Dialog::Info(
+                    fl!("web-password-saved-title"),
+                    fl!("web-password-saved-body"),
+                ));
+            }
             Message::WebPasswordSaved(Err(detail)) => {
                 self.show_error(
                     &fl!("web-password-failed"),
@@ -2585,12 +2910,61 @@ impl Application for App {
                     }
                 });
             }
+            Message::WebPortInput(text) => self.web_port_input = text,
+            Message::SaveWebPort => match parse_port(&self.web_port_input) {
+                None => {
+                    let text = self.web_port_input.trim().to_owned();
+                    self.show_error(
+                        &fl!("web-port-invalid"),
+                        &EngineError::new(engine::ErrorKind::Internal, text),
+                    );
+                }
+                Some(port) => {
+                    self.web_port_input.clear();
+                    self.update_web(|web| web.port = port);
+                }
+            },
+            Message::ChooseWebTlsCert => {
+                return Task::perform(tasks::pick_file(fl!("web-tls-cert-title")), |path| {
+                    app(Message::WebTlsCertChosen(path))
+                });
+            }
+            Message::WebTlsCertChosen(Some(path)) => {
+                self.update_web(|web| web.tls_cert_path = Some(path));
+            }
+            Message::WebTlsCertChosen(None) => {}
+            Message::ClearWebTlsCert => self.update_web(|web| web.tls_cert_path = None),
+            Message::ChooseWebTlsKey => {
+                return Task::perform(tasks::pick_file(fl!("web-tls-key-title")), |path| {
+                    app(Message::WebTlsKeyChosen(path))
+                });
+            }
+            Message::WebTlsKeyChosen(Some(path)) => {
+                self.update_web(|web| web.tls_key_path = Some(path));
+            }
+            Message::WebTlsKeyChosen(None) => {}
+            Message::ClearWebTlsKey => self.update_web(|web| web.tls_key_path = None),
+            Message::WebDaemonStart => return self.web_daemon_task(web_daemon::start),
+            Message::WebDaemonStop => return self.web_daemon_task(web_daemon::stop),
+            Message::WebDaemonRestart => return self.web_daemon_task(web_daemon::restart),
+            Message::WebDaemonActed(Err(detail)) => {
+                self.show_error(
+                    &fl!("web-daemon-action-failed"),
+                    &EngineError::new(engine::ErrorKind::Internal, detail),
+                );
+                return Self::web_daemon_status_task();
+            }
+            Message::WebDaemonActed(Ok(())) => return Self::web_daemon_status_task(),
+            Message::WebDaemonStatus(status) => self.web_daemon_status = status,
             Message::ToggleContextPage(context_page) => {
                 if self.context_page == context_page {
                     self.core.window.show_context = !self.core.window.show_context;
                 } else {
                     self.context_page = context_page;
                     self.core.window.show_context = true;
+                }
+                if self.context_page == ContextPage::Settings && self.core.window.show_context {
+                    return Self::web_daemon_status_task();
                 }
             }
             Message::CloseContextDrawer => self.core.window.show_context = false,
@@ -2602,22 +2976,16 @@ impl Application for App {
                     return window::close(id);
                 }
             }
-            Message::WindowNew => match env::current_exe() {
-                Ok(exe) => {
-                    // Single-instance activation (see `Cargo.toml`'s comment
-                    // on the `libcosmic` `single-instance` feature) is what
-                    // lets the applet reopen a window closed to the panel,
-                    // but it would also swallow an explicit "new window"
-                    // into just refocusing this one. Opt this one launch out.
-                    if let Err(err) = process::Command::new(&exe)
-                        .env("COSMIC_SINGLE_INSTANCE", "false")
-                        .spawn()
-                    {
-                        error_log!(UI, "failed to execute {exe:?}: {err}");
-                    }
+            Message::WindowNew => {
+                return Task::perform(spawn_new_window(), |()| app(Message::Noop));
+            }
+            Message::Quit => {
+                if self.pages.values().any(ProfileState::is_busy) {
+                    self.dialog = Some(Dialog::Quit);
+                } else {
+                    return cosmic::iced::exit();
                 }
-                Err(err) => error_log!(UI, "failed to get the current executable: {err}"),
-            },
+            }
             Message::LaunchUrl(url) => {
                 if let Err(err) = open::that_detached(&url) {
                     error_log!(UI, "failed to open {url:?}: {err}");
@@ -2686,6 +3054,68 @@ mod tests {
     }
 
     #[test]
+    fn the_web_interface_off_has_no_address_to_show() {
+        assert_eq!(web_address(NetworkScope::Off, 8737), None);
+    }
+
+    #[test]
+    fn localhost_scope_points_at_the_loopback_address() {
+        assert_eq!(
+            web_address(NetworkScope::Localhost, 8737),
+            Some("https://127.0.0.1:8737".to_owned())
+        );
+    }
+
+    #[test]
+    fn lan_scope_points_at_this_machine_s_mdns_name() {
+        let url = web_address(NetworkScope::Lan, 8737).unwrap();
+        assert!(url.starts_with("https://"));
+        assert!(url.ends_with(".local:8737"));
+    }
+
+    #[test]
+    fn a_chosen_port_is_reflected_in_the_shown_address() {
+        assert_eq!(
+            web_address(NetworkScope::Localhost, 9000),
+            Some("https://127.0.0.1:9000".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_password_shorter_than_the_minimum_is_rejected() {
+        assert!(!password_long_enough("short"));
+        assert!(password_long_enough("twelve-chars"));
+        assert!(password_long_enough(&"a".repeat(40)));
+    }
+
+    #[test]
+    fn password_length_is_counted_in_characters_not_bytes() {
+        // Twelve é's: 24 UTF-8 bytes, but 12 characters — long enough.
+        assert!(password_long_enough(&"é".repeat(12)));
+    }
+
+    #[test]
+    fn a_plain_port_number_parses() {
+        assert_eq!(parse_port("9000"), Some(9000));
+        assert_eq!(
+            parse_port("  9000  "),
+            Some(9000),
+            "surrounding space is trimmed"
+        );
+        assert_eq!(parse_port("1"), Some(1));
+        assert_eq!(parse_port("65535"), Some(65535));
+    }
+
+    #[test]
+    fn zero_empty_and_out_of_range_ports_are_rejected() {
+        assert_eq!(parse_port("0"), None, "not a port anything can listen on");
+        assert_eq!(parse_port(""), None);
+        assert_eq!(parse_port("not a number"), None);
+        assert_eq!(parse_port("65536"), None, "one past the top of u16");
+        assert_eq!(parse_port("-1"), None);
+    }
+
+    #[test]
     fn other_dialogs_confirm_freely() {
         assert!(Dialog::Error("x".into()).can_confirm());
         assert!(
@@ -2695,5 +3125,6 @@ mod tests {
             }
             .can_confirm()
         );
+        assert!(Dialog::Quit.can_confirm());
     }
 }

@@ -47,6 +47,16 @@ fn awkward_tree(root: &Path) {
     fs::write(root.join("private.txt"), b"secret").unwrap();
     fs::set_permissions(root.join("private.txt"), fs::Permissions::from_mode(0o600)).unwrap();
     symlink("plain.txt", root.join("link-to-plain")).unwrap();
+    // Linux file names are bytes, not necessarily UTF-8 (see REL-6):
+    // `\xe9` alone is not a valid UTF-8 sequence.
+    fs::write(non_utf8_name(root), b"cafe, sort of").unwrap();
+}
+
+/// `root` joined with a name that is not valid UTF-8: `caf\xe9.txt`.
+fn non_utf8_name(root: &Path) -> PathBuf {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    root.join(OsStr::from_bytes(b"caf\xe9.txt"))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -176,6 +186,89 @@ fn excluded_folder_is_not_in_the_snapshot() {
 }
 
 #[test]
+fn excluded_folders_with_glob_metacharacters_in_their_name_are_not_backed_up() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    fs::create_dir_all(fixture.source.join("a [b]")).unwrap();
+    fs::write(fixture.source.join("a [b]/data"), b"skip me").unwrap();
+    fs::create_dir_all(fixture.source.join("x*y")).unwrap();
+    fs::write(fixture.source.join("x*y/data"), b"skip me too").unwrap();
+
+    let request = BackupRequest {
+        excludes: vec![fixture.source.join("a [b]"), fixture.source.join("x*y")],
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(
+        restored.join("plain.txt").exists(),
+        "the rest must be backed up"
+    );
+    assert!(
+        !restored.join("a [b]").exists(),
+        "a name that looks like a character class must still be excluded literally"
+    );
+    assert!(
+        !restored.join("x*y").exists(),
+        "a name containing a glob wildcard must still be excluded literally"
+    );
+}
+
+#[test]
+fn a_non_utf8_exclude_fails_the_backup_rather_than_including_it() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let bad_name = OsStr::from_bytes(b"\xff");
+    fs::create_dir_all(fixture.source.join(bad_name)).unwrap();
+
+    let request = BackupRequest {
+        excludes: vec![fixture.source.join(bad_name)],
+        ..sources(&fixture.source)
+    };
+    let err = open(&fixture.repo, &secret())
+        .unwrap()
+        .backup(&request, Arc::new(NoProgress))
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Io);
+}
+
+#[test]
+fn a_repository_inside_a_source_with_a_bracket_in_its_path_is_still_excluded() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let repo_like = fixture.source.join("[repo]");
+    fs::create_dir_all(&repo_like).unwrap();
+    fs::write(repo_like.join("config"), b"pretend repository").unwrap();
+
+    let request = BackupRequest {
+        excludes: vec![repo_like.clone()],
+        ..sources(&fixture.source)
+    };
+    back_up(&fixture, &request);
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(
+        !restored.join("[repo]").exists(),
+        "a repository-shaped exclude with a bracket in its path must not back up into itself"
+    );
+}
+
+#[test]
 fn exclude_pattern_applies_at_any_depth() {
     let fixture = fixture();
     awkward_tree(&fixture.source);
@@ -238,7 +331,7 @@ fn a_folder_marked_as_a_cache_is_excluded() {
 }
 
 #[test]
-fn a_projects_own_gitignore_is_honoured_without_needing_a_git_repository() {
+fn a_projects_own_gitignore_is_honored_without_needing_a_git_repository() {
     let fixture = fixture();
     awkward_tree(&fixture.source);
     fs::write(fixture.source.join(".gitignore"), "*.log\nbuild/\n").unwrap();
@@ -920,6 +1013,53 @@ fn diff_reports_added_removed_modified() {
 }
 
 #[test]
+fn diff_does_not_drop_names_that_collide_once_lossily_converted() {
+    // REL-6: `bad\xfe.txt` and `bad\xff.txt` both become `bad<REPLACEMENT
+    // CHARACTER>.txt` under `to_string_lossy`. A map keyed by that lossy
+    // string would keep only one of them. Distinct bytes from
+    // `awkward_tree`'s own non-UTF-8 file, so this does not also exercise
+    // (and get confused by) that one being modified.
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let before = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+    fs::write(fixture.source.join(OsStr::from_bytes(b"bad\xfe.txt")), b"a").unwrap();
+    fs::write(fixture.source.join(OsStr::from_bytes(b"bad\xff.txt")), b"b").unwrap();
+    let after = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+
+    let diff = browser(&fixture).diff(&before, &after).unwrap();
+
+    assert_eq!(
+        diff.len(),
+        2,
+        "both differently-invalid names must be reported, not just one: {diff:?}"
+    );
+    let added: std::collections::BTreeSet<&Path> = diff
+        .iter()
+        .filter(|d| d.change == Change::Added)
+        .map(|d| d.path.as_path())
+        .collect();
+    assert!(
+        added.contains(
+            fixture
+                .source
+                .join(OsStr::from_bytes(b"bad\xfe.txt"))
+                .as_path()
+        )
+    );
+    assert!(
+        added.contains(
+            fixture
+                .source
+                .join(OsStr::from_bytes(b"bad\xff.txt"))
+                .as_path()
+        )
+    );
+}
+
+#[test]
 fn a_snapshot_compared_with_itself_has_no_changes() {
     let fixture = fixture();
     awkward_tree(&fixture.source);
@@ -1070,6 +1210,19 @@ fn a_mounted_snapshot_can_be_read_with_plain_filesystem_calls() {
 
     let data = fs::read(root.join("nested/deeper/data.bin")).unwrap();
     assert_eq!(data, pseudo_random(64 * 1024, 1));
+
+    // REL-6: a non-UTF-8 name must be listed by its exact bytes (not a
+    // lossy, mangled one `lookup` could never match back) and readable.
+    let non_utf8 = non_utf8_name(&root);
+    let mounted_names: Vec<_> = read_mounted_dir(&root)
+        .iter()
+        .map(std::fs::DirEntry::file_name)
+        .collect();
+    assert!(
+        mounted_names.contains(&non_utf8.file_name().unwrap().to_owned()),
+        "the non-UTF-8 name must appear in the listing by its exact bytes"
+    );
+    assert_eq!(fs::read(&non_utf8).unwrap(), b"cafe, sort of");
 }
 
 #[test]
@@ -1231,6 +1384,65 @@ fn restore_to_a_folder_keeps_names() {
         pseudo_random(64 * 1024, 1)
     );
     assert_eq!(fs::read(target.join("plain.txt")).unwrap(), b"plain");
+}
+
+#[test]
+fn a_non_utf8_named_file_can_be_restored_by_itself() {
+    // REL-6: restoring just this one file needs `node_from_snapshot_and_path`
+    // (or its replacement) to resolve its exact path, not a lossy
+    // approximation of it.
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let non_utf8 = non_utf8_name(&fixture.source);
+    let target = fixture.work.join("elsewhere");
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![non_utf8.clone()],
+            Target::Folder(target.clone()),
+            ConflictPolicy::Overwrite,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(target.join(non_utf8.file_name().unwrap())).unwrap(),
+        b"cafe, sort of"
+    );
+}
+
+#[test]
+fn keep_both_preserves_a_non_utf8_stem() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let non_utf8 = non_utf8_name(&fixture.source);
+    fs::write(&non_utf8, b"edited since").unwrap();
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![non_utf8.clone()],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(&non_utf8).unwrap(),
+        b"edited since",
+        "the existing file must not be touched"
+    );
+    let copy = kept_copy(&non_utf8);
+    assert_eq!(fs::read(&copy).unwrap(), b"cafe, sort of");
+    assert!(
+        copy.file_name()
+            .unwrap()
+            .as_encoded_bytes()
+            .starts_with(b"caf\xe9"),
+        "the restored copy's name must keep the original's exact bytes: {copy:?}"
+    );
 }
 
 #[test]
@@ -1448,7 +1660,12 @@ fn forget_applies_the_rules() {
 
     let report = open(&fixture.repo, &secret())
         .unwrap()
-        .forget(&rules, &hostname())
+        .forget(
+            &rules,
+            &hostname(),
+            "",
+            std::slice::from_ref(&fixture.source),
+        )
         .unwrap();
 
     assert_eq!((report.removed, report.kept), (2, 2));
@@ -1473,7 +1690,12 @@ fn a_pinned_snapshot_survives_forget_that_would_otherwise_remove_it() {
     };
     let report = open(&fixture.repo, &secret())
         .unwrap()
-        .forget(&rules, &hostname())
+        .forget(
+            &rules,
+            &hostname(),
+            "",
+            std::slice::from_ref(&fixture.source),
+        )
         .unwrap();
 
     let left = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
@@ -1521,7 +1743,12 @@ fn forget_leaves_other_computers_alone() {
 
     let report = open(&fixture.repo, &secret())
         .unwrap()
-        .forget(&rules, "another-computer")
+        .forget(
+            &rules,
+            "another-computer",
+            "",
+            std::slice::from_ref(&fixture.source),
+        )
         .unwrap();
 
     assert_eq!((report.removed, report.kept), (0, 0));
@@ -1533,13 +1760,132 @@ fn forget_leaves_other_computers_alone() {
 }
 
 #[test]
+fn forget_only_touches_this_profiles_own_tagged_snapshots() {
+    // Two profiles sharing one repository (the wizard's "open existing"
+    // mode allows it): REL-1's own scenario. Each backs up its own folder,
+    // three times, tagged with its own profile ID.
+    let fixture = fixture();
+    let source_a = fixture.source.join("a");
+    let source_b = fixture.source.join("b");
+    fs::create_dir_all(&source_a).unwrap();
+    fs::create_dir_all(&source_b).unwrap();
+    fs::write(source_a.join("file.txt"), b"a").unwrap();
+    fs::write(source_b.join("file.txt"), b"b").unwrap();
+    for _ in 0..3 {
+        back_up(
+            &fixture,
+            &BackupRequest {
+                profile_tag: "stellarshot-profile:a".into(),
+                ..sources(&source_a)
+            },
+        );
+        back_up(
+            &fixture,
+            &BackupRequest {
+                profile_tag: "stellarshot-profile:b".into(),
+                ..sources(&source_b)
+            },
+        );
+    }
+    assert_eq!(snapshot_ids(&fixture).len(), 6);
+
+    let rules = KeepRules {
+        last: Some(1),
+        ..KeepRules::default()
+    };
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &rules,
+            &hostname(),
+            "stellarshot-profile:a",
+            std::slice::from_ref(&source_a),
+        )
+        .unwrap();
+
+    assert_eq!(
+        (report.removed, report.kept),
+        (2, 1),
+        "only profile A's own 2 older snapshots are forgotten"
+    );
+    assert_eq!(
+        snapshot_ids(&fixture).len(),
+        4,
+        "profile B's 3 snapshots must all survive A's clean-up"
+    );
+    let b_kept = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &KeepRules::default(),
+            &hostname(),
+            "stellarshot-profile:b",
+            std::slice::from_ref(&source_b),
+        )
+        .unwrap()
+        .kept;
+    assert_eq!(b_kept, 3, "every one of B's own snapshots is still there");
+}
+
+#[test]
+fn an_untagged_snapshot_is_claimed_only_by_the_profile_whose_sources_match() {
+    // Simulates a snapshot made before per-profile tagging existed: no tag
+    // at all, so `forget` falls back to matching sources exactly.
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let rules = KeepRules {
+        last: Some(1),
+        ..KeepRules::default()
+    };
+
+    let unrelated_sources = fixture.work.join("unrelated");
+    let unclaimed = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &rules,
+            &hostname(),
+            "stellarshot-profile:other",
+            std::slice::from_ref(&unrelated_sources),
+        )
+        .unwrap();
+    assert_eq!(
+        unclaimed.kept, 0,
+        "a profile whose sources do not match must never see it as its own"
+    );
+    assert_eq!(
+        snapshot_ids(&fixture).len(),
+        1,
+        "and so must not have removed it either"
+    );
+
+    let claimed = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &KeepRules::default(),
+            &hostname(),
+            "stellarshot-profile:mine",
+            std::slice::from_ref(&fixture.source),
+        )
+        .unwrap();
+    assert_eq!(
+        claimed.kept, 1,
+        "the profile whose sources actually match may still manage it, tag or no tag"
+    );
+}
+
+#[test]
 fn forget_keeps_everything_without_rules() {
     let fixture = fixture();
     daily_history(&fixture);
 
     let report = open(&fixture.repo, &secret())
         .unwrap()
-        .forget(&KeepRules::default(), &hostname())
+        .forget(
+            &KeepRules::default(),
+            &hostname(),
+            "",
+            std::slice::from_ref(&fixture.source),
+        )
         .unwrap();
 
     assert_eq!((report.removed, report.kept), (0, 4));
@@ -1564,7 +1910,17 @@ fn prune_reclaims_forgotten_data() {
         last: Some(1),
         ..KeepRules::default()
     };
-    assert_eq!(repo.forget(&rules, &hostname()).unwrap().removed, 2);
+    assert_eq!(
+        repo.forget(
+            &rules,
+            &hostname(),
+            "",
+            std::slice::from_ref(&fixture.source)
+        )
+        .unwrap()
+        .removed,
+        2
+    );
 
     let pruned = repo.prune().unwrap();
 

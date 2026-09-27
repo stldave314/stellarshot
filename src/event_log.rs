@@ -16,10 +16,10 @@ use crate::app::APP_ID;
 use crate::app::config::CONFIG_VERSION;
 use crate::app::{errors, format};
 use crate::debug::CONFIG;
-use crate::debug_log;
 use crate::engine::{EngineError, ErrorKind};
 use crate::fl;
 use crate::run_state::Stage;
+use crate::{debug_log, error_log};
 
 /// Entries kept per backup. The oldest are dropped as new ones arrive, so a
 /// backup that has run for years does not grow its log without bound.
@@ -117,12 +117,33 @@ fn key(profile_id: &str) -> String {
     format!("event-log-{profile_id}")
 }
 
+/// [`load`]'s log, distinguishing "nothing recorded yet" (`Ok` with an
+/// empty log) from "something is there but this process cannot read it
+/// right now" (`Err`) — a parse error, or an entry this version does not
+/// know how to read. The difference matters to [`record`] and [`merge`],
+/// which must never save a fresh, empty log over history they simply could
+/// not read: losing the one new event either was about to add is far
+/// better than losing every old one.
+fn load_checked(store: &Config, profile_id: &str) -> Result<Log, ()> {
+    match store.get(&key(profile_id)) {
+        Ok(log) => Ok(log),
+        Err(err) if crate::run_state::is_missing(&err) => Ok(Log::default()),
+        Err(err) => {
+            error_log!(
+                CONFIG,
+                "history for {profile_id} could not be read, leaving it alone: {err}"
+            );
+            Err(())
+        }
+    }
+}
+
 /// `profile_id`'s history, oldest first.
 pub fn load(profile_id: &str) -> Vec<Event> {
-    store()
-        .and_then(|store| store.get::<Log>(&key(profile_id)).ok())
-        .unwrap_or_default()
-        .0
+    let Some(store) = store() else {
+        return Vec::new();
+    };
+    load_checked(&store, profile_id).unwrap_or_default().0
 }
 
 /// Every one of `profile_ids`' histories, merged and newest first: for a
@@ -162,10 +183,12 @@ pub fn record(profile_id: &str, time: i64, kind: EventKind, source: Source) {
     let Some(store) = store() else {
         return;
     };
-    let mut log: Log = store.get(&key(profile_id)).unwrap_or_default();
+    let Ok(mut log) = load_checked(&store, profile_id) else {
+        return;
+    };
     push(&mut log.0, Event { time, kind, source });
     if let Err(err) = store.set(&key(profile_id), &log) {
-        debug_log!(CONFIG, "could not log an event for {profile_id}: {err}");
+        error_log!(CONFIG, "could not log an event for {profile_id}: {err}");
     }
 }
 
@@ -176,7 +199,9 @@ pub fn merge(profile_id: &str, incoming: &[Event]) {
     let Some(store) = store() else {
         return;
     };
-    let mut log: Log = store.get(&key(profile_id)).unwrap_or_default();
+    let Ok(mut log) = load_checked(&store, profile_id) else {
+        return;
+    };
     for event in incoming {
         if !log.0.contains(event) {
             push(&mut log.0, event.clone());
@@ -184,7 +209,7 @@ pub fn merge(profile_id: &str, incoming: &[Event]) {
     }
     log.0.sort_by_key(|event| event.time);
     if let Err(err) = store.set(&key(profile_id), &log) {
-        debug_log!(CONFIG, "could not merge history for {profile_id}: {err}");
+        error_log!(CONFIG, "could not merge history for {profile_id}: {err}");
     }
 }
 

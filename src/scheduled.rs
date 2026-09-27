@@ -20,7 +20,7 @@ use crate::app::config::StellarshotConfig;
 use crate::app::errors;
 use crate::constants::CHECK_INTERVAL;
 use crate::debug::SCHED;
-use crate::engine::{EngineError, ErrorKind, KeepRules, Location, Secret};
+use crate::engine::{EngineError, ErrorKind, KeepRules, Location, Secret, profile_tag};
 use crate::event_log;
 use crate::profile::{Profile, Schedule};
 use crate::run_state::{self, Failure, RunState, Stage};
@@ -130,7 +130,11 @@ fn run(
     location: Location,
     secret: Secret,
 ) -> Result<(), Failed> {
-    let job = || Job::new(location.clone(), secret.clone());
+    let job = || Job {
+        profile_tag: profile_tag(&profile.id),
+        profile_sources: profile.sources.clone(),
+        ..Job::new(location.clone(), secret.clone())
+    };
     operation(
         Operation::Backup,
         Job {

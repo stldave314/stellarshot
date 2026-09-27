@@ -11,7 +11,6 @@
 //! `Cargo.toml`'s comment on the `libcosmic` `single-instance` feature) is
 //! the only thing it hands off rather than doing itself.
 
-use std::env;
 use std::process::Command;
 use std::time::Duration;
 
@@ -47,6 +46,7 @@ pub enum Message {
     TogglePopup,
     Refresh,
     Open,
+    Quit,
     Surface(cosmic::surface::Action<Message>),
 }
 
@@ -56,12 +56,24 @@ fn refresh() -> Vec<Status> {
 }
 
 /// Launch (or, with single-instance active, raise) the main window.
-fn open_window() {
-    let Ok(exe) = env::current_exe() else {
-        return;
+///
+/// The window's binary path is derived from where the applet's own binary
+/// is installed (`installed_path`, not a raw `current_exe`), since the
+/// applet's own binary is `stellarshot-applet`: spawning it directly would
+/// launch another applet instead of the window. Launched through
+/// `cosmic::process::spawn`, which double-forks so the applet closing later
+/// never leaves the window as a zombie, unlike a plain `Command::spawn`
+/// that nothing ever `wait`s on.
+async fn open_window() {
+    let exe = match crate::exe::installed_path() {
+        Ok(exe) => exe.with_file_name("stellarshot"),
+        Err(err) => {
+            error_log!(UI, "applet: failed to find the window's own binary: {err}");
+            return;
+        }
     };
-    if let Err(err) = Command::new(&exe).spawn() {
-        error_log!(UI, "applet: failed to open the window ({exe:?}): {err}");
+    if cosmic::process::spawn(Command::new(&exe)).await.is_none() {
+        error_log!(UI, "applet: failed to open the window ({exe:?})");
     }
 }
 
@@ -105,7 +117,13 @@ impl cosmic::Application for Applet {
                 }
             }
             Message::Refresh => self.statuses = refresh(),
-            Message::Open => open_window(),
+            Message::Open => {
+                return Task::perform(open_window(), |()| cosmic::Action::App(Message::Refresh));
+            }
+            // Quitting the applet itself never touches a running backup:
+            // that runs in the window's own `--run` child, unaffected by
+            // whether the panel widget that reads its status is up.
+            Message::Quit => return cosmic::iced::exit(),
             Message::TogglePopup => {}
             Message::Surface(action) => {
                 return cosmic::task::message(cosmic::Action::Surface(action));
@@ -193,6 +211,7 @@ fn popup_content(state: &Applet) -> Element<'_, Message> {
                 fl!("applet-none"),
                 widget::button::standard(fl!("applet-open")).on_press(Message::Open),
             ))
+            .add(widget::button::standard(fl!("quit")).on_press(Message::Quit))
             .into();
     }
     let mut column = list_column();
@@ -210,6 +229,7 @@ fn popup_content(state: &Applet) -> Element<'_, Message> {
     }
     column
         .add(widget::button::standard(fl!("applet-open")).on_press(Message::Open))
+        .add(widget::button::standard(fl!("quit")).on_press(Message::Quit))
         .into()
 }
 

@@ -73,11 +73,29 @@ pub fn get_app_settings() -> Settings {
 /// stderr alone is not somewhere a person having a backup fail can actually
 /// go looking — the same reason `crate::debug` logs to a file rather than
 /// stderr. Truncated once per launch, like that file.
-const RUSTIC_LOG_PATH: &str = "/tmp/stellarshot-backend.log";
+///
+/// Unlike `crate::debug`'s own developer log (off by default, and stripped
+/// from release builds entirely), this one is always on, so it cannot live
+/// at a fixed, predictable path under `/tmp`: on a shared machine, two real
+/// users of Stellarshot would otherwise collide on the exact same file, and
+/// whichever one didn't create it inherits whatever permissions the other
+/// left it with. `$XDG_STATE_HOME` (falling back to `~/.local/state`) is
+/// already private to this user by XDG's own convention, and
+/// `crate::engine::lock::create_private_dir` additionally verifies that
+/// (rather than trusting it), the same way it does for the lock directory.
+fn rustic_log_path() -> Option<std::path::PathBuf> {
+    let dir = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/state")))?
+        .join("stellarshot");
+    crate::engine::lock::create_private_dir(&dir).ok()?;
+    Some(dir.join("backend.log"))
+}
 
 /// Route `log` output (what rustic_core, rustic_backend and the rclone
 /// process they run all use) into `tracing`, then to stderr and
-/// [`RUSTIC_LOG_PATH`], at `warn` unless `RUST_LOG` says otherwise. Call once
+/// [`rustic_log_path`], at `warn` unless `RUST_LOG` says otherwise. Call once
 /// from the window's own startup, which owns the file for its whole run and
 /// truncates it fresh; see [`set_logger_for_child`] for everything else that
 /// can write to the same repository.
@@ -89,7 +107,7 @@ const RUSTIC_LOG_PATH: &str = "/tmp/stellarshot-backend.log";
 /// backup to it fails, went nowhere: an error dialog could say "check the
 /// logs" while there were none to check.
 pub fn set_logger() {
-    init_tracing(RUSTIC_LOG_PATH, true);
+    init_tracing(rustic_log_path(), true);
 }
 
 /// [`set_logger`], for a `--run` child or a `--scheduled` run: every real
@@ -100,17 +118,22 @@ pub fn set_logger() {
 /// window's lifetime, or with no window open at all, and none of them owns
 /// the file the way the window does.
 pub fn set_logger_for_child() {
-    init_tracing(RUSTIC_LOG_PATH, false);
+    init_tracing(rustic_log_path(), false);
 }
 
 /// The actual setup, taking the log path as an argument so a test can point
-/// it somewhere private instead of [`RUSTIC_LOG_PATH`].
-fn init_tracing(log_path: &str, truncate: bool) {
+/// it somewhere private instead of [`rustic_log_path`]. `log_path` of `None`
+/// (the private state directory could not be created or verified) still
+/// bridges `log` into `tracing` and reaches stderr — the log-to-file part of
+/// the fix is best-effort, not something that should silently take the
+/// `log`/`tracing` bridge down with it if it fails.
+fn init_tracing(log_path: Option<std::path::PathBuf>, truncate: bool) {
     let _ = tracing_log::LogTracer::init();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("stellarshot=warn,rustic_core=warn,rustic_backend=info")
     });
-    let log_file = crate::debug::open_private_log_file(log_path, truncate);
+    let log_file = log_path
+        .and_then(|path| crate::debug::open_private_log_file(path.to_string_lossy().as_ref(), truncate));
     let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(log_file.map(|file| fmt::layer().with_writer(Mutex::new(file)).with_ansi(false)))
@@ -144,7 +167,7 @@ mod tests {
             "stellarshot-backend-log-test-{}.log",
             std::process::id()
         ));
-        init_tracing(path.to_str().unwrap(), true);
+        init_tracing(Some(path.clone()), true);
         log::warn!(target: "rustic_backend::rclone", "a marker line for the bridge test");
 
         let contents = std::fs::read_to_string(&path).unwrap_or_default();

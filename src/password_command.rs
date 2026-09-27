@@ -42,16 +42,37 @@ async fn run_with_timeout(
     // called this forever — a `--scheduled` run especially, which would
     // otherwise leave its systemd unit "active" and silently skip every
     // later timer fire rather than ever trying again.
-    let output = tokio::time::timeout(
-        timeout,
-        tokio::process::Command::new(program)
-            .args(args)
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| EngineError::new(ErrorKind::TimedOut, timeout.as_secs().to_string()))?
-    .map_err(|err| EngineError::new(ErrorKind::Internal, format!("password command: {err}")))?;
+    //
+    // Its own process group, so a timeout can reach a child the command
+    // itself started, not only the command's own direct process:
+    // `kill_on_drop` alone (like a plain `child.kill()`) only ever reaches
+    // that direct process.
+    let child = tokio::process::Command::new(program)
+        .args(args)
+        .process_group(0)
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| EngineError::new(ErrorKind::Internal, format!("password command: {err}")))?;
+    let group = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw);
+    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(result) => result.map_err(|err| {
+            EngineError::new(ErrorKind::Internal, format!("password command: {err}"))
+        })?,
+        Err(_) => {
+            if let Some(group) = group {
+                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+            }
+            return Err(EngineError::new(
+                ErrorKind::TimedOut,
+                timeout.as_secs().to_string(),
+            ));
+        }
+    };
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(EngineError::new(
@@ -124,5 +145,41 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind, ErrorKind::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn a_timeout_kills_a_backgrounded_grandchild_too() {
+        let marker = std::env::temp_dir().join(format!(
+            "stellarshot-password-command-group-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let command = format!(
+            "sh -c 'sleep 300 & echo $! > {}; sleep 300'",
+            marker.display()
+        );
+
+        let err = run_with_timeout(&command, std::time::Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::TimedOut);
+
+        for _ in 0..50 {
+            if marker.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let grandchild_pid = std::fs::read_to_string(&marker).unwrap().trim().to_owned();
+        let still_alive = std::process::Command::new("kill")
+            .args(["-0", &grandchild_pid])
+            .status()
+            .unwrap()
+            .success();
+        let _ = std::fs::remove_file(&marker);
+        assert!(
+            !still_alive,
+            "the timeout must kill the whole group, not just the direct process"
+        );
     }
 }

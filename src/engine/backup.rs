@@ -2,7 +2,7 @@
 
 //! Taking a snapshot.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytesize::ByteSize;
@@ -60,6 +60,42 @@ pub struct BackupRequest {
     /// Only the tests and the demo repository set it, to build a history.
     #[serde(default)]
     pub time: Option<i64>,
+    /// This profile's own tag (see [`crate::engine::profile_tag`]), added to
+    /// every snapshot so `forget` can tell this profile's snapshots apart
+    /// from another profile's in a repository they share. Empty for none
+    /// (mainly in tests that do not care), which tags nothing.
+    #[serde(default)]
+    pub profile_tag: String,
+}
+
+/// `path` as a glob that can only ever match itself. rustic's override
+/// globs are gitignore-style patterns, so `\`, `*`, `?`, `[`, `]`, `{` and
+/// `}` all mean something other than themselves unless escaped — a folder
+/// named `Photos [RAW]` becomes a character class and never matches, and
+/// the same happens with `*`, `?`, `{` or `}` in a name. Left unescaped,
+/// the exclude is silently ignored and the folder is backed up anyway,
+/// which for the automatic "repository inside a source" exclude (see
+/// `Profile::backup_request`) means the repository backs up into itself.
+///
+/// Fails on a path that is not valid UTF-8 rather than falling back to
+/// `Path::display`, whose replacement character would produce a glob that
+/// cannot match the real path either — the same silent failure by another
+/// route.
+pub(crate) fn literal_glob(path: &Path) -> Result<String, EngineError> {
+    let text = path.to_str().ok_or_else(|| {
+        EngineError::new(
+            ErrorKind::Io,
+            format!("{} is not valid UTF-8", path.display()),
+        )
+    })?;
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '!') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    Ok(escaped)
 }
 
 impl BackupRequest {
@@ -67,27 +103,31 @@ impl BackupRequest {
     /// exclusion; a glob without one would instead restrict the backup to
     /// matching paths only.
     ///
-    /// Excluded paths are canonicalised, because the backup canonicalises its
+    /// Excluded paths are canonicalized, because the backup canonicalizes its
     /// sources: where `/home` is a symlink to `/var/home`, the walk sees
     /// `/var/home/dave/.cache`, and an exclude written as `/home/dave/.cache`
     /// would silently never match.
     pub(crate) fn globs(&self) -> Result<Vec<String>, EngineError> {
-        Ok(self
-            .excludes
-            .iter()
-            .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
-            .map(|path| format!("!{}", path.display()))
-            .chain(
-                self.exclude_patterns
-                    .iter()
-                    .map(|pattern| format!("!{pattern}")),
-            )
-            .chain(
-                self.pattern_file_lines()?
-                    .into_iter()
-                    .map(|line| format!("!{line}")),
-            )
-            .collect())
+        let mut globs = Vec::new();
+        for path in &self.excludes {
+            let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            // `literal_glob`, not `path.display()`: an exclude is a real
+            // path, not a pattern, and must match only itself however many
+            // glob metacharacters its name happens to contain (see the
+            // function's own doc comment).
+            globs.push(format!("!{}", literal_glob(&path)?));
+        }
+        globs.extend(
+            self.exclude_patterns
+                .iter()
+                .map(|pattern| format!("!{pattern}")),
+        );
+        globs.extend(
+            self.pattern_file_lines()?
+                .into_iter()
+                .map(|line| format!("!{line}")),
+        );
+        Ok(globs)
     }
 
     /// Same as `globs`, but for `exclude_patterns_ignoring_case`: matched
@@ -183,6 +223,9 @@ impl Repo {
             let time = jiff::Timestamp::from_second(time)
                 .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
             options.time = Some(time.to_zoned(jiff::tz::TimeZone::system()));
+        }
+        if !request.profile_tag.is_empty() {
+            options = options.add_tags(&request.profile_tag)?;
         }
         let snapshot = options.to_snapshot()?;
         let snapshot = repo.backup(&request.options()?, &sources, snapshot)?;

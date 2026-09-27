@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Every action in the workflows under .github/workflows is pinned to a full
+# commit SHA (see CI-1 in docs/plans/2026-09-26-review-tasks.md), which means
+# it never updates on its own. Dependabot opens a PR to bump the SHA (and the
+# version comment next to it) when a new release comes out, so pinning for
+# supply-chain safety does not also mean silently falling behind on security
+# fixes to the actions themselves.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

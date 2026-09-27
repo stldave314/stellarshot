@@ -160,6 +160,14 @@ pub enum Effect {
     Fetch(Secret),
     BackUp(Secret),
     DeleteSnapshots(Secret, Vec<String>),
+    /// The trash icon was pressed: ask for confirmation before
+    /// `DeleteSnapshots` actually runs. `label` is the snapshot's own time,
+    /// already formatted, so the confirmation dialog needs no lookup of
+    /// its own.
+    ConfirmDeleteSnapshot {
+        id: String,
+        label: String,
+    },
     SetPinned(Secret, String, bool),
     ShowError(String, EngineError),
     /// A backup finished at this Unix time.
@@ -262,6 +270,16 @@ impl ProfileState {
             running.context = Some(context);
         }
         Some(secret)
+    }
+
+    /// Actually delete `id`, after the app-level confirmation dialog
+    /// `Message::DeleteSnapshot` opens has itself been confirmed.
+    pub fn delete_snapshot_confirmed(&mut self, id: String) -> Vec<Effect> {
+        let ids = vec![id];
+        self.start_modify(ModifyContext::Delete(ids.clone()))
+            .map(|secret| Effect::DeleteSnapshots(secret, ids))
+            .into_iter()
+            .collect()
     }
 
     pub fn is_unlocked(&self) -> bool {
@@ -450,11 +468,24 @@ impl ProfileState {
             Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
             Message::ChangePassword => vec![Effect::ChangePassword],
             Message::DeleteSnapshot(id) => {
-                let ids = vec![id];
-                self.start_modify(ModifyContext::Delete(ids.clone()))
-                    .map(|secret| Effect::DeleteSnapshots(secret, ids))
-                    .into_iter()
-                    .collect()
+                // Only asks; the trash icon must not delete on one click,
+                // unlike every other destructive action in the app. The
+                // actual delete runs from `delete_snapshot_confirmed`,
+                // called only once the app-level confirmation dialog this
+                // effect opens is itself confirmed. Still checked here too,
+                // not just by the button being disabled in `view`: nothing
+                // is worth confirming towards an action that would just be
+                // dropped anyway.
+                if self.is_busy() {
+                    return Vec::new();
+                }
+                let label = self
+                    .snapshots
+                    .as_ref()
+                    .and_then(|snapshots| snapshots.iter().find(|s| s.id == id))
+                    .map(|snapshot| format::local_time(snapshot.time))
+                    .unwrap_or_default();
+                vec![Effect::ConfirmDeleteSnapshot { id, label }]
             }
             Message::SnapshotsDeleted(event) => {
                 let secret = self.secret.clone();
@@ -1402,7 +1433,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_backup_is_reported_and_cleared() {
+    fn a_canceled_backup_is_reported_and_cleared() {
         let mut state = unlocked();
         state.back_up(&profile());
 
@@ -1425,6 +1456,22 @@ mod tests {
             state
                 .update(Message::DeleteSnapshot("abc".into()), &profile())
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn deleting_a_snapshot_asks_for_confirmation_before_touching_anything() {
+        let mut state = unlocked();
+
+        let effects = state.update(Message::DeleteSnapshot("abc123".into()), &profile());
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ConfirmDeleteSnapshot { id, .. }] if id == "abc123"
+        ));
+        assert!(
+            !state.is_busy(),
+            "asking must not itself start deleting anything"
         );
     }
 
@@ -1462,7 +1509,7 @@ mod tests {
     #[test]
     fn a_finished_snapshot_deletion_logs_which_one() {
         let mut state = unlocked();
-        state.update(Message::DeleteSnapshot("abc123".into()), &profile());
+        state.delete_snapshot_confirmed("abc123".into());
 
         let effects = state.update(Message::SnapshotsDeleted(done()), &profile());
 
@@ -1476,7 +1523,7 @@ mod tests {
     #[test]
     fn a_failed_snapshot_deletion_logs_nothing() {
         let mut state = unlocked();
-        state.update(Message::DeleteSnapshot("abc123".into()), &profile());
+        state.delete_snapshot_confirmed("abc123".into());
 
         let effects = state.update(
             Message::SnapshotsDeleted(ChildEvent::Ended(EngineError::new(ErrorKind::Io, ""))),

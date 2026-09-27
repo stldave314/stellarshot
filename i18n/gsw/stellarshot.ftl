@@ -75,6 +75,7 @@ wizard-include = Iischlüüsse
 wizard-exclude = Usschlüüsse
 wizard-exclude-outside = Isch i keim iigschlossene Ordner und ändert drum nüt
 wizard-add-folders = Ordner hinzuefüege …
+wizard-browse-hint = Duresueche, zum gseh was Platz bruucht, und uslah was nöd bruucht wird.
 browse-open = Duresueche …
 browse-close = Schliesse
 browse-scanning = Wird gscannt … bis jetzt { $count } gfunde
@@ -118,6 +119,7 @@ back = Zrugg
 next = Wiiter
 edit = Bearbeite
 remove = Entferne
+dismiss = Verwerfe
 delete = Lösche
 cancel = Abbreche
 password = Passwort
@@ -125,6 +127,8 @@ remove-title = „{ $name }“ entferne?
 remove-body = Sterneschuss vergisst die Sicherig und s gspeicherete Passwort. D Sicherig und iri Momentuufnahme wärded nöd glöscht und chönd spöter wider göffnet wärde.
 delete-title = „{ $name }“ und alli Date lösche?
 delete-body = Das löscht d Sicherig und jedi Momentuufnahm drin für immer. Anderi Dateie im gliiche Ordner blibed unberüert. Gib { $name } zum Bstätige ii.
+delete-snapshot-title = Die Momentuufnahm lösche?
+delete-snapshot-body = D Momentuufnahm vo { $time } wird für immer glöscht. Dateie drin, wo kei anderi Momentuufnahm bruucht, wärded bim nächste Ufrume frei gee.
 
 # Errors
 error-title = Öppis isch schiefgange
@@ -163,7 +167,10 @@ file = Datei
 menu-new-backup = Neui Sicherig …
 new-backup = Neui Sicherig
 new-window = Neus Fenster
+menu-close-window = Fenster schliesse
 quit = Verlah
+quit-confirm-title = Verlah, während öppis am laufe isch?
+quit-confirm-body = Es Backup oder öppis anders am Schriibe isch grad am laufe. Es lauft i sim eigete Prozess wiiter, au nachdem Stellarshot verla worde isch, aber niemer lueget mee druf oder zeigt de Fortschritt.
 view = Asicht
 menu-settings = Iinstellige
 menu-about = Informatione über Sterneschuss
@@ -430,6 +437,10 @@ notify-open = Öffne
 error-timed-out = Innert { $seconds } Sekunde isch kei Antwort cho. D Verbindig isch vilicht langsam, oder de Speicherdienscht begränzt d Aafrage. Lueg dini Verbindig aa und probier's nomal.
 error-conditions-not-met = D Bedingige sind nöd erfüllt gsi: { $reason }
 error-hook-failed = En Hook isch fehlgschlage, drum isch d Sicherig nöd gloffe: { $reason }
+error-app-updated = Stellarshot isch aktualisiert worde, während's gloffen isch, drum cha's dää Vorgang nüm starte. Mach's ganz zue und mach's wieder uf.
+error-invalid-remote = Das Cloud-Remote vo däre Sicherig wird vo Stellarshot nöd als eigets erkennt, drum cha's nöd öffnet wärde.
+error-unsafe-path = E Datei i dere Sicherig zeigt uf en Ort usserhalb vom Wiederherstelligsordner ({ $path }), drum isch nüt wiederhergstellt worde.
+error-not-found = { $path } isch nid i dere Sicherig.
 place-checking-for = Wird prüeft … { $time }
 wizard-creating = Wird gmacht … { $time }
 wizard-opening = Wird ufgmacht … { $time }
@@ -526,8 +537,13 @@ settings-import-done-body = { $added ->
     [0] {""}
     [1] Eini isch scho da gsi und isch unverändert bliebe.
    *[other] { $skipped } sind scho da gsi und sind unverändert bliebe.
+} { $rejected ->
+    [0] {""}
+    [1] Eini hätt mer nöd sicher importiere chöne und isch übersprunge worde.
+   *[other] { $rejected } hätt mer nöd sicher importiere chöne und sind übersprunge worde.
 }
 settings-import-failed = D Iistellige händ nöd chöne importiert wärde.
+settings-import-hooks-disabled = Importierti Sicherige starte mit usgschaltetem Ziitplan und usgschalteti Hooks. Lueg si aa, bevor de sie iischaltisch.
 home = Übersicht
 home-backups-title = Sicherige
 home-backup-detail = { $status } · { $last }
@@ -582,11 +598,19 @@ web-scope-localhost = Nur dää Computer
 web-scope-localhost-description = Nur vo dääm Computer sälber erreichbar, zum Bispiel über en eigete SSH-Tunnel.
 web-scope-lan = Im Netzwerk erreichbar
 web-scope-lan-description = Vo jedem andere Gerät im gliiche Netzwerk erreichbar.
+web-port = Port
+web-port-description = Wo Port d Weboberflächi lost.
+web-port-invalid = Das isch kei gültigi Portnummere. Sie muess zwüsche 1 und 65535 sii.
+web-address = Wird uf { $url } erreichbar sii.
 web-auth-password = Gmeinsams Passwort
 web-auth-password-description = Es Passwort, aapaart vom Passwort vo jeder Sicherig, zum Aamelde nötig.
 web-password-set = Passwort festlege
 web-password-placeholder = Neus Passwort
+web-password-saved-title = Passwort gspeicheret
+web-password-saved-body = D Weboberflächi bruucht das bim nächschte Start.
 web-password-failed = S Passwort vo de Weboberflächi hät nid chöne gspeicheret wärde.
+web-password-too-short-title = Passwort z churz
+web-password-too-short-body = Bruuch mindeschtens { $minimum } Zeiche.
 web-auth-token = API-Token
 web-auth-token-description = Es erzeugts Token für d programmgstürti Nutzig vo de API vo de Weboberflächi.
 web-token-generate = Token
@@ -596,12 +620,30 @@ web-token-none = Es isch no kes Token erzeugt worde.
 web-token-title = Neus API-Token
 web-token-body = { $token }
 
-Das wird nur eimal aazeigt. Bewahr s sicher uf: es wiiters erzeugts Token ersetzt das da.
+    Das wird nur eimal aazeigt. Bewahr s sicher uf: es wiiters erzeugts Token ersetzt das da.
 web-auth-pam = D eigeti Aamäldig vo dääm Computer
 web-auth-pam-description = Aamälde mit em gliiche Passwort, wo mer sich a dääm Computer aamäldet.
 web-allowed-title = Erlaubti Adresse
 web-allowed-description = Nur die Adresse oder Bereich dörfe d Weboberflächi erreiche. Leer heisst jedi Adress, wo d Iistellig obe scho erlaubt.
 web-allowed-placeholder = Adress oder Bereich, zum Bispiel 192.168.1.0/24
+web-tls-title = TLS-Zertifikat
+web-tls-description = D Weboberflächi wird immer über HTTPS erreicht. Standardmässig erzeugt und bruucht sie es eigets selbschtsigniertes Zertifikat; en Browser bruucht defür einisch e Vertroueusnahm. Leg statt däm es eigets Zertifikat und en eigete Schlüssel fescht, falls de eis hesch, zum Bispiel vor ere Zertifizierigsstell, wo dini Geräte scho vertroue.
+web-tls-cert = Zertifikat
+web-tls-key = Privater Schlüssel
+web-tls-default = Selbschtsigniert (automatisch erzeugt)
+web-tls-cert-title = Zertifikatsdatei uswähle
+web-tls-key-title = Datei mit private Schlüssel uswähle
+web-daemon-title = Dienscht
+web-daemon-status = Status
+web-daemon-status-active = Lauft
+web-daemon-status-inactive = Aghalte
+web-daemon-status-failed = Start fehlgschlage
+web-daemon-status-unknown = Nöd installiert
+web-daemon-start = Starte
+web-daemon-stop = Ahalte
+web-daemon-restart = Neu starte
+web-daemon-action-failed = De Dienscht vo de Weboberflächi hät nöd gsteuret wärde chöne.
+web-docs-link = Mee über d Weboberflächi und ihri API erfahre
 pin-snapshot-failed = D Aaghänkig vo de Momentuufnahm hät nöd chöne gänderet wärde.
 pin-snapshot = Aahefte, dass s Ufruume die Momentuufnahm nie entfernt
 unpin-snapshot = Lösmache, dass s Ufruume die Momentuufnahm wieder chan entferne

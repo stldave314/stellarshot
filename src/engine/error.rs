@@ -3,7 +3,7 @@
 //! Errors the engine reports, typed by what the user can do about them.
 //!
 //! Every error crosses a process boundary (the `--run` child reports it as
-//! JSON), so the kinds are a closed, serialisable set. The UI maps each kind to
+//! JSON), so the kinds are a closed, serializable set. The UI maps each kind to
 //! a localized message; `detail` carries whatever technical text rustic gave,
 //! for the "Details" line.
 
@@ -55,6 +55,22 @@ pub enum ErrorKind {
     /// A `Before` hook failed, so the backup did not run. The detail names
     /// the hook and, if there was one, its own error.
     HookFailed,
+    /// The running app's own executable was replaced (an update installed
+    /// while it kept running), so it can no longer spawn the child process
+    /// an operation needs.
+    AppUpdated,
+    /// An rclone remote outside the shape Stellarshot itself creates, or
+    /// missing from Stellarshot's own rclone configuration: see
+    /// `profile::valid_rclone_remote`.
+    InvalidRemote,
+    /// A snapshot names a file outside the folder being restored into (a
+    /// `..` component, or an absolute path): see `restore::restore_one`'s
+    /// validation of every item `repo.ls` yields. The detail is the
+    /// offending path as recorded in the snapshot.
+    UnsafePath,
+    /// A snapshot ID, or a path inside one, that this repository does not
+    /// have: see `browse::not_found`. The detail is the missing ID or path.
+    NotFound,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }
@@ -104,7 +120,14 @@ impl From<RusticError> for EngineError {
         } else {
             ErrorKind::Internal
         };
-        Self::new(kind, err.to_string())
+        // rustic_backend's REST client (`reqwest`) can echo the URL it was
+        // trying to reach back into its own error text, credentials and
+        // all, for a location reached directly rather than through rclone
+        // (see SEC-3 in the review plan). Scrubbed unconditionally rather
+        // than only for a `Location::Rest`, since this conversion has no
+        // access to which location an error came from, and scrubbing a
+        // message with nothing to redact is a no-op either way.
+        Self::new(kind, super::repo::scrub_url_credentials(&err.to_string()))
     }
 }
 

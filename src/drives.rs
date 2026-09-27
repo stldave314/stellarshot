@@ -9,6 +9,8 @@
 //! and a path inside it, and looks up where that drive is mounted right now.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 /// A mounted removable drive.
@@ -69,7 +71,9 @@ fn device_links(dir: &Path) -> Vec<(String, PathBuf)> {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let device = std::fs::canonicalize(entry.path()).ok()?;
-            let name = unescape(&entry.file_name().to_string_lossy());
+            let name = unescape(&entry.file_name().to_string_lossy())
+                .to_string_lossy()
+                .into_owned();
             Some((name, device))
         })
         .collect()
@@ -129,8 +133,12 @@ fn drives_from(
 }
 
 /// Undo the escaping the kernel and udev use: `\040` (octal) in mountinfo,
-/// `\x20` (hex) in `/dev/disk/by-label`.
-fn unescape(text: &str) -> String {
+/// `\x20` (hex) in `/dev/disk/by-label`. Returns the raw decoded bytes as
+/// an `OsString`, not a lossy `String`: a mount point built from this must
+/// keep its exact bytes, or a real one containing them (rare, but a real
+/// filesystem label or path is not guaranteed to be UTF-8) would never be
+/// recognized as the drive it actually is.
+fn unescape(text: &str) -> OsString {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -157,7 +165,7 @@ fn unescape(text: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    OsString::from_vec(out)
 }
 
 #[cfg(test)]

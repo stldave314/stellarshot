@@ -75,6 +75,7 @@ wizard-include = Inkludera
 wizard-exclude = Exkludera
 wizard-exclude-outside = Ligger inte i en inkluderad mapp, så den ändrar ingenting
 wizard-add-folders = Lägg till mappar…
+wizard-browse-hint = Bläddra för att se vad som tar upp plats, och undanta det du inte behöver.
 browse-open = Bläddra…
 browse-close = Stäng
 browse-scanning = Skannar… { $count } hittade hittills
@@ -118,6 +119,7 @@ back = Tillbaka
 next = Nästa
 edit = Editera
 remove = Ta bort
+dismiss = Avfärda
 delete = Ta bort
 cancel = Avbryt
 password = Lösenord
@@ -125,6 +127,8 @@ remove-title = Ta bort ”{ $name }”?
 remove-body = Stellarshot glömmer den här säkerhetskopian och dess sparade lösenord. Säkerhetskopian och dess ögonblicksbilder raderas inte och kan öppnas igen senare.
 delete-title = Radera ”{ $name }” och all data?
 delete-body = Detta raderar säkerhetskopian och alla ögonblicksbilder i den permanent. Andra filer i samma mapp påverkas inte. Skriv { $name } för att bekräfta.
+delete-snapshot-title = Radera denna ögonblicksbild?
+delete-snapshot-body = Ögonblicksbilden från { $time } raderas permanent. Filer i den som ingen annan ögonblicksbild behöver frigörs vid nästa städning.
 
 # Errors
 error-title = Något gick fel
@@ -163,7 +167,10 @@ file = Fil
 menu-new-backup = Ny säkerhetskopia…
 new-backup = Ny säkerhetskopia
 new-window = Nytt fönster
+menu-close-window = Stäng fönstret
 quit = Avsluta
+quit-confirm-title = Avsluta medan något körs?
+quit-confirm-body = En säkerhetskopiering eller en annan skrivning pågår. Den fortsätter i sin egen process även efter att Stellarshot avslutats, men ingenting kommer att bevaka den eller visa dess förlopp.
 view = Visa
 menu-settings = Inställningar...
 menu-about = Om Stellarshot...
@@ -430,6 +437,10 @@ notify-open = Öppna
 error-timed-out = Inget svar kom inom { $seconds } sekunder. Anslutningen kan vara långsam, eller så begränsar lagringstjänsten förfrågningarna. Kontrollera anslutningen och försök igen.
 error-conditions-not-met = Villkoren uppfylldes inte: { $reason }
 error-hook-failed = En krok misslyckades, så säkerhetskopieringen kördes inte: { $reason }
+error-app-updated = Stellarshot uppdaterades medan det kördes, så det kan inte längre starta den här åtgärden. Avsluta det helt och öppna det igen.
+error-invalid-remote = Den här säkerhetskopians molnfjärranslutning känns inte igen av Stellarshot som sin egen och kan därför inte öppnas.
+error-unsafe-path = En fil i den här säkerhetskopian pekar på en plats utanför återställningsmappen ({ $path }), så inget återställdes.
+error-not-found = { $path } finns inte i den här säkerhetskopian.
 place-checking-for = Kontrollerar… { $time }
 wizard-creating = Skapar… { $time }
 wizard-opening = Öppnar… { $time }
@@ -526,8 +537,13 @@ settings-import-done-body = { $added ->
     [0] {""}
     [1] En fanns redan här och lämnades som den är.
    *[other] { $skipped } fanns redan här och lämnades som de är.
+} { $rejected ->
+    [0] {""}
+    [1] En kunde inte importeras säkert och hoppades över.
+   *[other] { $rejected } kunde inte importeras säkert och hoppades över.
 }
 settings-import-failed = Inställningarna kunde inte importeras.
+settings-import-hooks-disabled = Importerade säkerhetskopior börjar med schema och krokar avstängda. Granska dem innan du slår på dem.
 home = Översikt
 home-backups-title = Säkerhetskopior
 home-backup-detail = { $status } · { $last }
@@ -582,11 +598,19 @@ web-scope-localhost = Endast den här datorn
 web-scope-localhost-description = Nåbart endast från den här datorn själv, till exempel via en egen SSH-tunnel.
 web-scope-lan = Nåbart på nätverket
 web-scope-lan-description = Nåbart från vilken annan enhet som helst på samma nätverk.
+web-port = Port
+web-port-description = Vilken port webbgränssnittet lyssnar på.
+web-port-invalid = Det är inte ett giltigt portnummer. Det måste vara mellan 1 och 65535.
+web-address = Kommer att lyssna på { $url }.
 web-auth-password = Delat lösenord
 web-auth-password-description = Ett lösenord, skilt från någon säkerhetskopias eget, som krävs för att logga in.
 web-password-set = Ange lösenordet
 web-password-placeholder = Nytt lösenord
+web-password-saved-title = Lösenordet sparades
+web-password-saved-body = Webbgränssnittet använder det nästa gång det startar.
 web-password-failed = Webbgränssnittets lösenord kunde inte sparas.
+web-password-too-short-title = Lösenordet är för kort
+web-password-too-short-body = Använd minst { $minimum } tecken.
 web-auth-token = API-token
 web-auth-token-description = En genererad token för skriptad användning av webbgränssnittets API.
 web-token-generate = Token
@@ -596,12 +620,30 @@ web-token-none = Ingen token har genererats än.
 web-token-title = Ny API-token
 web-token-body = { $token }
 
-Detta visas bara en gång. Förvara den säkert: att generera en till token ersätter den här.
+    Detta visas bara en gång. Förvara den säkert: att generera en till token ersätter den här.
 web-auth-pam = Den här datorns egna inloggning
 web-auth-pam-description = Logga in med samma lösenord som används för att logga in på den här datorn.
 web-allowed-title = Tillåtna adresser
 web-allowed-description = Bara dessa adresser eller intervall får nå webbgränssnittet. Tomt betyder varje adress som inställningen ovan redan tillåter.
 web-allowed-placeholder = Adress eller intervall, till exempel 192.168.1.0/24
+web-tls-title = TLS-certifikat
+web-tls-description = Webbgränssnittet nås alltid via HTTPS. Som standard skapar och använder det ett eget självsignerat certifikat; en webbläsare behöver ett engångsundantag för det. Ange ett eget certifikat och en egen nyckel istället om du har ett, till exempel från en certifikatutfärdare som dina enheter redan litar på.
+web-tls-cert = Certifikat
+web-tls-key = Privat nyckel
+web-tls-default = Självsignerat (skapas automatiskt)
+web-tls-cert-title = Välj en certifikatfil
+web-tls-key-title = Välj en privat nyckelfil
+web-daemon-title = Bakgrundstjänst
+web-daemon-status = Status
+web-daemon-status-active = Körs
+web-daemon-status-inactive = Stoppad
+web-daemon-status-failed = Start misslyckades
+web-daemon-status-unknown = Inte installerad
+web-daemon-start = Starta
+web-daemon-stop = Stoppa
+web-daemon-restart = Starta om
+web-daemon-action-failed = Webbgränssnittets bakgrundstjänst kunde inte styras.
+web-docs-link = Läs mer om webbgränssnittet och dess API
 pin-snapshot-failed = Ögonblicksbildens fästning kunde inte ändras.
 pin-snapshot = Fäst, så att uppstädning aldrig tar bort den här ögonblicksbilden
 unpin-snapshot = Lossa, så att uppstädning kan ta bort den här ögonblicksbilden igen

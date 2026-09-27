@@ -3,8 +3,11 @@
 //! Keeping a repository healthy: integrity checks, forgetting old snapshots
 //! under a retention policy, and pruning the data no snapshot needs.
 
+use std::path::PathBuf;
+
 use rustic_core::{
-    CheckOptions, ForgetGroups, Grouped, KeepOptions, PruneOptions, SnapshotGroupCriterion,
+    CheckOptions, ForgetGroups, Grouped, KeepOptions, PathList, PruneOptions,
+    SnapshotGroupCriterion, StringList,
 };
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +77,35 @@ pub fn hostname() -> String {
     gethostname::gethostname().to_string_lossy().into_owned()
 }
 
+/// The tag every snapshot a profile creates carries, so `forget` can tell
+/// this profile's snapshots apart from another profile's in a repository
+/// two or more profiles share (the wizard's "open existing" mode allows
+/// it): see [`Repo::forget`]'s own doc comment.
+pub fn profile_tag(id: &str) -> String {
+    format!("stellarshot-profile:{id}")
+}
+
+/// Whether `paths`, a snapshot's own recorded sources, are exactly the
+/// canonicalized, merged form of `sources` — the same transform a backup
+/// itself applies through `BackupRequest::path_list`. Used only to decide
+/// whether an **untagged** snapshot (made before per-profile tagging
+/// existed) belongs to this profile.
+///
+/// Comparing through the same comma-joined string form both `PathList`'s
+/// `Display` and `StringList`'s `FromStr` use is deliberately
+/// conservative: a source whose name happens to contain a literal comma
+/// fails to match rather than matching by accident. Either way, this never
+/// claims a snapshot for a profile that cannot be proven to own it.
+fn matches_untagged_sources(paths: &StringList, sources: &[PathBuf]) -> bool {
+    let Ok(canonical) = sources.iter().cloned().collect::<PathList>().sanitize() else {
+        return false;
+    };
+    let Ok(candidate) = canonical.to_string().parse::<StringList>() else {
+        return false;
+    };
+    *paths == candidate
+}
+
 impl Repo {
     /// Verify the repository's structure: that every snapshot, tree and index
     /// entry is present and consistent. Pack contents are not re-read.
@@ -86,16 +118,30 @@ impl Repo {
     }
 
     /// Forget the snapshots `rules` do not keep, considering only those
-    /// taken on `host`. Another computer backing up to the same repository
-    /// has its own policy, and its snapshots are never touched.
+    /// taken on `host` **and** belonging to this profile: either tagged
+    /// with `tag` (every snapshot created since per-profile tagging
+    /// landed), or, for one made before that, whose recorded sources
+    /// exactly match `sources` (see [`matches_untagged_sources`]). Another
+    /// profile sharing this repository (the wizard's "open existing" mode
+    /// allows it) has its own tag and its own retention policy; its
+    /// snapshots, tagged or not, are never touched by this one's rules.
     ///
     /// Snapshots are grouped by host, label and folders, as restic does, so
     /// that changing what a backup covers starts a new history instead of
     /// counting against the old one.
-    pub fn forget(&self, rules: &KeepRules, host: &str) -> Result<ForgetReport, EngineError> {
-        let snapshots = self
-            .inner
-            .get_matching_snapshots(|snapshot| snapshot.hostname == host)?;
+    pub fn forget(
+        &self,
+        rules: &KeepRules,
+        host: &str,
+        tag: &str,
+        sources: &[PathBuf],
+    ) -> Result<ForgetReport, EngineError> {
+        let snapshots = self.inner.get_matching_snapshots(|snapshot| {
+            snapshot.hostname == host
+                && (snapshot.tags.contains(tag)
+                    || (snapshot.tags.to_string().is_empty()
+                        && matches_untagged_sources(&snapshot.paths, sources)))
+        })?;
         let total = snapshots.len() as u64;
         if rules.is_empty() {
             return Ok(ForgetReport {

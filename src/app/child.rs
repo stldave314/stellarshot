@@ -12,7 +12,7 @@ use cosmic::iced::futures::{SinkExt, Stream, channel::mpsc};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-use crate::constants::DRAIN_AFTER_EXIT;
+use crate::constants::{CHILD_STDERR_DETAIL, CHILD_STDERR_TAIL, DRAIN_AFTER_EXIT};
 use crate::debug::ENGINE;
 use crate::engine::{EngineError, ErrorKind};
 use crate::runner::{Event, Job, Operation};
@@ -104,6 +104,16 @@ async fn drive(
     out: &mut mpsc::Sender<ChildEvent>,
 ) -> Result<bool, EngineError> {
     let exe = exe?;
+    if exe.to_string_lossy().ends_with(" (deleted)") {
+        // The kernel appends this to `/proc/self/exe`'s target once the file
+        // it named has been unlinked, which is what happens to a running
+        // process's own binary during a package upgrade. The path is no
+        // longer valid to spawn: it would fail with a bare ENOENT below.
+        return Err(EngineError::new(
+            ErrorKind::AppUpdated,
+            exe.display().to_string(),
+        ));
+    }
     let mut child = Command::new(exe)
         .arg("--run")
         .arg(operation.as_arg())
@@ -125,7 +135,16 @@ async fn drive(
         // Dropping stdin closes it, which tells the child the job is complete.
     }
     let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
+    // Read concurrently with stdout, on its own task, for as long as the
+    // child runs: its tracing can write more than a pipe's buffer holds
+    // (see `CHILD_STDERR_TAIL`'s own doc comment), and reading it only
+    // after the child exits, as stdout's own loop below used to, would let
+    // that write block forever while the child still holds the repository
+    // lock.
+    let stderr_tail = child
+        .stderr
+        .take()
+        .map(|stderr| tokio::spawn(drain_stderr_tail(stderr)));
 
     let group = child
         .id()
@@ -173,10 +192,11 @@ async fn drive(
     if reported {
         return Ok(true);
     }
-    let mut diagnostics = String::new();
-    if let Some(mut stderr) = stderr {
-        let _ = stderr.read_to_string(&mut diagnostics).await;
-    }
+    let diagnostics = match stderr_tail {
+        Some(task) => task.await.unwrap_or_default(),
+        None => String::new(),
+    };
+    let diagnostics = tail_for_detail(&diagnostics);
     use std::os::unix::process::ExitStatusExt;
     if status.signal().is_some() {
         debug_log!(ENGINE, "child ended by signal {:?}", status.signal());
@@ -190,6 +210,40 @@ async fn drive(
         ErrorKind::Internal,
         format!("{status}: {}", diagnostics.trim()),
     ))
+}
+
+/// Reads `stderr` to the end, keeping only the last `CHILD_STDERR_TAIL`
+/// bytes: enough for diagnostics without buffering an unreadable-file
+/// warning per file in a large home folder without bound.
+async fn drain_stderr_tail(mut stderr: tokio::process::ChildStderr) -> String {
+    let mut tail: Vec<u8> = Vec::new();
+    let mut buffer = [0u8; 4096];
+    loop {
+        match stderr.read(&mut buffer).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                tail.extend_from_slice(&buffer[..n]);
+                if tail.len() > CHILD_STDERR_TAIL {
+                    let excess = tail.len() - CHILD_STDERR_TAIL;
+                    tail.drain(..excess);
+                }
+            }
+        }
+    }
+    String::from_utf8_lossy(&tail).into_owned()
+}
+
+/// The most recent `CHILD_STDERR_DETAIL` bytes of `text`, landing on a
+/// `char` boundary, for whatever goes into an error message or the log.
+fn tail_for_detail(text: &str) -> &str {
+    if text.len() <= CHILD_STDERR_DETAIL {
+        return text;
+    }
+    let start = text.len() - CHILD_STDERR_DETAIL;
+    let boundary = (start..=text.len())
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(text.len());
+    &text[boundary..]
 }
 
 /// Sleep until `deadline`, or forever without one.

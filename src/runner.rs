@@ -106,6 +106,15 @@ pub struct Job {
     /// For `maintain`: prune after forgetting.
     #[serde(default)]
     pub prune: bool,
+    /// For `maintain`: this profile's own tag and canonical sources, so
+    /// `forget` only ever touches this profile's own snapshots in a
+    /// repository shared with another (see [`engine::profile_tag`] and
+    /// [`crate::engine::Repo::forget`]'s own doc comment). Empty for every
+    /// other operation, which reads neither.
+    #[serde(default)]
+    pub profile_tag: String,
+    #[serde(default)]
+    pub profile_sources: Vec<PathBuf>,
     /// For `change-password`.
     #[serde(default)]
     pub new_password: Option<Secret>,
@@ -127,6 +136,8 @@ impl Job {
             pinned: None,
             keep: None,
             prune: false,
+            profile_tag: String::new(),
+            profile_sources: Vec::new(),
             new_password: None,
         }
     }
@@ -242,6 +253,42 @@ fn log_after_hooks(results: &[HookResult]) {
     }
 }
 
+/// Guarantees `After` hooks run once `Before` hooks have succeeded, even if
+/// something between here and the explicit call on the success path returns
+/// early through `?` — a wrong password or an unreachable destination, say.
+/// A `Before` hook's documented use is to stop a database and its matching
+/// `After` hook to start it again; skipping the second because the backup
+/// never got as far as running would leave the service stopped.
+///
+/// Dropped while still armed, it runs the hooks as a failure. The success
+/// path calls [`Self::run`] itself, which disarms it so they do not run
+/// twice.
+struct AfterHookGuard<'a> {
+    hooks: &'a [Hook],
+    armed: bool,
+}
+
+impl<'a> AfterHookGuard<'a> {
+    fn new(hooks: &'a [Hook]) -> Self {
+        Self { hooks, armed: true }
+    }
+
+    /// Run the hooks for the backup's real outcome, and disarm the guard so
+    /// `Drop` does not run them a second time.
+    fn run(mut self, succeeded: bool) -> Vec<HookResult> {
+        self.armed = false;
+        hooks::run_after(self.hooks, succeeded)
+    }
+}
+
+impl Drop for AfterHookGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            log_after_hooks(&hooks::run_after(self.hooks, false));
+        }
+    }
+}
+
 /// What a finished operation reports.
 #[derive(Debug, Default)]
 pub struct Outcome {
@@ -264,15 +311,24 @@ pub fn run(
     // reaches this line, and so never removes the holder's progress file.
     let _progress_file = RemoveOnDrop(lock::progress_path(&job.repository));
     debug_log!(ENGINE, "--run {} holds the lock", operation.as_arg());
+    // Checked before `Before` hooks run, so a malformed job (never produced
+    // by the window itself) cannot leave them run with no matching `After`:
+    // every other way this function can fail before reaching the explicit
+    // `run_after` call is instead covered by `AfterHookGuard` below.
+    if operation == Operation::Backup && job.request.is_none() {
+        return Err(missing("backup request"));
+    }
     if operation == Operation::Backup {
         hooks::run_before(&job.hooks).map_err(|results| hook_failure(&results))?;
     }
+    let after_hooks = (operation == Operation::Backup).then(|| AfterHookGuard::new(&job.hooks));
     let repo = engine::open(&job.repository, &job.password)?;
     match operation {
         Operation::Backup => {
-            let request = job.request.ok_or_else(|| missing("backup request"))?;
+            let request = job.request.expect("checked above");
             let result = repo.backup(&request, sink);
-            log_after_hooks(&hooks::run_after(&job.hooks, result.is_ok()));
+            let after_hooks = after_hooks.expect("Backup always builds a guard above");
+            log_after_hooks(&after_hooks.run(result.is_ok()));
             result.map(|report| Outcome {
                 report: Some(report),
                 ..Outcome::default()
@@ -303,7 +359,14 @@ pub fn run(
         Operation::Maintain => {
             let forgotten = job
                 .keep
-                .map(|rules| repo.forget(&rules, &engine::hostname()))
+                .map(|rules| {
+                    repo.forget(
+                        &rules,
+                        &engine::hostname(),
+                        &job.profile_tag,
+                        &job.profile_sources,
+                    )
+                })
                 .transpose()?;
             let pruned = job.prune.then(|| repo.prune()).transpose()?;
             Ok(Outcome {

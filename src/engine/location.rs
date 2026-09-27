@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn init_recognises_an_existing_repository() {
+    fn init_recognizes_an_existing_repository() {
         let tmp = TempDir::new().unwrap();
         fake_repository(tmp.path());
         assert_eq!(

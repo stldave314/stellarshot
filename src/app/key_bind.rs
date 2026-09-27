@@ -27,6 +27,7 @@ pub fn key_binds() -> HashMap<KeyBind, Action> {
     bind!([Ctrl], Key::Character("b".into()), BackUpNow);
     bind!([Ctrl], Key::Character("w".into()), WindowClose);
     bind!([Ctrl, Shift], Key::Character("n".into()), WindowNew);
+    bind!([Ctrl], Key::Character("q".into()), Quit);
     bind!([Ctrl], Key::Character(",".into()), Settings);
     bind!([Ctrl], Key::Character("i".into()), About);
     bind!([], Key::Named(Named::F1), Help);

@@ -464,6 +464,93 @@ fn an_after_success_hook_runs_once_the_backup_has_actually_finished() {
 }
 
 #[test]
+fn an_after_hook_still_runs_when_the_repository_never_opens() {
+    // REL-2: `Before` succeeding must guarantee a matching `After`, even
+    // when the backup itself never gets a chance to run — the documented
+    // use is to stop a database before and start it again after, and a
+    // wrong password must not leave it stopped.
+    let fixture = Fixture::new();
+    let before_marker = fixture.dir.path().join("before-ran");
+    let after_marker = fixture.dir.path().join("after-ran");
+    let job = Job {
+        hooks: vec![
+            Hook {
+                name: "before".to_owned(),
+                command: format!("touch {}", before_marker.display()),
+                timing: HookTiming::Before,
+                enabled: true,
+            },
+            Hook {
+                name: "after".to_owned(),
+                command: format!("touch {}", after_marker.display()),
+                timing: HookTiming::After,
+                enabled: true,
+            },
+        ],
+        ..fixture.backup_job("wrong")
+    };
+
+    let (events, status) = fixture.run("backup", &job);
+
+    assert!(before_marker.exists(), "the Before hook must have run");
+    assert!(
+        after_marker.exists(),
+        "the After hook must run even though the repository never opened"
+    );
+    assert_eq!(status.code(), Some(1));
+    match events.last() {
+        Some(Event::Error { error }) => assert_eq!(error.kind, ErrorKind::WrongPassword),
+        other => panic!("expected an error event, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_after_hook_still_runs_when_the_destination_is_unreachable() {
+    let fixture = Fixture::new();
+    let before_marker = fixture.dir.path().join("before-ran");
+    let after_marker = fixture.dir.path().join("after-ran");
+    let missing = Location::local(fixture.dir.path().join("does-not-exist/repo"));
+    let job = Job {
+        hooks: vec![
+            Hook {
+                name: "before".to_owned(),
+                command: format!("touch {}", before_marker.display()),
+                timing: HookTiming::Before,
+                enabled: true,
+            },
+            Hook {
+                name: "after".to_owned(),
+                command: format!("touch {}", after_marker.display()),
+                timing: HookTiming::After,
+                enabled: true,
+            },
+        ],
+        ..Job {
+            request: Some(BackupRequest {
+                sources: vec![fixture.source.clone()],
+                ..BackupRequest::default()
+            }),
+            ..Job::new(missing, Secret::new(PASSWORD))
+        }
+    };
+
+    let (events, status) = fixture.run("backup", &job);
+
+    assert!(before_marker.exists(), "the Before hook must have run");
+    assert!(
+        after_marker.exists(),
+        "the After hook must run even though the destination was unreachable"
+    );
+    assert_eq!(status.code(), Some(1));
+    match events.last() {
+        Some(Event::Error { error }) => {
+            assert_eq!(error.kind, ErrorKind::DestinationUnavailable)
+        }
+        other => panic!("expected an error event, got {other:?}"),
+    }
+}
+
+#[test]
 fn an_after_success_hook_does_not_run_after_a_failed_backup() {
     let fixture = Fixture::new();
     let marker = fixture.dir.path().join("should-not-exist");

@@ -13,20 +13,22 @@
 //! Every request meets, in order: the network scope's own bind address (a
 //! request from outside it never arrives at all), the IP allow-list, then
 //! authentication (a shared password, an API token, or — not yet wired up —
-//! PAM). [`routes`] is the REST API itself, reachable only once a request
-//! has passed all three.
+//! PAM), throttled per address after repeated failures. [`routes`] is the
+//! REST API itself, reachable only once a request has passed all of that.
 
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::process::ExitCode;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::extract::{ConnectInfo, Request, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use base64::Engine;
+use sha2::Digest;
 use subtle::ConstantTimeEq;
 
 use crate::app::config::{NetworkScope, StellarshotConfig};
@@ -37,8 +39,96 @@ use crate::{debug_log, error_log};
 
 mod routes;
 
-/// Fixed for now: not yet exposed as a setting.
-const PORT: u16 = 8737;
+/// This server's own origins: a request whose `Origin` matches none of
+/// these, and which does not otherwise identify itself as same-origin via
+/// `Sec-Fetch-Site`, is rejected by [`reject_cross_site`]. Built once at
+/// startup from the network scope and port — `https://` plus `localhost`,
+/// `127.0.0.1`, `[::1]`, and, in LAN scope, this machine's own hostname and
+/// mDNS name (`<hostname>.local`, the address the LAN scope's own Settings
+/// page shows; see `app::web_address`).
+///
+/// Does not enumerate this machine's actual LAN IP addresses. That is a
+/// narrower, disclosed gap, not a security hole: a browser that opens the
+/// documented mDNS address always sees its own page as same-origin
+/// regardless of this set (`Sec-Fetch-Site` compares against the *page's*
+/// origin, not this list); this list only matters as a fallback for a
+/// browser old enough to send `Origin` but not `Sec-Fetch-Site`, and a miss
+/// there fails closed (403), not open.
+fn allowed_origins(scope: NetworkScope, port: u16) -> HashSet<url::Origin> {
+    let mut origins = HashSet::new();
+    let mut add = |host: &str| {
+        if let Ok(url) = url::Url::parse(&format!("https://{host}:{port}")) {
+            origins.insert(url.origin());
+        }
+    };
+    match scope {
+        NetworkScope::Off => {}
+        NetworkScope::Localhost => {
+            add("localhost");
+            add("127.0.0.1");
+            add("[::1]");
+        }
+        NetworkScope::Lan => {
+            add("localhost");
+            add("127.0.0.1");
+            add("[::1]");
+            let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+            add(&hostname);
+            add(&format!("{hostname}.local"));
+        }
+    }
+    origins
+}
+
+/// Cross-site requests never reach a route, regardless of credentials —
+/// see [`allowed_origins`]'s own doc comment. This, together with three
+/// properties enforced elsewhere and each covered by its own test (CORS
+/// never enabled; a 401 challenges only `Bearer`, never `Basic`; no cookie
+/// is ever set), is what keeps this cookie-free, CORS-free API safe from
+/// CSRF. Anyone adding a cookie session here must add CSRF tokens first —
+/// see the review's own WEB-12 for what an HTML interface would still need.
+async fn reject_cross_site(
+    State(origins): State<Arc<HashSet<url::Origin>>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if let Some(reason) = cross_site_reason(&origins, request.headers()) {
+        debug_log!(
+            WEB,
+            "rejected {addr} {} {}: {reason}",
+            request.method(),
+            request.uri().path()
+        );
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(request).await
+}
+
+/// `Some(reason)` if `headers` describe a request that must be rejected as
+/// cross-site. `Sec-Fetch-Site` is authoritative when present (every current
+/// browser sends it); `Origin` is the fallback for one old enough not to.
+/// Neither header present means a non-browser client (curl, a script, the
+/// documented API examples), which is let through.
+fn cross_site_reason(origins: &HashSet<url::Origin>, headers: &HeaderMap) -> Option<&'static str> {
+    if let Some(site) = headers
+        .get("sec-fetch-site")
+        .and_then(|value| value.to_str().ok())
+    {
+        return match site {
+            "same-origin" | "none" => None,
+            _ => Some("Sec-Fetch-Site"),
+        };
+    }
+    let origin = headers.get(header::ORIGIN)?.to_str().ok()?;
+    if origin == "null" {
+        return Some("Origin: null");
+    }
+    match url::Url::parse(origin) {
+        Ok(url) if origins.contains(&url.origin()) => None,
+        _ => Some("Origin"),
+    }
+}
 
 /// What a request needs to satisfy to be let through, resolved once at
 /// startup: the shared password is read from the keyring here rather than
@@ -51,6 +141,7 @@ struct AuthConfig {
     password: Option<Secret>,
     token_enabled: bool,
     token_hash: Option<String>,
+    throttle: Throttle,
 }
 
 /// Entry point for the `stellarshot-web` binary.
@@ -58,7 +149,7 @@ pub fn main(_args: &[String]) -> ExitCode {
     crate::app::settings::set_logger_for_child();
     crate::core::localization::init();
     let config = StellarshotConfig::config();
-    let Some(addr) = bind_address(config.web.scope) else {
+    let Some(addr) = bind_address(config.web.scope, config.web.port) else {
         debug_log!(WEB, "network scope is off; not starting");
         return ExitCode::SUCCESS;
     };
@@ -70,6 +161,13 @@ pub fn main(_args: &[String]) -> ExitCode {
         }
     };
     runtime.block_on(async move {
+        let tls = match crate::web_tls::config(config.web.custom_tls()).await {
+            Ok(tls) => tls,
+            Err(err) => {
+                error_log!(WEB, "could not load a TLS certificate: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
         let password = if config.web.password_enabled {
             crate::keyring::load_web_password().await
         } else {
@@ -80,58 +178,148 @@ pub fn main(_args: &[String]) -> ExitCode {
             password,
             token_enabled: config.web.token_enabled,
             token_hash: config.web.token_hash,
+            throttle: Throttle::new(),
         };
-        serve(addr, config.web.allowed_addresses, auth, config.profiles).await
+        serve(
+            addr,
+            tls,
+            config.web.scope,
+            config.web.port,
+            config.web.allowed_addresses,
+            auth,
+            config.profiles,
+            config.global_exclude_patterns,
+        )
+        .await
     })
 }
 
 /// Where to listen, or `None` if the network scope is off.
-fn bind_address(scope: NetworkScope) -> Option<SocketAddr> {
+fn bind_address(scope: NetworkScope, port: u16) -> Option<SocketAddr> {
     match scope {
         NetworkScope::Off => None,
-        NetworkScope::Localhost => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), PORT)),
-        NetworkScope::Lan => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), PORT)),
+        NetworkScope::Localhost => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
+        NetworkScope::Lan => Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port)),
     }
 }
 
 /// The router: an allow-list gate, then authentication, in front of every
 /// route. Separate from [`serve`] so a test can mount it on a listener of
 /// its own, on an ephemeral port, without going through [`main`]'s real
-/// config and fixed [`PORT`].
+/// config and chosen port.
 ///
 /// Layers added with [`Router::layer`] run outermost-first — see axum's own
 /// "Ordering" documentation for [`middleware`] — so the allow-list, added
 /// last, is what a request meets first, before authentication is even
 /// considered.
-fn app(allowed_addresses: Vec<String>, auth: AuthConfig, profiles: Vec<Profile>) -> Router {
+fn app(
+    allowed_addresses: Vec<String>,
+    scope: NetworkScope,
+    auth: AuthConfig,
+    origins: HashSet<url::Origin>,
+    profiles: Vec<Profile>,
+    global_exclude_patterns: Vec<String>,
+) -> Router {
     let allowed = Arc::new(allowed_addresses);
+    let scope = Arc::new(scope);
     let auth = Arc::new(auth);
+    let origins = Arc::new(origins);
+    let state = Arc::new(routes::AppState {
+        profiles,
+        global_exclude_patterns,
+    });
     Router::new()
         .route("/api/v1/health", get(health))
-        .merge(routes::router(Arc::new(profiles)))
+        .merge(routes::router(state))
         .layer(middleware::from_fn_with_state(auth, authenticate))
-        .layer(middleware::from_fn_with_state(allowed, allow_list))
+        .layer(middleware::from_fn_with_state(origins, reject_cross_site))
+        .layer(middleware::from_fn_with_state(
+            (allowed, scope),
+            allow_list,
+        ))
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            crate::constants::WEB_REQUEST_TIMEOUT,
+        ))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            crate::constants::WEB_REQUEST_BODY_LIMIT,
+        ))
+        // Fixed headers every response carries, regardless of route or
+        // outcome — none of them depend on the request, so these cover any
+        // route WEB-12 adds later too, without it having to remember them.
+        // HSTS is deliberately not sent: with the self-signed certificate
+        // this ships by default, it would teach browsers to demand HTTPS
+        // for this host even after the daemon is turned back off, which is
+        // worse than the warning it replaces.
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+            header::HeaderName::from_static("cross-origin-resource-policy"),
+            HeaderValue::from_static("same-origin"),
+        ))
 }
 
 async fn serve(
     addr: SocketAddr,
+    tls: axum_server::tls_rustls::RustlsConfig,
+    scope: NetworkScope,
+    port: u16,
     allowed_addresses: Vec<String>,
     auth: AuthConfig,
     profiles: Vec<Profile>,
+    global_exclude_patterns: Vec<String>,
 ) -> ExitCode {
-    let listener = match tokio::net::TcpListener::bind(addr).await {
+    // Bound explicitly (rather than letting `axum_server` bind lazily on
+    // first poll) so a port already in use or otherwise unavailable is
+    // reported here, with the address that failed, instead of surfacing from
+    // wherever the server future first happens to be polled.
+    let listener = match std::net::TcpListener::bind(addr) {
         Ok(listener) => listener,
         Err(err) => {
             error_log!(WEB, "could not listen on {addr}: {err}");
             return ExitCode::FAILURE;
         }
     };
+    if let Err(err) = listener.set_nonblocking(true) {
+        error_log!(WEB, "could not configure {addr}: {err}");
+        return ExitCode::FAILURE;
+    }
     debug_log!(WEB, "listening on {addr}");
-    let result = axum::serve(
-        listener,
-        app(allowed_addresses, auth, profiles).into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await;
+    let server = match axum_server::tls_rustls::from_tcp_rustls(listener, tls) {
+        Ok(server) => server,
+        Err(err) => {
+            error_log!(WEB, "could not start TLS on {addr}: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let origins = allowed_origins(scope, port);
+    let result = server
+        .serve(
+            app(
+                allowed_addresses,
+                scope,
+                auth,
+                origins,
+                profiles,
+                global_exclude_patterns,
+            )
+            .into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await;
     if let Err(err) = result {
         error_log!(WEB, "server stopped: {err}");
         return ExitCode::FAILURE;
@@ -144,15 +332,17 @@ async fn health() -> impl IntoResponse {
 }
 
 /// Reject anything not on the allow-list before it reaches any real route.
-/// An empty list means every address the network scope itself already
-/// allows, unrestricted.
+/// An empty list means every address the network scope's own private
+/// ranges allow (see [`is_allowed`]) — never literally everyone, even
+/// though `Lan` scope binds every interface (a VPN, a Docker bridge, a
+/// public Wi-Fi network, a VPS's own public address).
 async fn allow_list(
-    State(allowed): State<Arc<Vec<String>>>,
+    State((allowed, scope)): State<(Arc<Vec<String>>, Arc<NetworkScope>)>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request,
     next: Next,
 ) -> Response {
-    if is_allowed(&allowed, addr.ip()) {
+    if is_allowed(&allowed, *scope, addr.ip()) {
         next.run(request).await
     } else {
         debug_log!(WEB, "rejected {addr}: not on the allow-list");
@@ -160,12 +350,32 @@ async fn allow_list(
     }
 }
 
-fn is_allowed(allowed: &[String], addr: IpAddr) -> bool {
-    allowed.is_empty() || allowed.iter().any(|entry| matches(entry, addr))
+/// Whether `addr` may reach the daemon at all, before authentication is
+/// even considered. An explicit entry always wins. An **empty** list falls
+/// back to `scope`'s own private ranges (`WEB_PRIVATE_RANGES`) in `Lan`
+/// scope — not everyone, which "reachable on the network" could otherwise
+/// be read to mean — and to loopback only in `Localhost` scope, matching
+/// what that scope already binds to.
+fn is_allowed(allowed: &[String], scope: NetworkScope, addr: IpAddr) -> bool {
+    if !allowed.is_empty() {
+        return allowed.iter().any(|entry| matches(entry, addr));
+    }
+    match scope {
+        NetworkScope::Off => false,
+        NetworkScope::Localhost => addr.to_canonical().is_loopback(),
+        NetworkScope::Lan => crate::constants::WEB_PRIVATE_RANGES
+            .iter()
+            .any(|range| matches(range, addr)),
+    }
 }
 
 /// `entry` is either a single address or a CIDR range; either matches `addr`.
+/// `addr`, canonicalized first (an IPv4-mapped IPv6 address, `::ffff:a.b.c.d`,
+/// becomes plain `a.b.c.d`) so it can never slip past an IPv4-only `entry`
+/// on a future dual-stack bind, matches `entry` — a single address or a
+/// CIDR range.
 fn matches(entry: &str, addr: IpAddr) -> bool {
+    let addr = addr.to_canonical();
     if let Ok(net) = entry.parse::<ipnet::IpNet>() {
         return net.contains(&addr);
     }
@@ -176,19 +386,288 @@ fn matches(entry: &str, addr: IpAddr) -> bool {
 /// let through if it satisfies *any* enabled method. If none is enabled,
 /// every request is rejected — a daemon someone deliberately configured with
 /// no way in should fail closed, not silently become an open one.
+///
+/// A failed attempt only counts against the throttle when the request
+/// actually presented `Basic` or `Bearer` credentials ([`presented_credentials`]):
+/// a page a browser visits can fire credential-less requests at this daemon
+/// (most are already refused cross-site by [`reject_cross_site`], but a
+/// same-origin one, or one arriving through a proxy that strips `Origin`,
+/// is not), and those must never be able to lock the owner out. The attempt
+/// is reserved under [`Throttle::try_begin`] *before* verification runs, so
+/// concurrent requests cannot all slip in between a check and its own
+/// increment.
 async fn authenticate(
     State(auth): State<Arc<AuthConfig>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request,
     next: Next,
 ) -> Response {
-    if is_authenticated(&auth, request.headers()) {
-        next.run(request).await
+    let ip = addr.ip();
+    let reservation = if presented_credentials(request.headers()) {
+        match auth.throttle.try_begin(ip) {
+            Ok(reservation) => Some(reservation),
+            Err(retry_after) => {
+                debug_log!(WEB, "rejected {addr}: locked out for {retry_after}s");
+                let mut response = StatusCode::TOO_MANY_REQUESTS.into_response();
+                if let Ok(value) = HeaderValue::from_str(&retry_after.to_string()) {
+                    response.headers_mut().insert(header::RETRY_AFTER, value);
+                }
+                return response;
+            }
+        }
     } else {
-        // Neither "no credentials" nor "wrong credentials" is distinguished
-        // here, and no `WWW-Authenticate` header is sent: this is a REST
-        // API, not a page a browser should pop its own login dialog for.
-        StatusCode::UNAUTHORIZED.into_response()
+        None
+    };
+    if is_authenticated(&auth, request.headers()) {
+        if let Some(reservation) = reservation {
+            reservation.succeeded();
+        }
+        return next.run(request).await;
     }
+    if reservation.is_some() {
+        auth.throttle.note_global_failure();
+    }
+    let mut response = StatusCode::UNAUTHORIZED.into_response();
+    // Bearer, not Basic: this is a REST API, and Basic's challenge is what
+    // makes a browser pop its own login prompt for it.
+    response.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static(r#"Bearer realm="stellarshot""#),
+    );
+    response
+}
+
+/// How many failed attempts an address gets before it is locked out, and for
+/// how long: 5, 15 and 60 minutes, then capped at 24 hours, one step further
+/// each time the address returns and fails again after its previous lockout
+/// (or accumulation window) has fully passed. A first-time mistake is cheap;
+/// a repeat offender's guesses get expensive fast.
+const MAX_ATTEMPTS: u32 = 5;
+const LOCKOUT_LEVEL_SECS: [i64; 4] = [5 * 60, 15 * 60, 60 * 60, 24 * 60 * 60];
+
+fn lockout_duration(level: u32) -> i64 {
+    LOCKOUT_LEVEL_SECS[(level as usize).min(LOCKOUT_LEVEL_SECS.len() - 1)]
+}
+
+/// A burst of failures across many addresses at once is a campaign, not one
+/// address's problem: past this many failures from anyone, in this window,
+/// password auth is paused for everyone (an API token, unaffected by guessing
+/// a password, keeps working) until the window passes.
+const GLOBAL_BUDGET_MAX: u32 = 50;
+const GLOBAL_BUDGET_WINDOW_SECS: i64 = 10 * 60;
+
+/// How long an address's escalation level is remembered after its most
+/// recent failure, even once its own lockout has long since passed: long
+/// enough that returning the next day still escalates, bounded so the map
+/// backing it does not grow forever.
+const ATTEMPTS_MEMORY_SECS: i64 = 7 * 86_400;
+
+/// [`Throttle`]'s own map is capped at this many addresses; past it, the
+/// least-recently-active one is dropped to make room for a new one, rather
+/// than growing without bound.
+const MAX_TRACKED_ADDRESSES: usize = 10_000;
+
+fn now_secs() -> i64 {
+    jiff::Timestamp::now().as_second()
+}
+
+/// One address's recent failed attempts, and how many times it has already
+/// been locked out.
+#[derive(Debug, Clone, Copy)]
+struct Attempts {
+    count: u32,
+    first_failure: i64,
+    level: u32,
+}
+
+/// Whether `attempts` currently locks its address out, and if so, the whole
+/// number of seconds left before it does not — never `0`, so a client is
+/// never told to retry immediately and get the exact same answer again.
+fn lockout_remaining(attempts: Attempts, now: i64) -> Option<i64> {
+    if attempts.count < MAX_ATTEMPTS {
+        return None;
+    }
+    let remaining = lockout_duration(attempts.level) - (now - attempts.first_failure);
+    (remaining > 0).then_some(remaining.max(1))
+}
+
+/// `existing`, with one more failure counted in: within the same window
+/// (accumulating toward a lockout, or already serving one), one higher; a
+/// fresh window — no entry yet, or the previous one fully passed — starts
+/// over at one, escalated one level further than last time (capped) if this
+/// address has been here before.
+fn next_attempts(existing: Option<Attempts>, now: i64) -> Attempts {
+    match existing {
+        Some(attempts) if now - attempts.first_failure < lockout_duration(attempts.level) => {
+            Attempts {
+                count: attempts.count + 1,
+                ..attempts
+            }
+        }
+        Some(attempts) => Attempts {
+            count: 1,
+            first_failure: now,
+            level: attempts.level + 1,
+        },
+        None => Attempts {
+            count: 1,
+            first_failure: now,
+            level: 0,
+        },
+    }
+}
+
+fn prune_expired(attempts: &mut HashMap<IpAddr, Attempts>, now: i64) {
+    attempts.retain(|_, a| now - a.first_failure < ATTEMPTS_MEMORY_SECS);
+}
+
+/// One request's reserved attempt, from [`Throttle::try_begin`]: the failure
+/// is already counted, so only a success needs to undo it.
+struct Reservation<'a> {
+    throttle: &'a Throttle,
+    addr: IpAddr,
+}
+
+impl Reservation<'_> {
+    fn succeeded(self) {
+        self.throttle.record_success(self.addr);
+    }
+}
+
+/// How many failures, across every address, in [`GLOBAL_BUDGET_WINDOW_SECS`].
+#[derive(Debug, Clone, Copy)]
+struct GlobalBudget {
+    count: u32,
+    window_start: i64,
+}
+
+/// Failed attempts against one daemon, by address, plus the budget shared
+/// across all of them. A wrong guess is expensive only in how many of them
+/// an address gets, not in making each one slower: after [`MAX_ATTEMPTS`]
+/// within its current window, every further request from that address is
+/// rejected — including one with the *correct* credentials — until the
+/// window passes, rather than only the wrong ones. Only a request that
+/// actually presented credentials reaches any of this; see [`authenticate`].
+struct Throttle {
+    attempts: Mutex<HashMap<IpAddr, Attempts>>,
+    global: Mutex<GlobalBudget>,
+}
+
+impl Throttle {
+    fn new() -> Self {
+        Self {
+            attempts: Mutex::new(HashMap::new()),
+            global: Mutex::new(GlobalBudget {
+                count: 0,
+                window_start: now_secs(),
+            }),
+        }
+    }
+
+    /// Reserves one attempt for `addr` before it is verified, under the same
+    /// lock that checks whether it is already locked out — so concurrent
+    /// requests cannot all read "not locked out yet" before any of them
+    /// increments the count. `Err(seconds)` if `addr` was already locked out;
+    /// that attempt is refused without being counted again. On success, call
+    /// [`Reservation::succeeded`] to clear the address's history.
+    fn try_begin(&self, addr: IpAddr) -> Result<Reservation<'_>, i64> {
+        let mut attempts = self.attempts.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = now_secs();
+        if let Some(remaining) = attempts
+            .get(&addr)
+            .copied()
+            .and_then(|existing| lockout_remaining(existing, now))
+        {
+            return Err(remaining);
+        }
+        prune_expired(&mut attempts, now);
+        if attempts.len() >= MAX_TRACKED_ADDRESSES && !attempts.contains_key(&addr) {
+            if let Some(oldest) = attempts
+                .iter()
+                .min_by_key(|(_, a)| a.first_failure)
+                .map(|(addr, _)| *addr)
+            {
+                attempts.remove(&oldest);
+            }
+        }
+        let updated = next_attempts(attempts.get(&addr).copied(), now);
+        if updated.count == MAX_ATTEMPTS {
+            error_log!(
+                WEB,
+                "{addr} locked out for {}s after {MAX_ATTEMPTS} failed attempts (level {})",
+                lockout_duration(updated.level),
+                updated.level
+            );
+        }
+        attempts.insert(addr, updated);
+        Ok(Reservation {
+            throttle: self,
+            addr,
+        })
+    }
+
+    /// A correct credential clears the address's history: once the right
+    /// owner is back, they should not still be limited by earlier mistakes.
+    fn record_success(&self, addr: IpAddr) {
+        self.attempts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&addr);
+    }
+
+    /// One more failure, from any address, against the shared budget. Logs
+    /// once, the moment the budget is exceeded — not on every request after.
+    fn note_global_failure(&self) {
+        let mut budget = self.global.lock().unwrap_or_else(PoisonError::into_inner);
+        let now = now_secs();
+        if now - budget.window_start >= GLOBAL_BUDGET_WINDOW_SECS {
+            *budget = GlobalBudget {
+                count: 0,
+                window_start: now,
+            };
+        }
+        budget.count += 1;
+        if budget.count == GLOBAL_BUDGET_MAX + 1 {
+            error_log!(
+                WEB,
+                "password authentication paused for {}m: more than {GLOBAL_BUDGET_MAX} failures across all addresses",
+                GLOBAL_BUDGET_WINDOW_SECS / 60
+            );
+        }
+    }
+
+    /// Whether the global budget is currently exceeded, so password auth
+    /// (not token auth) should be refused regardless of the password itself.
+    fn password_paused(&self) -> bool {
+        let budget = self.global.lock().unwrap_or_else(PoisonError::into_inner);
+        now_secs() - budget.window_start < GLOBAL_BUDGET_WINDOW_SECS
+            && budget.count > GLOBAL_BUDGET_MAX
+    }
+}
+
+/// The `Authorization` header's scheme and the rest of its value, split
+/// apart. RFC 9110 §11.1 requires the scheme to be matched case-insensitively
+/// (every client actually seen so far already sends `Basic`/`Bearer` in their
+/// conventional case, but nothing requires that).
+fn split_scheme(header_value: &str) -> Option<(&str, &str)> {
+    header_value.split_once(' ')
+}
+
+/// Whether `headers` carry an `Authorization` header this daemon recognizes
+/// the scheme of, regardless of whether the credentials turn out correct.
+/// [`authenticate`] only counts a failure against the throttle when this is
+/// true, so a credential-less request can never lock anyone out.
+fn presented_credentials(headers: &HeaderMap) -> bool {
+    let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some((scheme, _)) = split_scheme(value) else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("basic") || scheme.eq_ignore_ascii_case("bearer")
 }
 
 fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> bool {
@@ -199,6 +678,7 @@ fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> bool {
         return false;
     };
     if auth.password_enabled
+        && !auth.throttle.password_paused()
         && let Some(password) = &auth.password
         && let Some(candidate) = basic_password(value)
         && constant_time_eq(candidate.as_bytes(), password.expose().as_bytes())
@@ -207,7 +687,8 @@ fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> bool {
     }
     if auth.token_enabled
         && let Some(hash) = &auth.token_hash
-        && let Some(token) = value.strip_prefix("Bearer ")
+        && let Some((scheme, token)) = split_scheme(value)
+        && scheme.eq_ignore_ascii_case("bearer")
         && crate::web_token::verify(token, hash)
     {
         return true;
@@ -219,7 +700,10 @@ fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> bool {
 /// header. The username is not checked against anything: this is a single
 /// shared password, not an account system.
 fn basic_password(header_value: &str) -> Option<String> {
-    let encoded = header_value.strip_prefix("Basic ")?;
+    let (scheme, encoded) = split_scheme(header_value)?;
+    if !scheme.eq_ignore_ascii_case("basic") {
+        return None;
+    }
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .ok()?;
@@ -228,8 +712,15 @@ fn basic_password(header_value: &str) -> Option<String> {
     Some(password.to_owned())
 }
 
+/// Whether `a` and `b` are equal, without letting comparison time depend on
+/// even their *lengths* matching: both are hashed first (fixed-length
+/// output), the same way `web_token::verify` already avoids leaking a
+/// token's length.
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && bool::from(a.ct_eq(b))
+    fn hash(bytes: &[u8]) -> [u8; 32] {
+        sha2::Sha256::digest(bytes).into()
+    }
+    bool::from(hash(a).ct_eq(&hash(b)))
 }
 
 #[cfg(test)]
@@ -238,46 +729,70 @@ mod tests {
 
     #[test]
     fn the_off_scope_binds_nowhere() {
-        assert_eq!(bind_address(NetworkScope::Off), None);
+        assert_eq!(bind_address(NetworkScope::Off, 8737), None);
     }
 
     #[test]
     fn the_localhost_scope_binds_only_loopback() {
-        let addr = bind_address(NetworkScope::Localhost).unwrap();
+        let addr = bind_address(NetworkScope::Localhost, 8737).unwrap();
         assert!(addr.ip().is_loopback());
-        assert_eq!(addr.port(), PORT);
+        assert_eq!(addr.port(), 8737);
     }
 
     #[test]
     fn the_lan_scope_binds_every_interface() {
-        let addr = bind_address(NetworkScope::Lan).unwrap();
+        let addr = bind_address(NetworkScope::Lan, 8737).unwrap();
         assert_eq!(addr.ip(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
     }
 
     #[test]
-    fn an_empty_allow_list_allows_everything() {
-        assert!(is_allowed(&[], "203.0.113.7".parse().unwrap()));
+    fn a_chosen_port_is_used_for_either_scope() {
+        assert_eq!(
+            bind_address(NetworkScope::Localhost, 9000).unwrap().port(),
+            9000
+        );
+        assert_eq!(bind_address(NetworkScope::Lan, 9000).unwrap().port(), 9000);
     }
 
     #[test]
-    fn a_single_address_only_allows_itself() {
+    fn an_empty_allow_list_falls_back_to_the_scopes_own_private_ranges() {
+        let public = "203.0.113.7".parse().unwrap();
+        let private = "192.168.1.5".parse().unwrap();
+        let loopback = "127.0.0.1".parse().unwrap();
+        assert!(!is_allowed(&[], NetworkScope::Off, public));
+        assert!(!is_allowed(&[], NetworkScope::Off, loopback));
+        assert!(is_allowed(&[], NetworkScope::Localhost, loopback));
+        assert!(!is_allowed(&[], NetworkScope::Localhost, private));
+        assert!(is_allowed(&[], NetworkScope::Lan, private));
+        assert!(is_allowed(&[], NetworkScope::Lan, loopback));
+        assert!(!is_allowed(&[], NetworkScope::Lan, public));
+    }
+
+    #[test]
+    fn a_single_address_only_allows_itself_in_every_scope() {
         let allowed = vec!["192.168.1.10".to_owned()];
-        assert!(is_allowed(&allowed, "192.168.1.10".parse().unwrap()));
-        assert!(!is_allowed(&allowed, "192.168.1.11".parse().unwrap()));
+        for scope in [NetworkScope::Off, NetworkScope::Localhost, NetworkScope::Lan] {
+            assert!(is_allowed(&allowed, scope, "192.168.1.10".parse().unwrap()));
+            assert!(!is_allowed(&allowed, scope, "192.168.1.11".parse().unwrap()));
+        }
     }
 
     #[test]
     fn a_cidr_range_allows_every_address_inside_it() {
         let allowed = vec!["192.168.1.0/24".to_owned()];
-        assert!(is_allowed(&allowed, "192.168.1.1".parse().unwrap()));
-        assert!(is_allowed(&allowed, "192.168.1.254".parse().unwrap()));
-        assert!(!is_allowed(&allowed, "192.168.2.1".parse().unwrap()));
+        assert!(is_allowed(&allowed, NetworkScope::Lan, "192.168.1.1".parse().unwrap()));
+        assert!(is_allowed(
+            &allowed,
+            NetworkScope::Lan,
+            "192.168.1.254".parse().unwrap()
+        ));
+        assert!(!is_allowed(&allowed, NetworkScope::Lan, "192.168.2.1".parse().unwrap()));
     }
 
     #[test]
     fn an_unparseable_entry_matches_nothing_rather_than_panicking() {
         let allowed = vec!["not an address".to_owned()];
-        assert!(!is_allowed(&allowed, "192.168.1.1".parse().unwrap()));
+        assert!(!is_allowed(&allowed, NetworkScope::Lan, "192.168.1.1".parse().unwrap()));
     }
 
     fn no_auth() -> AuthConfig {
@@ -286,6 +801,7 @@ mod tests {
             password: None,
             token_enabled: false,
             token_hash: None,
+            throttle: Throttle::new(),
         }
     }
 
@@ -372,6 +888,275 @@ mod tests {
         assert!(!constant_time_eq(b"same", b"diff"));
     }
 
+    #[test]
+    fn fewer_than_the_maximum_failures_never_locks_out() {
+        let attempts = Attempts {
+            count: MAX_ATTEMPTS - 1,
+            first_failure: 1000,
+            level: 0,
+        };
+        assert_eq!(lockout_remaining(attempts, 1000), None);
+    }
+
+    #[test]
+    fn the_maximum_failures_locks_out_until_the_window_passes() {
+        let attempts = Attempts {
+            count: MAX_ATTEMPTS,
+            first_failure: 1000,
+            level: 0,
+        };
+        let lockout = LOCKOUT_LEVEL_SECS[0];
+        assert_eq!(lockout_remaining(attempts, 1000), Some(lockout));
+        assert_eq!(
+            lockout_remaining(attempts, 1000 + lockout - 1),
+            Some(1),
+            "one second left is still locked out"
+        );
+        assert_eq!(
+            lockout_remaining(attempts, 1000 + lockout),
+            None,
+            "the window has fully passed"
+        );
+        assert_eq!(lockout_remaining(attempts, 1000 + lockout + 100), None);
+    }
+
+    #[test]
+    fn failures_accumulate_within_a_window_and_escalate_once_it_passes() {
+        let first = next_attempts(None, 1000);
+        assert_eq!(first.count, 1);
+        assert_eq!(first.level, 0);
+
+        let second = next_attempts(Some(first), 1001);
+        assert_eq!(second.count, 2, "still within the same window");
+        assert_eq!(
+            second.first_failure, first.first_failure,
+            "the window's start does not move"
+        );
+        assert_eq!(second.level, 0, "the level does not move either");
+
+        let after_window = next_attempts(Some(second), 1000 + LOCKOUT_LEVEL_SECS[0]);
+        assert_eq!(after_window.count, 1, "a fresh window starts over");
+        assert_eq!(after_window.first_failure, 1000 + LOCKOUT_LEVEL_SECS[0]);
+        assert_eq!(
+            after_window.level, 1,
+            "returning after the window passed escalates the level"
+        );
+    }
+
+    #[test]
+    fn the_escalation_level_is_capped_at_the_longest_lockout() {
+        let mut attempts = next_attempts(None, 0);
+        let mut now = 0;
+        for _ in 0..LOCKOUT_LEVEL_SECS.len() + 5 {
+            now += lockout_duration(attempts.level);
+            attempts = next_attempts(Some(attempts), now);
+        }
+        assert_eq!(
+            lockout_duration(attempts.level),
+            *LOCKOUT_LEVEL_SECS.last().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_same_origin_or_absent_sec_fetch_site_is_never_cross_site() {
+        let origins = HashSet::new();
+        for site in ["same-origin", "none"] {
+            let mut headers = HeaderMap::new();
+            headers.insert("sec-fetch-site", site.parse().unwrap());
+            assert_eq!(cross_site_reason(&origins, &headers), None);
+        }
+    }
+
+    #[test]
+    fn a_cross_site_sec_fetch_site_is_rejected_even_with_no_origin_header() {
+        let origins = HashSet::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        assert!(cross_site_reason(&origins, &headers).is_some());
+    }
+
+    #[test]
+    fn no_sec_fetch_site_or_origin_header_at_all_is_let_through() {
+        assert_eq!(cross_site_reason(&HashSet::new(), &HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn an_origin_of_null_is_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "null".parse().unwrap());
+        assert!(cross_site_reason(&HashSet::new(), &headers).is_some());
+    }
+
+    #[test]
+    fn an_origin_matching_the_allowed_set_is_let_through() {
+        let origin: url::Origin = url::Url::parse("https://127.0.0.1:8737")
+            .unwrap()
+            .origin();
+        let mut origins = HashSet::new();
+        origins.insert(origin);
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "https://127.0.0.1:8737".parse().unwrap());
+        assert_eq!(cross_site_reason(&origins, &headers), None);
+    }
+
+    #[test]
+    fn an_origin_not_in_the_allowed_set_is_rejected() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+        assert!(cross_site_reason(&HashSet::new(), &headers).is_some());
+    }
+
+    #[test]
+    fn a_request_with_no_authorization_header_presents_no_credentials() {
+        assert!(!presented_credentials(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn a_basic_or_bearer_scheme_presents_credentials_regardless_of_case() {
+        for scheme in ["Basic", "basic", "BASIC", "Bearer", "bearer", "BEARER"] {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::AUTHORIZATION,
+                format!("{scheme} whatever").parse().unwrap(),
+            );
+            assert!(presented_credentials(&headers), "scheme {scheme}");
+        }
+    }
+
+    #[test]
+    fn an_unrecognized_scheme_presents_no_credentials() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Digest whatever".parse().unwrap());
+        assert!(!presented_credentials(&headers));
+    }
+
+    #[tokio::test]
+    async fn credential_less_requests_are_never_throttled_no_matter_how_many() {
+        let addr = spawn(Vec::new(), password_auth("secret")).await;
+        for attempt in 1..=10 {
+            let response = get(addr, "/api/v1/health", None).await;
+            assert!(
+                response.starts_with("HTTP/1.1 401"),
+                "attempt {attempt}: expected 401, got: {response}"
+            );
+        }
+        // Ten credential-less requests did not count against the throttle,
+        // so the correct password still works right after them.
+        let response = get(addr, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await;
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "expected 200, got: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cross_site_request_is_forbidden_and_does_not_count_against_the_throttle() {
+        let addr = spawn(Vec::new(), password_auth("secret")).await;
+        let wrong = Some("Basic aWdub3JlZDp3cm9uZw==");
+        for attempt in 1..=10 {
+            let response =
+                get_with_headers(addr, "/api/v1/health", wrong, "Sec-Fetch-Site: cross-site\r\n")
+                    .await;
+            assert!(
+                response.starts_with("HTTP/1.1 403"),
+                "attempt {attempt}: expected 403, got: {response}"
+            );
+        }
+        let response = get(addr, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await;
+        assert!(
+            response.starts_with("HTTP/1.1 200"),
+            "cross-site rejections must not have been counted: {response}"
+        );
+    }
+
+    /// The race [`Throttle::try_begin`] closes: 64 real OS threads (not
+    /// tokio tasks — genuine parallelism, not cooperative interleaving on
+    /// however many the runtime happens to schedule) hammering one address
+    /// at once. A check-then-increment done under separate locks could let
+    /// every one of them read "not locked out yet" before any commits; the
+    /// single locked reserve-and-check here must not.
+    #[test]
+    fn concurrent_attempts_give_at_most_max_attempts_worth_of_reservations() {
+        let throttle = Throttle::new();
+        let addr: IpAddr = "203.0.113.9".parse().unwrap();
+        let (reserved, refused) = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..64)
+                .map(|_| scope.spawn(|| throttle.try_begin(addr).is_ok()))
+                .collect();
+            let results: Vec<bool> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+            let reserved = results.iter().filter(|ok| **ok).count();
+            (reserved, results.len() - reserved)
+        });
+        assert!(
+            reserved <= MAX_ATTEMPTS as usize,
+            "at most {MAX_ATTEMPTS} concurrent attempts should be reserved, got {reserved}"
+        );
+        assert_eq!(reserved + refused, 64);
+    }
+
+    #[tokio::test]
+    async fn repeated_wrong_passwords_from_one_address_eventually_lock_it_out() {
+        let addr = spawn(Vec::new(), password_auth("secret")).await;
+        let wrong = Some("Basic aWdub3JlZDp3cm9uZw==");
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            let response = get(addr, "/api/v1/health", wrong).await;
+            assert!(
+                response.starts_with("HTTP/1.1 401"),
+                "attempt {attempt}: expected 401, got: {response}"
+            );
+        }
+
+        // The address is now locked out: even the *correct* password no
+        // longer works, proving this blocks the address, not only wrong
+        // guesses — otherwise an attacker's next guess would simply be let
+        // through the moment it happened to be right.
+        let response = get(addr, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await;
+        assert!(
+            response.starts_with("HTTP/1.1 429"),
+            "expected 429 once locked out, got: {response}"
+        );
+        assert!(
+            response.to_lowercase().contains("retry-after"),
+            "a locked-out response should say how long to wait: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_address_that_never_fails_is_never_throttled() {
+        let addr = spawn(Vec::new(), password_auth("secret")).await;
+        for _ in 0..MAX_ATTEMPTS + 5 {
+            let response = get(addr, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await;
+            assert!(
+                response.starts_with("HTTP/1.1 200"),
+                "a correct password should never be throttled: {response}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_correct_password_after_a_few_wrong_ones_clears_the_count() {
+        let addr = spawn(Vec::new(), password_auth("secret")).await;
+        let wrong = Some("Basic aWdub3JlZDp3cm9uZw==");
+        let right = Some("Basic aWdub3JlZDpzZWNyZXQ=");
+
+        // Fewer than the threshold, then a real success: this must not
+        // leave a partial count around to add to next time.
+        for _ in 0..MAX_ATTEMPTS - 1 {
+            get(addr, "/api/v1/health", wrong).await;
+        }
+        let response = get(addr, "/api/v1/health", right).await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+        for attempt in 1..=MAX_ATTEMPTS - 1 {
+            let response = get(addr, "/api/v1/health", wrong).await;
+            assert!(
+                response.starts_with("HTTP/1.1 401"),
+                "attempt {attempt} after the reset: expected 401 (not yet locked out), got: {response}"
+            );
+        }
+    }
+
     fn basic_header(username: &str, password: &str) -> axum::http::HeaderValue {
         let encoded =
             base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
@@ -389,8 +1174,15 @@ mod tests {
         tokio::spawn(async move {
             axum::serve(
                 listener,
-                app(allowed_addresses, auth, Vec::new())
-                    .into_make_service_with_connect_info::<SocketAddr>(),
+                app(
+                    allowed_addresses,
+                    NetworkScope::Lan,
+                    auth,
+                    HashSet::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .into_make_service_with_connect_info::<SocketAddr>(),
             )
             .await
         });
@@ -401,6 +1193,32 @@ mod tests {
     /// real bytes over a real socket, without pulling in an HTTP client
     /// crate for a single request.
     async fn get(addr: SocketAddr, path: &str, authorization: Option<&str>) -> String {
+        request(addr, "GET", path, authorization, "").await
+    }
+
+    async fn post(addr: SocketAddr, path: &str, authorization: Option<&str>) -> String {
+        request(addr, "POST", path, authorization, "").await
+    }
+
+    /// Like [`get`], with extra raw header lines (each already ending in
+    /// `\r\n`) — for headers no other helper here sends, like `Origin` or
+    /// `Sec-Fetch-Site`.
+    async fn get_with_headers(
+        addr: SocketAddr,
+        path: &str,
+        authorization: Option<&str>,
+        extra_headers: &str,
+    ) -> String {
+        request(addr, "GET", path, authorization, extra_headers).await
+    }
+
+    async fn request(
+        addr: SocketAddr,
+        method: &str,
+        path: &str,
+        authorization: Option<&str>,
+        extra_headers: &str,
+    ) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let auth_header = authorization
@@ -409,7 +1227,7 @@ mod tests {
         stream
             .write_all(
                 format!(
-                    "GET {path} HTTP/1.1\r\nHost: localhost\r\n{auth_header}Connection: close\r\n\r\n"
+                    "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n{auth_header}{extra_headers}Connection: close\r\n\r\n"
                 )
                 .as_bytes(),
             )
@@ -478,6 +1296,144 @@ mod tests {
         assert!(
             response.starts_with("HTTP/1.1 200"),
             "expected 200, got: {response}"
+        );
+    }
+
+    /// The routes in `routes::router` (everything but `/api/v1/health`) have
+    /// no allow-list or authentication of their own — that is this outer
+    /// `app`'s job. This is what actually proves the merge in [`app`] puts
+    /// *every* route, not only the ones tested directly above, behind both
+    /// layers: a route this test does not know the shape of tomorrow is
+    /// still covered, since it is the composition being tested, not one
+    /// route's own wiring.
+    #[tokio::test]
+    async fn an_unauthenticated_write_route_is_rejected_before_it_is_even_looked_up() {
+        let addr = spawn(Vec::new(), no_auth()).await;
+
+        // No profile with this ID exists either (`Vec::new()`), so a `401`
+        // here (rather than a `404`) is proof the auth layer runs first, in
+        // front of the route handler, not that the route happens to work.
+        let response = post(addr, "/api/v1/backups/anything/run", None).await;
+
+        assert!(
+            response.starts_with("HTTP/1.1 401"),
+            "expected 401, got: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_write_route_from_an_address_not_on_the_allow_list_is_forbidden() {
+        let addr = spawn(vec!["203.0.113.1".to_owned()], password_auth("secret")).await;
+
+        let response = post(
+            addr,
+            "/api/v1/backups/anything/run",
+            Some("Basic aWdub3JlZDpzZWNyZXQ="),
+        )
+        .await;
+
+        assert!(
+            response.starts_with("HTTP/1.1 403"),
+            "expected 403, got: {response}"
+        );
+    }
+
+    /// The fixed security headers are added by the *outermost* layer in
+    /// [`app`], so every response carries them regardless of which inner
+    /// layer actually decided the status — proven here across a `200`, a
+    /// `401` and a `403`, three different layers' decisions, rather than
+    /// trusting that "outermost" placement once and never checking it.
+    #[tokio::test]
+    async fn every_response_carries_the_fixed_security_headers_regardless_of_status() {
+        let addr = spawn(vec!["203.0.113.1".to_owned()], password_auth("secret")).await;
+        let ok = spawn(Vec::new(), password_auth("secret")).await;
+
+        let cases = [
+            get(ok, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await,
+            get(ok, "/api/v1/health", None).await,
+            get(addr, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await,
+        ];
+        for response in cases {
+            let lower = response.to_lowercase();
+            for expected in [
+                "x-content-type-options: nosniff",
+                "cache-control: no-store",
+                "content-security-policy:",
+                "referrer-policy: no-referrer",
+                "cross-origin-resource-policy: same-origin",
+            ] {
+                assert!(
+                    lower.contains(expected),
+                    "missing {expected:?} in: {response}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_401_carries_a_bearer_www_authenticate_challenge() {
+        let addr = spawn(Vec::new(), password_auth("secret")).await;
+        let response = get(addr, "/api/v1/health", None).await;
+        assert!(
+            response.starts_with("HTTP/1.1 401"),
+            "expected 401, got: {response}"
+        );
+        assert!(
+            response
+                .to_lowercase()
+                .contains(r#"www-authenticate: bearer realm="stellarshot""#),
+            "expected a Bearer challenge, got: {response}"
+        );
+    }
+
+    /// Proves TLS is really terminated by [`serve`]'s own server, not merely
+    /// buildable in isolation (already proven in `web_tls`'s own tests): a
+    /// real `curl` handshake, over a real socket, through the exact function
+    /// [`main`] calls. A clean `401` (rather than `curl` failing the
+    /// handshake, or a garbled response as if talking plain HTTP to a TLS
+    /// port) is only possible if the certificate really was presented and
+    /// accepted.
+    #[tokio::test]
+    async fn a_real_curl_request_over_tls_reaches_the_health_route() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (cert, key) = crate::web_tls::self_signed_paths(dir.path()).unwrap();
+        let tls = crate::web_tls::config(Some((&cert, &key))).await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = axum_server::tls_rustls::from_tcp_rustls(listener, tls).unwrap();
+        tokio::spawn(
+            server.serve(
+                app(
+                    Vec::new(),
+                    NetworkScope::Localhost,
+                    no_auth(),
+                    HashSet::new(),
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .into_make_service_with_connect_info::<SocketAddr>(),
+            ),
+        );
+
+        let output = tokio::process::Command::new("curl")
+            .args([
+                "--silent",
+                "--insecure",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+            ])
+            .arg(format!("https://{addr}/api/v1/health"))
+            .output()
+            .await
+            .expect("curl must be installed");
+        let code = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_eq!(
+            code, "401",
+            "no auth method is enabled, so a real handshake must still end in a clean 401, \
+             not curl failing the handshake or a garbled response"
         );
     }
 }

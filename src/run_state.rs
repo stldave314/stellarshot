@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::app::APP_ID;
 use crate::app::config::CONFIG_VERSION;
 use crate::debug::CONFIG;
-use crate::debug_log;
 use crate::engine::{EngineError, ErrorKind};
 use crate::profile::Profile;
+use crate::{debug_log, error_log};
 
 /// How much later than its own schedule a backup may run before it is shown
 /// as overdue: enough slack for the timer's own jitter, not so much that a
@@ -199,10 +199,55 @@ fn key(profile_id: &str) -> String {
     format!("run-{profile_id}")
 }
 
+/// [`load`], distinguishing "nothing saved yet" from "something is there
+/// but this process cannot read it right now" (an `ErrorKind` variant a
+/// newer version added, or plain corruption). The difference matters: a
+/// caller must never save a fresh default over data it simply could not
+/// parse — that is how one bad read would otherwise erase this backup's
+/// whole run history and reset `damaged` back to `false`, letting
+/// automatic pruning resume against a repository a check had found
+/// damaged.
+fn load_checked(profile_id: &str) -> Result<RunState, ()> {
+    let Some(store) = store() else {
+        return Ok(RunState::default());
+    };
+    match store.get(&key(profile_id)) {
+        Ok(state) => Ok(state),
+        Err(err) if is_missing(&err) => Ok(RunState::default()),
+        Err(err) => {
+            error_log!(
+                CONFIG,
+                "run state for {profile_id} could not be read, leaving it alone: {err}"
+            );
+            Err(())
+        }
+    }
+}
+
+/// Whether `err` means "nothing saved here yet" — safe to treat as a fresh
+/// default — as opposed to "something is there, but this process could not
+/// read it": a parse error, an unknown enum variant a newer version wrote,
+/// or a real I/O failure. Kept as its own pure function, tested on its own,
+/// since it is the entire boundary [`load_checked`]'s safety depends on:
+/// get it backwards and an unreadable value is silently treated as absent
+/// again.
+pub(crate) fn is_missing(err: &cosmic::cosmic_config::Error) -> bool {
+    matches!(
+        err,
+        cosmic::cosmic_config::Error::NotFound | cosmic::cosmic_config::Error::NoConfigDirectory
+    )
+}
+
+/// `profile_id`'s run state, or a default if none has ever been saved.
+/// Unreadable (not merely absent) state comes back marked `damaged`, even
+/// though nothing here actually confirmed that, so automatic pruning stays
+/// paused rather than resuming against state this process cannot vouch
+/// for — see [`load_checked`]'s own doc comment.
 pub fn load(profile_id: &str) -> RunState {
-    store()
-        .and_then(|store| store.get(&key(profile_id)).ok())
-        .unwrap_or_default()
+    load_checked(profile_id).unwrap_or_else(|()| RunState {
+        damaged: true,
+        ..RunState::default()
+    })
 }
 
 pub fn save(profile_id: &str, state: &RunState) -> Result<(), String> {
@@ -212,9 +257,14 @@ pub fn save(profile_id: &str, state: &RunState) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-/// Change one profile's state in place.
+/// Change one profile's state in place. Does nothing, rather than saving a
+/// fresh default over data this process could not read (see
+/// [`load_checked`]): there is nothing sensible to change without first
+/// knowing what the value actually was.
 pub fn update(profile_id: &str, change: impl FnOnce(&mut RunState)) -> Result<(), String> {
-    let mut state = load(profile_id);
+    let Ok(mut state) = load_checked(profile_id) else {
+        return Ok(());
+    };
     change(&mut state);
     save(profile_id, &state)
 }
@@ -223,6 +273,19 @@ pub fn update(profile_id: &str, change: impl FnOnce(&mut RunState)) -> Result<()
 mod tests {
     use super::*;
     use crate::profile::{Destination, Profile, Schedule};
+
+    #[test]
+    fn only_not_found_counts_as_genuinely_missing() {
+        assert!(is_missing(&cosmic::cosmic_config::Error::NotFound));
+        assert!(is_missing(&cosmic::cosmic_config::Error::NoConfigDirectory));
+        assert!(!is_missing(&cosmic::cosmic_config::Error::GetKey(
+            "run-x".into(),
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+        )));
+        assert!(!is_missing(&cosmic::cosmic_config::Error::Io(
+            std::io::Error::other("disk error")
+        )));
+    }
 
     fn profile(schedule: Schedule, last_success: Option<i64>) -> Profile {
         let mut profile = Profile::new(

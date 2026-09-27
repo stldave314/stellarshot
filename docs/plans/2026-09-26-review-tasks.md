@@ -1845,6 +1845,27 @@ marker file is itself a real file the baseline must also count once
 
 ### REL-14. "Keep both" can overwrite a file whose mtime differs by under a second
 
+**Status: Done. Confirmed first, by reading rustic_core's own source (not
+assuming): `rustic_core::commands::restore`'s `add_file` compares
+`meta.len() == file.meta.size && mtime == file.meta.mtime`, where `mtime`
+is a full-precision `jiff::Timestamp` (`Timestamp::try_from(SystemTime)`)
+— genuinely full-precision, not truncated, confirming the divergence the
+plan described was real.** `looks_identical` now builds the same
+full-precision `jiff::Timestamp` from `meta.modified()` and compares it
+directly against `node.meta.mtime`, rather than truncating both sides to
+`.as_second()`. New test
+(`keep_both_does_not_overwrite_a_file_within_the_same_second`) sets an
+existing file's mtime to a fixed, clean second boundary before backing
+up, then perturbs it by 500ms (guaranteed to stay in the same whole
+second, never rolling over) and changes its same-length content
+afterward — before the fix, `looks_identical` would have called this
+"identical" and skipped the Keep Both rename-aside, and rustic's own
+stricter comparison underneath would have restored over the file anyway.
+The full existing `engine::tests` suite (73 tests, including every other
+restore/Keep-Both test) still passes with the tightened comparison, so
+nothing that used to correctly recognize a genuinely-unchanged file (mtime
+preserved byte-for-byte through backup and restore) stopped doing so.
+
 **Medium · S · Confirm first**
 
 **Files:** `src/engine/restore.rs:110-140,240-275`
@@ -1900,6 +1921,9 @@ Measure peak memory archiving a 1 GB file with `/usr/bin/time -v`.
 
 ### REL-16. Keyring failures are silent
 
+**Status: Done, verified against a real Secret Service — one manual step
+disclosed as not done.**
+
 **Medium · S · Verified**
 
 **Files:** `src/app/tasks.rs:93,246` (`let _ = keyring::store(...)`),
@@ -1917,31 +1941,71 @@ show it through the existing `KeyringUpdateFailed` dialog. Write
 label. `debug_log!(KEYRING, …)` at every failure point, never logging the
 secret.
 
-**Verify.** Stop the Secret Service (`pkill gnome-keyring-daemon`), create a
-backup with "remember" on, and an error dialog appears. `tests/keyring.rs`
-still passes.
+**What actually landed.** Rather than thread a keyring result through
+`Finished`/`Opened` (which would have touched several message shapes used
+well beyond this one path), the store call moved *out* of `tasks::open`/
+`tasks::finish` entirely and into a second, independent `Task` batched
+alongside the existing one at both of its call sites in `app.rs`
+(`wizard::Effect::Finish`, `profile::Effect::Open`) — the same pattern
+`change-password` already used for its own keyring update. Both report
+through a new `DialogMessage::PasswordNotRemembered(Option<String>)`
+(own dialog text, `error-password-not-saved` in all 5 locales, since the
+existing `KeyringUpdateFailed` dialog's text is specific to changing an
+existing password). `tasks::open`/`tasks::finish` no longer take a
+`remember` bool at all — remembering is now entirely the caller's concern.
+`load`/`load_web_password` now log every failure path (keyring
+unreachable, search failed, secret unreadable, not valid UTF-8) instead of
+swallowing all of them with `.ok()?`; kept the existing `CONFIG` category
+rather than adding a `KEYRING` one, since `CONFIG` was already what every
+function in this file logged under before this change. `store`/`load`/
+`forget` and their three web-password counterparts are now thin wrappers
+around one `store_item`/`load_item`/`forget_item` each, taking the
+attributes and a label/log name — the near-duplication the plan flagged.
+One non-obvious wrinkle: `oo7`'s `AsAttributes` is implemented for the
+*unsized* slice type `[(K, V)]`, so a generic helper typed to take
+`&[(&str, &str)]` fails to compile against `oo7::Keyring::create_item`/
+`search_items`/`delete` (their generic parameter carries an implicit
+`Sized` bound `impl AsAttributes` desugars to) even though the trait impl
+itself would otherwise apply — caught immediately by `cargo clippy`, fixed
+by typing the helpers to the fixed-size `&[(&str, &str); 2]` both
+`attributes()` and `web_attributes()` actually produce.
+
+**Verify.** `tests/keyring.rs`'s two round trips (profile password, web
+password) still pass against this machine's real, unlocked Secret Service
+after the `store_item`/`load_item`/`forget_item` refactor.
+`app::tasks::tests::finishing_*` cover `finish`'s new two-argument
+signature. Not done: the plan's own live manual step (`pkill
+gnome-keyring-daemon`, then watch the dialog appear) — this machine's real
+keyring is the one Dave's own desktop session depends on, and this
+project's practice (see UI-1) is not to disrupt his running session; the
+logic that would show the dialog is exercised by the passing tests above
+instead, and the dialog's own live appearance is a disclosed gap rather
+than a claimed one.
 
 ---
 
 ### REL-17. Smaller correctness items
 
+**Status: Partial.** 9 of 13 done, 1 already satisfied by existing code, 3
+deferred (reasons below each row).
+
 **Low · S each · Verified unless noted**
 
-| Item | Where | Fix |
-|---|---|---|
-| Two ways to resolve a snapshot ID; an ambiguous prefix is reported as "not in this snapshot" | `browse.rs:205-214` vs `restore.rs:179` | Use rustic's `get_snapshot_from_str` everywhere, or add `NotFound` and `Ambiguous` error kinds |
-| `set_pinned` finds the new ID by diffing snapshot lists; a concurrent writer or an empty diff silently returns the old one | `snapshots.rs:112-134` | Use the ID rustic returns from the save, or log and error when the diff isn't exactly one |
-| SFTP `known_hosts` path becomes relative when `HOME` is unset | `profile.rs:121-124` | Fail instead (via the paths module, [ARC-2](#arc-2-remove-duplicated-logic)) |
-| Only Wi-Fi counts as a "trusted network"; a wired desktop never runs (**confirm intent**) | `conditions.rs:177` | Accept Ethernet connection IDs too, or document it |
-| `overdue_notified` is recorded before the notification is sent | `scheduled.rs:86` | Record after a successful send |
-| `notify::open_profile` calls blocking `Command::status()` inside an async fn | `notify.rs:111` | `tokio::process` or `spawn_blocking` |
-| `main` panics on a non-UTF-8 argument (`std::env::args`) | `main.rs:8` | `args_os()`; convert only the flags |
-| v1 migration failure is discarded silently | `profile.rs:532` | `error_log!` |
-| An unreadable `/proc/self/mountinfo` makes every drive look unplugged | `drives.rs:28` | `error_log!` and surface "cannot read drives" |
-| `mount.rs` maps every engine error to ENOENT or EIO with no log | `mount.rs:225,236,269,307` | `debug_log!(MOUNT, …)` with the error |
-| Failed history writes go only to `debug_log` | `event_log.rs:167,186` | `error_log!` |
-| `run_state` and `event_log` have no `remove`; removing a backup saves a default state instead of deleting its keys | `app.rs:938` | Add `remove(id)` and call it on profile removal |
-| The restore preview opens the repository once per request (N index downloads on cloud storage) | `app.rs:1237-1249` | Open once before the loop, or reuse the open `Browser` |
+| Item | Where | Fix | Status |
+|---|---|---|---|
+| Two ways to resolve a snapshot ID; an ambiguous prefix is reported as "not in this snapshot" | `browse.rs:205-214` vs `restore.rs:179` | Use rustic's `get_snapshot_from_str` everywhere, or add `NotFound` and `Ambiguous` error kinds | **Done.** Added `ErrorKind::Ambiguous`, an `error-ambiguous` message in all 5 locales, and a `web::routes` status mapping (400, like `UnsafePath`). `Browser::snapshot`'s prefix match (`browse.rs`) now returns it instead of collapsing into `NotFound` when more than one snapshot shares a prefix; the matching itself moved into a free `index_of` function so the not-found-vs-ambiguous split is unit-tested without a real repository. Left `restore.rs`'s `get_snapshot_from_str` path as is: rustic exposes no stable error code distinguishing "not unique" from "not found" (only a wrong-password code is checked elsewhere), so that path still reports an ambiguous prefix as `Internal` with rustic's own English text — not mislabeled as `NotFound`, just not as clear as the browse path now is. Making it clearer would mean string-matching rustic's own error text, which is fragile enough to not be worth it here. |
+| `set_pinned` finds the new ID by diffing snapshot lists; a concurrent writer or an empty diff silently returns the old one | `snapshots.rs:112-134` | Use the ID rustic returns from the save, or log and error when the diff isn't exactly one | **Done, second option.** Confirmed first: read rustic_core's own `rewrite_snapshots`/`save_snapshots` source — `save_snapshots` mutates a *clone* of the snapshot list before saving it, so the ID it assigns never reaches the caller either way; there genuinely is no ID to use instead of diffing. Changed the diff to `error_log!` and return an `Internal` error when it finds zero or more than one new ID, rather than silently falling back to `current` (the *old*, now-deleted snapshot) and reporting that as if the pin had landed on it. |
+| SFTP `known_hosts` path becomes relative when `HOME` is unset | `profile.rs:121-124` | Fail instead (via the paths module, [ARC-2](#arc-2-remove-duplicated-logic)) | **Deferred.** The plan's own fix text routes this through ARC-2's paths module, which has not been built yet; revisit once ARC-2 lands. |
+| Only Wi-Fi counts as a "trusted network"; a wired desktop never runs (**confirm intent**) | `conditions.rs:177` | Accept Ethernet connection IDs too, or document it | **Documented, not changed.** This changes scheduling behavior for anyone on a wired connection, so it needs Dave's confirmation rather than a guess made overnight. Added a doc comment on `Conditions::require_trusted_network` (`profile.rs`) spelling out the current Wi-Fi-only behavior and a `TODO` to confirm intent, so the gap is visible instead of silent. |
+| `overdue_notified` is recorded before the notification is sent | `scheduled.rs:86` | Record after a successful send | **Done.** `notify::failure` now returns `bool` (whether the notification actually got shown), and `notify_if_overdue` only calls `record(profile, |state| state.overdue_notified = true)` after a `true` result. |
+| `notify::open_profile` calls blocking `Command::status()` inside an async fn | `notify.rs:111` | `tokio::process` or `spawn_blocking` | **Done.** Switched to `tokio::process::Command` and made `open_profile` async; its one caller now awaits it. |
+| `main` panics on a non-UTF-8 argument (`std::env::args`) | `main.rs:8` | `args_os()`; convert only the flags | **Done.** `args_os().map(|arg| arg.to_string_lossy().into_owned())`. |
+| v1 migration failure is discarded silently | `profile.rs:532` | `error_log!` | **Done.** `profiles_from_v1`'s `ron::from_str` failure now goes through `error_log!(CONFIG, …)` before falling back to an empty list. Confirmed the sole caller (`app::migrate::v1_profiles`) only reaches this after the file was already read successfully, so a failure here is always a genuine parse error. |
+| An unreadable `/proc/self/mountinfo` makes every drive look unplugged | `drives.rs:28` | `error_log!` and surface "cannot read drives" | **Partly done.** `mounted_drives` now `error_log!`s the read failure instead of silently defaulting to an empty string. Did not add a separate "cannot read drives" UI surface — an unreadable `/proc/self/mountinfo` on a running Linux system would itself be a sign of a much stranger problem, and the existing "no removable drives found" UI state is not actively misleading in that case, just less informative than it could be. |
+| `mount.rs` maps every engine error to ENOENT or EIO with no log | `mount.rs:225,236,269,307` | `debug_log!(MOUNT, …)` with the error | **Done.** Added a `MOUNT` debug category and logged the underlying error at all five `Filesystem` call sites (`lookup`, `getattr`, `readlink`, `readdir`, `open`) before mapping it to an `Errno`. |
+| Failed history writes go only to `debug_log` | `event_log.rs:167,186` | `error_log!` | **Already done — no change needed.** Both sites already call `error_log!(CONFIG, …)` on a `store.set()` failure, not `debug_log!` as this row assumed; re-checked directly against the current file rather than trusting the plan's line description. |
+| `run_state` and `event_log` have no `remove`; removing a backup saves a default state instead of deleting its keys | `app.rs:938` | Add `remove(id)` and call it on profile removal | **Deferred.** `cosmic_config::Config` (read directly from its source) exposes only `ConfigGet`/`ConfigSet` — `get`/`set` — with no public delete; the key-path and state-dir logic needed to remove a file directly is private to that crate. Reimplementing that private layout externally (e.g. via `dirs`) to delete a file whose only cost is a harmless stale entry (profile IDs are never reused, so it is never read again) is a worse trade than leaving it: a wrong guess at the private path convention would silently fail to clean up, or worse, guess another profile's path. |
+| The restore preview opens the repository once per request (N index downloads on cloud storage) | `app.rs:1237-1249` | Open once before the loop, or reuse the open `Browser` | **Deferred.** Traced the cause: `Repo::preview_restore`/`restore` consume `self` by value and their shared `run()` helper calls `repo.inner.to_indexed()?` fresh every time, unlike `Browser`, which caches an indexed `Repository` in a `Mutex` for exactly this kind of reuse. A proper fix means restructuring `run()` to take an already-indexed repository instead of a fresh `Repo` — a real refactor, not the "S"-sized change this row assumed; left for its own pass. |
 
 ---
 

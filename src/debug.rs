@@ -45,6 +45,9 @@ pub const CONFIG: &str = "CONFIG";
 pub const SCHED: &str = "SCHED";
 /// The web interface's own server: binding, requests allowed or rejected.
 pub const WEB: &str = "WEB";
+/// A snapshot mounted as a filesystem: FUSE calls and the engine errors
+/// behind whichever `Errno` they turn into.
+pub const MOUNT: &str = "MOUNT";
 
 /// Opens (or creates) `path` as a private log file: `0600`, and refusing to
 /// follow a symlink already at that name. Truncated if `truncate`, appended

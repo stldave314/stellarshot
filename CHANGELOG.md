@@ -159,6 +159,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A pack upload that panics instead of merely failing no longer hangs the
   backup forever.** The panic is now caught and treated as the same kind of
   failure a returned error already was.
+- **"Keep both" can no longer overwrite an existing file it meant to leave
+  alone.** It used to compare modification times only to the second; a file
+  whose time matched the backup's to the second but not the fraction of a
+  second looked unchanged and was restored over anyway. That comparison now
+  matches full precision, the same as the underlying restore engine's own.
 - **The setup wizard's "excluded" size no longer undercounts.** Its
   "nothing excluded" baseline was still applying the maximum-size limit,
   cache-folder skipping, `.gitignore`, and pattern-file exclusions, only
@@ -205,6 +210,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from has been replaced. If launching it somehow still fails regardless,
   that is now reported as "Stellarshot was updated while it was running"
   rather than the raw operating-system error.
+- **Browsing or restoring by a snapshot ID prefix that matches more than one
+  snapshot now says so**, instead of being reported as "not in this
+  snapshot" — which was true of neither snapshot it matched.
+- **Pinning or unpinning a snapshot no longer risks reporting the wrong
+  snapshot as the result** in the rare case its new ID couldn't be
+  confirmed; it now fails with an error instead, even though the pin itself
+  already took effect.
+- **A missed scheduled backup's overdue notification is no longer marked as
+  seen if it never actually showed.**
+- **Starting Stellarshot with a non-UTF-8 command-line argument no longer
+  crashes it on launch.**
+- **If "Remember password" cannot actually save to your keyring, you are now
+  told**, instead of finding out only when a later scheduled backup fails
+  with no password to use.
 
 ## [0.6.0] - 2026-09-26
 

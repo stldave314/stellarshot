@@ -328,6 +328,7 @@ mount-failed = Diese Sicherung konnte nicht als Ordner eingebunden werden.
 # Automation
 error-password-not-remembered = Geplante Sicherungen benötigen das im Schlüsselbund gespeicherte Passwort. Öffne die Sicherung, gib ihr Passwort mit „Passwort merken“ ein, dann läuft die nächste geplante Sicherung.
 error-keyring-unavailable = Das Passwort wurde geändert, konnte aber nicht im Schlüsselbund gespeichert werden: { $details }. Trage es dort selbst ein, sonst schlägt eine geplante Sicherung damit fehl.
+error-password-not-saved = Das Passwort konnte nicht im Schlüsselbund gespeichert werden: { $details }. Trage es dort selbst ein, sonst schlägt eine geplante Sicherung damit fehl.
 error-delete-unsupported = Stellarshot kann die Daten dieses Ziels nicht selbst löschen. Entferne sie dort selbst, oder verwende „Entfernen“, um sie hier zu vergessen, ohne etwas zu löschen.
 change = Ändern …
 schedule-row = Wann sie läuft
@@ -441,6 +442,7 @@ error-app-updated = Stellarshot wurde aktualisiert, während es lief, und kann d
 error-invalid-remote = Das Cloud-Speicher-Remote dieser Sicherung wird von Stellarshot nicht als eigenes erkannt und kann deshalb nicht geöffnet werden.
 error-unsafe-path = Eine Datei in dieser Sicherung verweist auf einen Ort außerhalb des Wiederherstellungsordners ({ $path }), daher wurde nichts wiederhergestellt.
 error-not-found = { $path } ist nicht in dieser Sicherung enthalten.
+error-ambiguous = { $path } passt auf mehr als eine Sicherung. Verwenden Sie ein längeres Präfix.
 error-too-busy = Die Weboberfläche hat bereits so viele Anfragen für diese Sicherung offen, wie sie gleichzeitig zulässt. Versuchen Sie es in Kürze erneut.
 place-checking-for = Wird geprüft … { $time }
 wizard-creating = Wird erstellt … { $time }

@@ -32,39 +32,97 @@ fn attributes(profile_id: &str) -> [(&'static str, &str); 2] {
     [("application", APP_ID), ("profile", profile_id)]
 }
 
+/// Store `secret` under `label`, identified by `attrs`, replacing any
+/// earlier item with the same attributes. `what` names it for the log.
+///
+/// `attrs` is a fixed-size array, not a slice: `oo7`'s own `AsAttributes`
+/// is implemented for `[(K, V)]`, an *unsized* type, so passing a slice
+/// reference to its generic, implicitly-`Sized` type parameter does not
+/// type-check even though the trait impl itself would otherwise apply.
+async fn store_item(
+    label: &str,
+    attrs: &[(&str, &str); 2],
+    secret: &Secret,
+    what: &str,
+) -> Result<(), String> {
+    let keyring = bounded(oo7::Keyring::new()).await?;
+    bounded(keyring.create_item(label, attrs, secret.expose(), true))
+        .await
+        .inspect_err(|err| error_log!(CONFIG, "could not store {what} in the keyring: {err}"))?;
+    debug_log!(CONFIG, "stored {what}");
+    Ok(())
+}
+
+/// The item identified by `attrs`, if there is one and the keyring can be
+/// read. `what` names it for the log; every failure is logged, since a
+/// caller that gets `None` back cannot otherwise tell a genuinely empty
+/// keyring apart from one that could not be reached or read.
+async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Option<Secret> {
+    let keyring = bounded(oo7::Keyring::new())
+        .await
+        .inspect_err(|err| error_log!(CONFIG, "could not open the keyring for {what}: {err}"))
+        .ok()?;
+    let items = bounded(keyring.search_items(attrs))
+        .await
+        .inspect_err(|err| error_log!(CONFIG, "could not search the keyring for {what}: {err}"))
+        .ok()?;
+    let Some(item) = items.first() else {
+        debug_log!(CONFIG, "no {what} remembered");
+        return None;
+    };
+    let secret = bounded(item.secret())
+        .await
+        .inspect_err(|err| error_log!(CONFIG, "could not read {what} from the keyring: {err}"))
+        .ok()?;
+    match String::from_utf8(secret.as_bytes().to_vec()) {
+        Ok(password) => {
+            debug_log!(CONFIG, "loaded {what}");
+            Some(Secret::new(password))
+        }
+        Err(err) => {
+            error_log!(CONFIG, "{what} in the keyring was not valid UTF-8: {err}");
+            None
+        }
+    }
+}
+
+/// Forget the item identified by `attrs`. Succeeds if there was none.
+async fn forget_item(attrs: &[(&str, &str); 2], what: &str) -> Result<(), String> {
+    let keyring = bounded(oo7::Keyring::new()).await?;
+    bounded(keyring.delete(attrs)).await?;
+    debug_log!(CONFIG, "forgot {what}");
+    Ok(())
+}
+
 /// Remember `secret` for the profile, replacing any earlier one.
 pub async fn store(profile_id: &str, profile_name: &str, secret: &Secret) -> Result<(), String> {
-    let keyring = bounded(oo7::Keyring::new()).await?;
     let label = format!("Stellarshot backup password: {profile_name}");
-    bounded(keyring.create_item(&label, &attributes(profile_id), secret.expose(), true))
-        .await
-        .inspect_err(|err| {
-            error_log!(CONFIG, "could not store a password in the keyring: {err}")
-        })?;
-    debug_log!(CONFIG, "stored the password for profile {profile_id}");
-    Ok(())
+    store_item(
+        &label,
+        &attributes(profile_id),
+        secret,
+        &format!("the password for profile {profile_id}"),
+    )
+    .await
 }
 
 /// The remembered password for the profile, if there is one and the keyring
 /// can be read.
 pub async fn load(profile_id: &str) -> Option<Secret> {
-    let keyring = bounded(oo7::Keyring::new()).await.ok()?;
-    let items = bounded(keyring.search_items(&attributes(profile_id)))
-        .await
-        .ok()?;
-    let item = items.first()?;
-    let secret = bounded(item.secret()).await.ok()?;
-    let password = String::from_utf8(secret.as_bytes().to_vec()).ok()?;
-    debug_log!(CONFIG, "loaded the password for profile {profile_id}");
-    Some(Secret::new(password))
+    load_item(
+        &attributes(profile_id),
+        &format!("the password for profile {profile_id}"),
+    )
+    .await
 }
 
 /// Forget the profile's password. Succeeds if there was none.
 pub async fn forget(profile_id: &str) -> Result<(), String> {
-    let keyring = bounded(oo7::Keyring::new()).await?;
-    bounded(keyring.delete(&attributes(profile_id))).await?;
-    debug_log!(CONFIG, "forgot the password for profile {profile_id}");
-    Ok(())
+    forget_item(
+        &attributes(profile_id),
+        &format!("the password for profile {profile_id}"),
+    )
+    .await
 }
 
 /// The attributes that identify the web interface's own shared password: a
@@ -76,42 +134,22 @@ fn web_attributes() -> [(&'static str, &'static str); 2] {
 
 /// Remember the web interface's shared password, replacing any earlier one.
 pub async fn store_web_password(secret: &Secret) -> Result<(), String> {
-    let keyring = bounded(oo7::Keyring::new()).await?;
-    bounded(keyring.create_item(
+    store_item(
         "Stellarshot web interface password",
         &web_attributes(),
-        secret.expose(),
-        true,
-    ))
+        secret,
+        "the web interface password",
+    )
     .await
-    .inspect_err(|err| {
-        error_log!(
-            CONFIG,
-            "could not store the web interface password in the keyring: {err}"
-        )
-    })?;
-    debug_log!(CONFIG, "stored the web interface password");
-    Ok(())
 }
 
 /// The web interface's remembered shared password, if there is one and the
 /// keyring can be read.
 pub async fn load_web_password() -> Option<Secret> {
-    let keyring = bounded(oo7::Keyring::new()).await.ok()?;
-    let items = bounded(keyring.search_items(&web_attributes()))
-        .await
-        .ok()?;
-    let item = items.first()?;
-    let secret = bounded(item.secret()).await.ok()?;
-    let password = String::from_utf8(secret.as_bytes().to_vec()).ok()?;
-    debug_log!(CONFIG, "loaded the web interface password");
-    Some(Secret::new(password))
+    load_item(&web_attributes(), "the web interface password").await
 }
 
 /// Forget the web interface's shared password. Succeeds if there was none.
 pub async fn forget_web_password() -> Result<(), String> {
-    let keyring = bounded(oo7::Keyring::new()).await?;
-    bounded(keyring.delete(&web_attributes())).await?;
-    debug_log!(CONFIG, "forgot the web interface password");
-    Ok(())
+    forget_item(&web_attributes(), "the web interface password").await
 }

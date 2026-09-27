@@ -4,9 +4,9 @@
 //! `org.freedesktop.Notifications`.
 
 use std::collections::HashMap;
-use std::process::Command;
 
 use futures_util::StreamExt;
+use tokio::process::Command;
 use zbus::zvariant::Value;
 
 use crate::app::APP_ID;
@@ -43,9 +43,18 @@ trait Notifications {
 /// Show a notification that something went wrong with a backup, and wait
 /// (at most [`NOTIFICATION_WAIT`]) for it to be clicked or dismissed. A
 /// click opens the backup in Stellarshot.
-pub async fn failure(summary: &str, body: &str, open_label: &str, profile_id: &str) {
-    if let Err(err) = show_and_wait(summary, body, open_label, profile_id).await {
-        error_log!(SCHED, "could not show a notification: {err}");
+/// Shows the notification and waits for it to be clicked or closed (or
+/// [`NOTIFICATION_WAIT`] to pass). Returns whether it was actually shown, so
+/// a caller that only wants to record something once a real notification
+/// reached the user — not once merely attempting to — knows not to record
+/// it on a failed attempt.
+pub async fn failure(summary: &str, body: &str, open_label: &str, profile_id: &str) -> bool {
+    match show_and_wait(summary, body, open_label, profile_id).await {
+        Ok(()) => true,
+        Err(err) => {
+            error_log!(SCHED, "could not show a notification: {err}");
+            false
+        }
     }
 }
 
@@ -100,7 +109,7 @@ async fn show_and_wait(
         .await
         .unwrap_or(false)
     {
-        open_profile(profile_id);
+        open_profile(profile_id).await;
     }
     Ok(())
 }
@@ -108,7 +117,7 @@ async fn show_and_wait(
 /// Start Stellarshot on `profile_id`'s page. It is started through systemd
 /// as a unit of its own: a scheduled run is a service, and systemd stops
 /// everything a service started when the service ends.
-fn open_profile(profile_id: &str) {
+async fn open_profile(profile_id: &str) {
     let Ok(program) = crate::schedule::executable() else {
         return;
     };
@@ -117,6 +126,7 @@ fn open_profile(profile_id: &str) {
         .arg(&program)
         .args(["--profile", profile_id])
         .status()
+        .await
         .is_ok_and(|status| status.success());
     debug_log!(SCHED, "opened {profile_id} from a notification: {launched}");
 }

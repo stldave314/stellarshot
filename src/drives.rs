@@ -13,6 +13,9 @@ use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
+use crate::debug::ENGINE;
+use crate::error_log;
+
 /// A mounted removable drive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Drive {
@@ -27,7 +30,13 @@ const REMOVABLE_ROOTS: &[&str] = &["/media/", "/run/media/"];
 
 /// Every removable drive that is mounted now.
 pub fn mounted_drives() -> Vec<Drive> {
-    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_else(|err| {
+        // Every drive then looks unplugged, not merely unlisted — worth
+        // knowing why, since `/proc/self/mountinfo` failing to read at all
+        // is not a "this one drive is missing" problem.
+        error_log!(ENGINE, "could not read /proc/self/mountinfo: {err}");
+        String::new()
+    });
     drives_from(
         &device_links(Path::new("/dev/disk/by-uuid")),
         &device_links(Path::new("/dev/disk/by-label")),

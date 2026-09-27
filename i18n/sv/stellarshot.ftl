@@ -328,6 +328,7 @@ mount-failed = Den här säkerhetskopian kunde inte monteras som mapp.
 # Automation
 error-password-not-remembered = Schemalagda säkerhetskopieringar behöver lösenordet sparat i nyckelringen. Öppna säkerhetskopian, ange lösenordet med ”Kom ihåg lösenordet” påslaget, så körs nästa schemalagda säkerhetskopiering.
 error-keyring-unavailable = Lösenordet ändrades, men kunde inte sparas i nyckelringen: { $details }. Ange det där själv, annars kommer en schemalagd säkerhetskopiering som använder det att misslyckas.
+error-password-not-saved = Lösenordet kunde inte sparas i nyckelringen: { $details }. Ange det där själv, annars kommer en schemalagd säkerhetskopiering som använder det att misslyckas.
 error-delete-unsupported = Stellarshot kan inte radera det här målets egna data på egen hand. Ta bort dem där själv, eller använd Ta bort för att glömma det här utan att radera något.
 change = Ändra…
 schedule-row = När den körs
@@ -441,6 +442,7 @@ error-app-updated = Stellarshot uppdaterades medan det kördes, så det kan inte
 error-invalid-remote = Den här säkerhetskopians molnfjärranslutning känns inte igen av Stellarshot som sin egen och kan därför inte öppnas.
 error-unsafe-path = En fil i den här säkerhetskopian pekar på en plats utanför återställningsmappen ({ $path }), så inget återställdes.
 error-not-found = { $path } finns inte i den här säkerhetskopian.
+error-ambiguous = { $path } matchar fler än en säkerhetskopia. Använd ett längre prefix.
 error-too-busy = Webbgränssnittet har redan så många öppna förfrågningar mot den här säkerhetskopian som det tillåter samtidigt. Försök igen om en stund.
 place-checking-for = Kontrollerar… { $time }
 wizard-creating = Skapar… { $time }

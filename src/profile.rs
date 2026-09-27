@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::debug::CONFIG;
 use crate::engine::{BackupRequest, EngineError, ErrorKind, KeepRules, Location, Secret, rclone};
-use crate::{keyring, password_command};
+use crate::{error_log, keyring, password_command};
 
 /// Folders under the home directory that are rarely worth backing up and are
 /// excluded from a new profile by default, as Déjà Dup does.
@@ -313,7 +314,11 @@ pub struct Conditions {
     #[serde(default)]
     pub block_metered: bool,
     /// Skip unless connected to one of `trusted_networks` by name, or a VPN
-    /// interface (Tailscale, WireGuard, or any other) is up.
+    /// interface (Tailscale, WireGuard, or any other) is up. Only Wi-Fi
+    /// connections are checked by name (see `conditions::network_state`); a
+    /// wired connection never matches unless a VPN is also up.
+    // TODO: confirm whether a wired connection should be able to match
+    // `trusted_networks` too, or whether Wi-Fi-only is intentional.
     #[serde(default)]
     pub require_trusted_network: bool,
     #[serde(default)]
@@ -618,7 +623,15 @@ struct V1Repository {
 /// knew nothing about what to back up, so the sources start empty and the
 /// profile page asks for them.
 pub fn profiles_from_v1(ron_text: &str) -> Vec<Profile> {
-    let repositories: Vec<V1Repository> = ron::from_str(ron_text).unwrap_or_default();
+    // The caller (`app::migrate::v1_profiles`) only reaches here once it has
+    // already confirmed the version 1 file exists and was read; a failure
+    // here is always the RON itself being unreadable, not the file being
+    // absent, so every one of its repositories used to disappear silently
+    // with no way to tell why.
+    let repositories: Vec<V1Repository> = ron::from_str(ron_text).unwrap_or_else(|err| {
+        error_log!(CONFIG, "could not parse version 1 settings: {err}");
+        Vec::new()
+    });
     repositories
         .into_iter()
         .map(|repository| {

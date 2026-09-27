@@ -197,6 +197,27 @@ fn not_found(what: &str) -> EngineError {
     EngineError::new(ErrorKind::NotFound, what)
 }
 
+/// `what` is the ambiguous prefix: [`crate::app::errors::explain`]'s own
+/// `error-ambiguous` message already says it matches more than one
+/// snapshot, so it must not be repeated here.
+fn ambiguous(what: &str) -> EngineError {
+    EngineError::new(ErrorKind::Ambiguous, what)
+}
+
+/// The position of the one snapshot ID starting with `prefix`, among
+/// `ids` (newest first, as [`Browser::snapshots`] is sorted). Kept as a
+/// free function over plain strings, rather than inline in
+/// [`Browser::snapshot`], so the not-found-vs-ambiguous distinction can be
+/// tested without building a whole indexed repository.
+fn index_of<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -> Result<usize, EngineError> {
+    let mut matches = ids.enumerate().filter(|(_, id)| id.starts_with(prefix));
+    match (matches.next(), matches.next()) {
+        (Some((index, _)), None) => Ok(index),
+        (Some(_), Some(_)) => Err(ambiguous(prefix)),
+        (None, _) => Err(not_found(prefix)),
+    }
+}
+
 impl Repo {
     /// Load the tree index and every snapshot, for browsing.
     pub fn browse(self) -> Result<Browser, EngineError> {
@@ -239,11 +260,8 @@ impl Browser {
         if id == "latest" {
             return self.snapshots.first().ok_or_else(|| not_found("latest"));
         }
-        let mut matches = self.snapshots.iter().filter(|(_, s)| s.id.starts_with(id));
-        match (matches.next(), matches.next()) {
-            (Some(found), None) => Ok(found),
-            _ => Err(not_found(id)),
-        }
+        let index = index_of(self.snapshots.iter().map(|(_, s)| s.id.as_str()), id)?;
+        Ok(&self.snapshots[index])
     }
 
     /// The entries of `dir` in `snapshot`: folders first, then by name.
@@ -620,4 +638,38 @@ fn diff_trees(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_unique_prefix_finds_its_snapshot() {
+        let ids = ["aabb1111", "ccdd2222", "eeff3333"];
+        assert_eq!(index_of(ids.into_iter(), "cc").unwrap(), 1);
+        assert_eq!(index_of(ids.into_iter(), "ccdd2222").unwrap(), 1);
+    }
+
+    #[test]
+    fn an_ambiguous_prefix_is_reported_as_ambiguous_not_missing() {
+        let ids = ["aabb1111", "aabb2222", "ccdd3333"];
+
+        let error = index_of(ids.into_iter(), "aabb").unwrap_err();
+
+        assert_eq!(
+            error.kind,
+            ErrorKind::Ambiguous,
+            "two snapshots share this prefix; it exists, just not uniquely"
+        );
+    }
+
+    #[test]
+    fn a_prefix_matching_nothing_is_reported_as_not_found() {
+        let ids = ["aabb1111", "ccdd2222"];
+
+        let error = index_of(ids.into_iter(), "zzzz").unwrap_err();
+
+        assert_eq!(error.kind, ErrorKind::NotFound);
+    }
 }

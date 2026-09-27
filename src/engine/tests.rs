@@ -1505,6 +1505,59 @@ fn keep_both_never_touches_the_existing_file() {
     assert_eq!(done.conflicts, 1);
 }
 
+/// REL-14: `looks_identical` used to compare modification times to the
+/// second, but rustic's own `add_file` compares at full precision
+/// (confirmed by reading `rustic_core::commands::restore`'s own source, not
+/// assumed: `meta.len() == file.meta.size && mtime == file.meta.mtime`,
+/// where `mtime` is a full `jiff::Timestamp`). A file whose mtime landed in
+/// the same second as the snapshot's, but at a different nanosecond, used
+/// to look identical here — so **Keep Both** never renamed the existing
+/// file aside — while rustic, underneath, still saw two different files
+/// and restored over it anyway.
+#[test]
+fn keep_both_does_not_overwrite_a_file_within_the_same_second() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let plain = fixture.source.join("plain.txt");
+    // A clean second boundary, not whatever the filesystem's own clock
+    // happens to be right now, so perturbing it by 500ms below is
+    // guaranteed to stay within the same whole second rather than risk
+    // rolling over into the next one.
+    let clean_second =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    filetime::set_file_mtime(&plain, filetime::FileTime::from_system_time(clean_second)).unwrap();
+
+    back_up(&fixture, &sources(&fixture.source));
+
+    // Same size as the backed-up content ("plain", 5 bytes), so the size
+    // check alone cannot tell the two apart — only the nanosecond both
+    // rustic and the fixed `looks_identical` now compare at can.
+    fs::write(&plain, b"xlain").unwrap();
+    let same_second_different_nanosecond = clean_second + std::time::Duration::from_millis(500);
+    filetime::set_file_mtime(
+        &plain,
+        filetime::FileTime::from_system_time(same_second_different_nanosecond),
+    )
+    .unwrap();
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![plain.clone()],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(&plain).unwrap(),
+        b"xlain",
+        "the existing file must not be touched, even though its mtime \
+         matches the snapshot's to the second"
+    );
+    assert_eq!(fs::read(kept_copy(&plain)).unwrap(), b"plain");
+}
+
 #[test]
 fn keep_both_for_a_single_file() {
     let fixture = fixture();

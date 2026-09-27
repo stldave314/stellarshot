@@ -123,9 +123,17 @@ fn keep_both_name(path: &Path, date: &str) -> PathBuf {
 }
 
 /// Whether what is at `path` already matches `node`. Files compare by size
-/// and modification time, the same quick check rustic uses before deciding a
-/// file needs restoring. Symlinks compare by where they point, and are never
-/// followed: a link to a file that changed is still the same link.
+/// and modification time, at full precision — exactly the comparison
+/// rustic's own `add_file` makes (`meta.len() == file.meta.size && mtime ==
+/// file.meta.mtime`, confirmed by reading `rustic_core::commands::restore`'s
+/// own source, not assumed) before deciding a file needs restoring at all.
+/// Comparing only to the second used to disagree with that: two files with
+/// the same size and second but a different nanosecond looked identical
+/// here, so **Keep Both** never renamed the existing one aside — and then
+/// rustic, underneath, restored over it anyway, since *its* comparison
+/// still called them different. Symlinks compare by where they point, and
+/// are never followed: a link to a file that changed is still the same
+/// link.
 fn looks_identical(path: &Path, node: &Node) -> bool {
     let Ok(meta) = path.symlink_metadata() else {
         return false;
@@ -140,9 +148,8 @@ fn looks_identical(path: &Path, node: &Node) -> bool {
     let modified = meta
         .modified()
         .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|since| since.as_secs() as i64);
-    meta.len() == node.meta.size && modified == node.meta.mtime.map(|time| time.as_second())
+        .and_then(|time| jiff::Timestamp::try_from(time).ok());
+    meta.len() == node.meta.size && modified == node.meta.mtime
 }
 
 impl Repo {

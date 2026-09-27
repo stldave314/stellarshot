@@ -344,6 +344,7 @@ mount-failed = Could not mount this backup as a folder.
 # Automation
 error-password-not-remembered = Scheduled backups need the password remembered in your keyring. Open the backup, enter its password with “Remember password” on, and the next scheduled backup will run.
 error-keyring-unavailable = The password was changed, but it could not be saved to your keyring: { $details }. Enter it there yourself, or a scheduled backup using it will fail.
+error-password-not-saved = The password could not be saved to your keyring: { $details }. Enter it there yourself, or a scheduled backup using it will fail.
 error-delete-unsupported = Stellarshot cannot delete this destination's own data by itself. Remove it there yourself, or use Remove to forget it here without deleting anything.
 change = Change…
 schedule-row = When it runs
@@ -457,6 +458,7 @@ error-app-updated = Stellarshot was updated while it was running, so it can no l
 error-invalid-remote = This backup's cloud storage remote is not one Stellarshot recognizes as its own, so it cannot be opened.
 error-unsafe-path = A file in this snapshot names a location outside the folder being restored into ({ $path }), so nothing was restored.
 error-not-found = { $path } is not in this snapshot.
+error-ambiguous = { $path } matches more than one snapshot. Use a longer prefix.
 error-too-busy = The web interface already has as many requests open on this backup as it allows at once. Try again shortly.
 place-checking-for = Checking… { $time }
 wizard-creating = Creating… { $time }

@@ -83,18 +83,25 @@ fn notify_if_overdue(profile: &Profile, runtime: &tokio::runtime::Runtime) {
     if !overdue_notification_due(profile, &state, now()) {
         return;
     }
-    record(profile, |state| state.overdue_notified = true);
     let summary = fl!("notify-overdue", name = profile.name.clone());
     let body = fl!(
         "notify-overdue-body",
         schedule = crate::app::pages::profile::schedule_summary(profile.schedule)
     );
-    runtime.block_on(notify::failure(
+    // Recorded only once the notification was actually shown — not merely
+    // attempted — so a transient failure to show it (the notification
+    // daemon not running, D-Bus unavailable) does not silently mark this
+    // overdue streak as "already notified" forever, leaving the user never
+    // told at all until the next successful backup resets it.
+    let sent = runtime.block_on(notify::failure(
         &summary,
         &body,
         &fl!("notify-open"),
         &profile.id,
     ));
+    if sent {
+        record(profile, |state| state.overdue_notified = true);
+    }
 }
 
 /// Whether a persistently unreachable destination has earned a

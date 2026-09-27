@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
 use crate::debug::ENGINE;
-use crate::debug_log;
+use crate::{debug_log, error_log};
 
 /// What the UI needs to know about one snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,13 +125,40 @@ impl Repo {
             .forget(true);
         self.inner.rewrite_snapshots(snapshots, &opts)?;
         // `rewrite_snapshots` returns the rewritten snapshots under their old
-        // ID, not the new one a changed snapshot is actually saved under: the
-        // new one is found by comparing the snapshot list before and after.
+        // ID, not the new one a changed snapshot is actually saved under (its
+        // own `save_snapshots` call mutates a clone, so the caller never sees
+        // the new ID either): the new one is found by comparing the snapshot
+        // list before and after. A concurrent writer changing the repository
+        // at the same moment could make that diff ambiguous or empty; rather
+        // than guess and risk reporting the wrong snapshot as newly pinned,
+        // this treats anything but exactly one new ID as a failure to report
+        // back, even though the pin itself already took effect.
         let after = self.inner.get_all_snapshots()?;
-        let snapshot = after
-            .iter()
-            .find(|s| !before.contains(&s.id))
-            .unwrap_or(&current);
+        let mut added = after.iter().filter(|s| !before.contains(&s.id));
+        let snapshot = match (added.next(), added.next()) {
+            (Some(snapshot), None) => snapshot,
+            (None, _) => {
+                error_log!(
+                    ENGINE,
+                    "{id} pinned: {pinned}, but no new snapshot id appeared to identify it by"
+                );
+                return Err(EngineError::new(
+                    ErrorKind::Internal,
+                    "the pin was saved, but its updated snapshot could not be identified",
+                ));
+            }
+            (Some(_), Some(_)) => {
+                error_log!(
+                    ENGINE,
+                    "{id} pinned: {pinned}, but more than one new snapshot id appeared \
+                     (a concurrent writer?); refusing to guess which one"
+                );
+                return Err(EngineError::new(
+                    ErrorKind::Internal,
+                    "the pin was saved, but its updated snapshot could not be identified",
+                ));
+            }
+        };
         debug_log!(ENGINE, "{id} pinned: {pinned}");
         Ok(SnapshotSummary::from(snapshot))
     }

@@ -55,6 +55,7 @@ pub fn explain(error: &EngineError) -> String {
         ErrorKind::InvalidRemote => fl!("error-invalid-remote"),
         ErrorKind::UnsafePath => fl!("error-unsafe-path", path = error.detail.clone()),
         ErrorKind::NotFound => fl!("error-not-found", path = error.detail.clone()),
+        ErrorKind::Ambiguous => fl!("error-ambiguous", path = error.detail.clone()),
         ErrorKind::TooBusy => fl!("error-too-busy"),
         ErrorKind::Io | ErrorKind::Internal => {
             fl!("error-details", details = error.detail.clone())

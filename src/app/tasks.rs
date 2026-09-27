@@ -16,7 +16,6 @@ use crate::app::wizard::{EstimateEvent, Mode};
 use crate::debug::UI;
 use crate::debug_log;
 use crate::engine::{self, BackupRequest, EngineError, ErrorKind, Probe, Secret};
-use crate::keyring;
 use crate::profile::{Destination, Profile};
 
 /// Run blocking engine work off the UI thread.
@@ -77,22 +76,16 @@ pub async fn probe(destination: Destination) -> Result<Probe, EngineError> {
     blocking(move || engine::probe(&destination.location()?)).await
 }
 
-/// Open a profile's repository and list its snapshots, remembering the
-/// password if asked and it worked.
+/// Open a profile's repository and list its snapshots. Remembering the
+/// password, if asked, is the caller's own separate task: a keyring failure
+/// is not a reason to fail the unlock, and is reported on its own, not
+/// folded into whether opening the repository succeeded.
 pub async fn open(
     profile: Profile,
     secret: Secret,
-    remember: bool,
 ) -> Result<Vec<engine::SnapshotSummary>, EngineError> {
     let location = profile.location()?;
-    let key = secret.clone();
-    let snapshots = blocking(move || engine::open(&location, &key)?.snapshots()).await?;
-    if remember {
-        // A keyring that refuses is not a reason to fail the unlock; the
-        // password simply is not remembered.
-        let _ = keyring::store(&profile.id, &profile.name, &secret).await;
-    }
-    Ok(snapshots)
+    blocking(move || engine::open(&location, &secret)?.snapshots()).await
 }
 
 pub async fn snapshots(
@@ -205,14 +198,14 @@ pub struct Finished {
     pub snapshots: Vec<engine::SnapshotSummary>,
 }
 
-/// Create or open the repository behind a finished wizard, and remember the
-/// password if asked. When opening, the profile's sources come from the
-/// latest snapshot, so an existing backup carries on as it was.
+/// Create or open the repository behind a finished wizard. When opening,
+/// the profile's sources come from the latest snapshot, so an existing
+/// backup carries on as it was. Remembering the password, if asked, is the
+/// caller's own separate task; see [`open`].
 pub async fn finish(
     mode: Mode,
     mut profile: Profile,
     secret: Option<Secret>,
-    remember: bool,
 ) -> Result<Finished, EngineError> {
     let snapshots = match (&mode, &secret) {
         (Mode::Create, Some(secret)) => {
@@ -250,9 +243,6 @@ pub async fn finish(
         }
         _ => Vec::new(),
     };
-    if let (true, Some(secret)) = (remember, &secret) {
-        let _ = keyring::store(&profile.id, &profile.name, secret).await;
-    }
     Ok(Finished {
         mode,
         profile,
@@ -388,7 +378,6 @@ mod tests {
             Mode::Create,
             profile(&repo, vec![dir.path().to_path_buf()]),
             Some(Secret::new("pw")),
-            false,
         ))
         .unwrap();
 
@@ -417,13 +406,8 @@ mod tests {
             .unwrap();
 
         // Opening knows nothing about what was backed up; it finds out.
-        let finished = block_on(finish(
-            Mode::Open,
-            profile(&repo, Vec::new()),
-            Some(secret),
-            false,
-        ))
-        .unwrap();
+        let finished =
+            block_on(finish(Mode::Open, profile(&repo, Vec::new()), Some(secret))).unwrap();
 
         assert_eq!(finished.profile.sources, vec![source]);
         assert!(finished.profile.last_success.is_some());
@@ -440,7 +424,6 @@ mod tests {
             Mode::Open,
             profile(&repo, Vec::new()),
             Some(Secret::new("wrong")),
-            false,
         ));
 
         assert_eq!(result.unwrap_err().kind, ErrorKind::WrongPassword);

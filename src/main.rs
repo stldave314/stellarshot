@@ -5,7 +5,15 @@ use std::process::ExitCode;
 use stellarshot::app::{App, settings};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // `args()` panics outright on a non-UTF-8 argument; `args_os()` never
+    // does, and every flag matched below is plain ASCII, so converting
+    // lossily costs nothing real — even a profile ID that happened to
+    // contain non-UTF-8 bytes only ever affects which page opens first, not
+    // anything that reads a repository or a file.
+    let args: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
     match args.first().map(String::as_str) {
         Some("--run") => return stellarshot::runner::main(&args[1..]),
         Some("--scheduled") => return stellarshot::scheduled::main(&args[1..]),

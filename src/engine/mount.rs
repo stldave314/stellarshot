@@ -25,6 +25,8 @@ use fuser::{
 };
 
 use super::browse::{Browser, EntryKind, MountEntry};
+use crate::debug::MOUNT;
+use crate::debug_log;
 
 /// A snapshot never changes once taken, so there is nothing a short TTL
 /// would ever need to catch — a stat or a directory listing is good until
@@ -222,7 +224,10 @@ impl Filesystem for SnapshotFs {
                 let ino = self.ino_for(&path);
                 reply.entry(&TTL, &attr(ino, &entry, self.uid, self.gid), Generation(0));
             }
-            Err(_) => reply.error(Errno::ENOENT),
+            Err(err) => {
+                debug_log!(MOUNT, "lookup {}: {err}", path.display());
+                reply.error(Errno::ENOENT);
+            }
         }
     }
 
@@ -233,7 +238,10 @@ impl Filesystem for SnapshotFs {
         };
         match self.browser.mount_stat(&self.snapshot, &path) {
             Ok(entry) => reply.attr(&TTL, &attr(ino, &entry, self.uid, self.gid)),
-            Err(_) => reply.error(Errno::ENOENT),
+            Err(err) => {
+                debug_log!(MOUNT, "getattr {}: {err}", path.display());
+                reply.error(Errno::ENOENT);
+            }
         }
     }
 
@@ -247,7 +255,10 @@ impl Filesystem for SnapshotFs {
                 Some(target) => reply.data(target.as_os_str().as_encoded_bytes()),
                 None => reply.error(Errno::EINVAL),
             },
-            Err(_) => reply.error(Errno::ENOENT),
+            Err(err) => {
+                debug_log!(MOUNT, "readlink {}: {err}", path.display());
+                reply.error(Errno::ENOENT);
+            }
         }
     }
 
@@ -265,7 +276,8 @@ impl Filesystem for SnapshotFs {
         };
         let entries = match self.browser.mount_list(&self.snapshot, &dir) {
             Ok(entries) => entries,
-            Err(_) => {
+            Err(err) => {
+                debug_log!(MOUNT, "readdir {}: {err}", dir.display());
                 reply.error(Errno::ENOENT);
                 return;
             }
@@ -304,7 +316,10 @@ impl Filesystem for SnapshotFs {
                 self.open_files.lock().unwrap().insert(handle, content);
                 reply.opened(FileHandle(handle), fuser::FopenFlags::empty());
             }
-            Err(_) => reply.error(Errno::EIO),
+            Err(err) => {
+                debug_log!(MOUNT, "open {}: {err}", path.display());
+                reply.error(Errno::EIO);
+            }
         }
     }
 

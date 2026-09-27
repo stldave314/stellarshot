@@ -282,6 +282,10 @@ pub enum DialogMessage {
     /// The repository password changed. `Some` when the keyring entry that
     /// remembered the old one could not be replaced with the new one.
     KeyringUpdateFailed(Option<String>),
+    /// A backup or unlock asked to remember its password. `Some` when the
+    /// keyring refused it: the repository itself is unaffected, but a
+    /// scheduled run will have no password to use later.
+    PasswordNotRemembered(Option<String>),
 }
 
 #[derive(Clone, Debug)]
@@ -1104,10 +1108,31 @@ impl App {
                         )))
                     },
                 ),
-                wizard::Effect::Finish(finish) => Task::perform(
-                    tasks::finish(finish.mode, finish.profile, finish.secret, finish.remember),
-                    |result| app(Message::WizardFinished(Box::new(result))),
-                ),
+                wizard::Effect::Finish(finish) => {
+                    let remember_task = match (finish.remember, &finish.secret) {
+                        (true, Some(secret)) => {
+                            let id = finish.profile.id.clone();
+                            let name = finish.profile.name.clone();
+                            let secret = secret.clone();
+                            Task::perform(
+                                async move { crate::keyring::store(&id, &name, &secret).await },
+                                |result| {
+                                    app(Message::Dialog(DialogMessage::PasswordNotRemembered(
+                                        result.err(),
+                                    )))
+                                },
+                            )
+                        }
+                        _ => Task::none(),
+                    };
+                    Task::batch([
+                        remember_task,
+                        Task::perform(
+                            tasks::finish(finish.mode, finish.profile, finish.secret),
+                            |result| app(Message::WizardFinished(Box::new(result))),
+                        ),
+                    ])
+                }
                 wizard::Effect::Close => {
                     self.wizard = None;
                     Task::none()
@@ -1476,15 +1501,30 @@ impl App {
                 }
                 profile::Effect::Open { secret, remember } => {
                     let used = secret.clone();
-                    Task::perform(
-                        tasks::open(profile.clone(), secret, remember),
-                        move |result| {
+                    let remember_task = if remember {
+                        let profile_id = profile.id.clone();
+                        let name = profile.name.clone();
+                        let secret = secret.clone();
+                        Task::perform(
+                            async move { crate::keyring::store(&profile_id, &name, &secret).await },
+                            |result| {
+                                app(Message::Dialog(DialogMessage::PasswordNotRemembered(
+                                    result.err(),
+                                )))
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    };
+                    Task::batch([
+                        remember_task,
+                        Task::perform(tasks::open(profile.clone(), secret), move |result| {
                             app(Message::Profile(
                                 id.clone(),
                                 profile::Message::Opened(used.clone(), result),
                             ))
-                        },
-                    )
+                        }),
+                    ])
                 }
                 profile::Effect::Fetch(secret) => {
                     Task::perform(tasks::snapshots(profile.clone(), secret), move |result| {
@@ -2055,6 +2095,14 @@ impl App {
                     &fl!("change-password-title"),
                     &EngineError::new(engine::ErrorKind::KeyringUnavailable, detail),
                 );
+                Task::none()
+            }
+            DialogMessage::PasswordNotRemembered(None) => Task::none(),
+            DialogMessage::PasswordNotRemembered(Some(detail)) => {
+                self.dialog = Some(Dialog::Error(fl!(
+                    "error-password-not-saved",
+                    details = detail
+                )));
                 Task::none()
             }
         }

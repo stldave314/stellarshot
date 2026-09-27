@@ -178,8 +178,9 @@ impl IntoResponse for ApiError {
             ErrorKind::WrongPassword | ErrorKind::PasswordNotRemembered => StatusCode::CONFLICT,
             ErrorKind::NotARepository | ErrorKind::NotFound => StatusCode::NOT_FOUND,
             // The client's own request named the problem, not the server:
-            // `..` or an absolute path in a snapshot entry.
-            ErrorKind::UnsafePath => StatusCode::BAD_REQUEST,
+            // `..` or an absolute path in a snapshot entry, or a snapshot
+            // prefix too short to be unique.
+            ErrorKind::UnsafePath | ErrorKind::Ambiguous => StatusCode::BAD_REQUEST,
             ErrorKind::AlreadyExists | ErrorKind::Locked | ErrorKind::Canceled => {
                 StatusCode::CONFLICT
             }
@@ -248,6 +249,7 @@ fn safe_message(kind: ErrorKind) -> &'static str {
             "no backup, snapshot or path matches this request"
         }
         ErrorKind::UnsafePath => "the requested path is not valid",
+        ErrorKind::Ambiguous => "that snapshot prefix matches more than one snapshot",
         ErrorKind::AlreadyExists => "a repository already exists at that location",
         ErrorKind::Locked => "the backup is already running",
         ErrorKind::Canceled => "the operation was canceled",

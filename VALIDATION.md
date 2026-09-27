@@ -77,6 +77,7 @@ Real snapshots of the same fixture tree, restored into real folders.
 | `missing_finds_deleted_files_with_their_last_snapshot` | A file deleted from disk is listed with the newest snapshot that still has it |
 | `restore_to_a_folder_keeps_names` | Each selected item lands in the chosen folder under its own name |
 | `keep_both_never_touches_the_existing_file` / `keep_both_for_a_single_file` | The existing file keeps its content; the restored copy is next to it under a dated name. **Cannot pass vacuously:** the existing file is first changed so the two differ |
+| `keep_both_does_not_overwrite_a_file_within_the_same_second` | REL-14: an existing file whose modification time matches the snapshot's to the *second* but not the nanosecond used to look identical to `looks_identical` (which only compared to the second), so Keep Both never renamed it aside — confirmed by reading `rustic_core`'s own source, not assumed, that its own comparison is full-precision and would restore over such a file anyway. Sets a clean second boundary before backing up, then perturbs the mtime by 500ms (never rolling into the next second) and changes the same-length content afterward; the existing content survives a Keep Both restore |
 | `overwrite_replaces_changed_files` | Overwrite puts the backed-up content back over an edited file |
 | `skip_restores_only_what_is_missing` | In a folder where some files exist and some do not, only the missing ones are written |
 | `preview_counts_match_the_restore` | The dry run's counts equal what the restore then does, and the dry run leaves the missing file missing and the edited file edited |
@@ -120,7 +121,7 @@ the top, then reports an error instead of looping.
 | `an_unchanged_backup_is_skipped_when_asked` | Backing up twice with nothing changed adds no second snapshot; a real change afterward still is recorded |
 | `a_dry_run_reports_size_without_writing_anything` | A dry run reports the size it would add and leaves the repository with no snapshot; a real backup right after adds exactly that much |
 | `extended_attributes_are_saved_and_restored` | A user extended attribute set on a file survives a backup and restore. This needed no production code: rustic saves and restores them by default |
-| `a_pinned_snapshot_survives_forget_that_would_otherwise_remove_it`, `pinning_an_already_pinned_snapshot_is_a_harmless_no_op` | Pinning the oldest of several daily snapshots keeps it through a `forget` that would otherwise remove it; pinning twice does not change its ID again. **Caught by the test:** pinning changes a snapshot's ID (it is a hash of the snapshot's own content), so the first version of `set_pinned` returned the old, now-deleted ID; fixed by finding the new one from the snapshot list before and after |
+| `a_pinned_snapshot_survives_forget_that_would_otherwise_remove_it`, `pinning_an_already_pinned_snapshot_is_a_harmless_no_op` | Pinning the oldest of several daily snapshots keeps it through a `forget` that would otherwise remove it; pinning twice does not change its ID again. **Caught by the test:** pinning changes a snapshot's ID (it is a hash of the snapshot's own content), so the first version of `set_pinned` returned the old, now-deleted ID; fixed by finding the new one from the snapshot list before and after. A later pass (REL-17) confirmed against rustic's own `rewrite_snapshots`/`save_snapshots` source that it never hands the new ID back to the caller either, so the before/after diff is the only way to find it — and hardened that diff to error rather than silently return the old snapshot if it ever comes back empty or ambiguous (a concurrent writer) |
 | `verify_existing_catches_content_that_looks_unchanged` | A restored file corrupted to the same size and modification time as the backup is left alone by default and only rewritten with `verify_existing` on |
 | `restoring_with_numeric_or_no_ownership_does_not_fail` | Each ownership choice completes a restore without error. Actually changing an owner needs root; see "Not yet verified end to end" |
 | `runner_pins_a_snapshot_and_protects_it_from_maintain` (`tests/runner.rs`) | The same pin, through `--run set-pinned` and then `--run maintain`, the way the window actually calls it |
@@ -369,6 +370,8 @@ The list of backups (and the global exclusion patterns that apply to all of them
 
 The real end-to-end tests use a small hand-rolled HTTP/1.1 client over a raw `TcpStream`, the same approach already proven in `src/web.rs`'s own tests, rather than the `reqwest` crate: a first attempt using `reqwest::get` against this exact router, in this exact sandbox, consistently timed out connecting to `127.0.0.1` for reasons not fully diagnosed (no proxy environment variables were set) — switching to the raw-socket approach that already worked elsewhere resolved it immediately. Noted here in case `reqwest` is reached for again in this environment.
 
+**2026-09-27 update:** in a later sandbox instance, these same raw-`TcpStream` tests (all of `web::routes::tests::a_real_*` and `web::tests::a_real_*`/`an_*`/`credential_less_*`/`every_response_*`/`repeated_wrong_*` — 21 tests in total) instead time out themselves, every single time, `Os { code: 110, kind: TimedOut }` from the client-side `connect`. Re-run deliberately with `--test-threads=1` to rule out the concurrent-self-connect issue documented elsewhere in this file (the `Throttle` note below): the failures were identical one at a time, each taking the same fixed connect-timeout individually (21 tests, ~2890s total), so this is not that issue. Neither of these two sandbox behaviors — raw sockets working, or timing out outright — appears to be caused by anything in Stellarshot's own code (nothing in the request path changed between sessions); loopback networking inside this kind of sandboxed dev environment seems to vary by instance rather than being a fixed property of "this sandbox." Treat a `TimedOut` failure on exactly this family of tests as environmental until proven otherwise (e.g. by reproducing the same failure with a from-scratch axum app with no Stellarshot code involved, the way an earlier session confirmed the concurrent case), not as a regression to chase.
+
 ### The new-backup Browse hint (`src/app/wizard/mod.rs`)
 
 A real report: exclusions and the size estimate live behind the Browse button next to a source folder, and nothing else on the "what to include" step says so — easy to never discover, since "Browse…" reads as generic file-picker boilerplate rather than a feature of its own.
@@ -389,6 +392,7 @@ Not covered: `search`, `versions`, `diff`, and `missing` (`Browser` can already 
 | `common_ancestor_finds_the_longest_shared_prefix`, `common_ancestor_of_one_path_is_its_own_parent_chain`, `group_diff_puts_every_entry_directly_in_the_common_root_together`, `group_diff_separates_entries_in_different_subfolders` (`src/app/pages/restore.rs`) | The Compare tab's folder-grouping logic: changes sharing a folder land in one group, changes in different folders land in separate groups, and the group key is relative to the diff's own common root rather than the full absolute path |
 | `a_folders_diff_expansion_toggles`, `comparing_again_clears_the_previous_expansion` | Expanding a folder's changes toggles cleanly, and starting a new comparison does not leave a stale folder expanded from the previous one |
 | `jump_to_match_switches_to_browse_at_the_matched_snapshot_and_folder`, `jump_to_an_unknown_snapshot_does_nothing` | Clicking a search result's snapshot switches to Browse already pointed at the right snapshot and folder; a snapshot ID that somehow does not match anything currently loaded is a no-op, not a panic |
+| `a_unique_prefix_finds_its_snapshot`, `an_ambiguous_prefix_is_reported_as_ambiguous_not_missing`, `a_prefix_matching_nothing_is_reported_as_not_found` (REL-17) | `Browser::snapshot`'s ID matching, factored into a free `index_of` function over plain ID strings so this is checked without a real repository: a unique prefix or a full ID resolves; a prefix two snapshots share now reports `ErrorKind::Ambiguous`, not the same "not in this snapshot" a genuinely missing ID gets — before this fix both cases returned the identical error |
 
 One real bug was found and fixed by the real-repository test, not by reading the code: `find_matching_nodes` returns paths relative to the tree root, without the leading `/` every other path in `Browser` carries (`list`, `search`, `diff` all prepend it). The first version of `search_all` did not know this and returned paths like `tmp/.../keepme.txt` instead of `/tmp/.../keepme.txt` — `search_all_finds_every_snapshot_a_name_appears_in`'s exact-equality assertion caught it immediately; a looser `.ends_with(...)` check (used in the other two tests, for other reasons) would not have. Fixed by applying the same `Path::new("/").join(...)` fix-up `search` already does.
 
@@ -578,7 +582,7 @@ Stellarshot's own copy of it; a destination edited while it is being checked
 is not left "checking", and can be checked again
 (`editing_during_a_check_does_not_leave_it_checking`).
 
-### The keyring (`tests/keyring.rs`)
+### The keyring (`tests/keyring.rs`, `src/keyring.rs`)
 
 `keyring_round_trip` stores, reads, replaces and forgets a password in a real
 Secret Service, under a random profile ID so it can never touch a real saved
@@ -586,6 +590,36 @@ password. **Cannot pass vacuously:** without a Secret Service it fails (after
 the keyring timeout) with "a Secret Service must be running and unlocked for
 this test"; this was run and observed. CI runs it against an unlocked
 gnome-keyring in a private D-Bus session.
+
+REL-16 rewrote `store`/`load`/`forget` and their three web-password
+counterparts as thin wrappers over one shared `store_item`/`load_item`/
+`forget_item` each (the plan's own "near-duplicates" complaint), and made
+`load`/`load_web_password` log every failure path instead of treating a
+keyring that could not be reached the same as one that was simply empty.
+Both round trips in `tests/keyring.rs` (profile and web password) still pass
+against this machine's real, unlocked Secret Service after that refactor —
+the only thing worth re-proving here, since the logging additions cannot
+themselves be exercised without a way to make a real Secret Service fail on
+demand, which this machine's own keyring is not a safe thing to force.
+`cargo clippy` caught a real compile break mid-refactor: `oo7`'s
+`AsAttributes` trait is implemented for the unsized slice type `[(K, V)]`,
+so a generic helper written to take `&[(&str, &str)]` does not satisfy
+`oo7::Keyring::create_item`/`search_items`/`delete`'s own implicit `Sized`
+bound on their `impl AsAttributes` parameter — fixed by typing the helpers
+to the fixed-size `&[(&str, &str); 2]` both `attributes()` and
+`web_attributes()` actually return.
+
+"Remember password" silently doing nothing when the keyring refuses it
+(the plan's main complaint) is now reported through a new
+`DialogMessage::PasswordNotRemembered`, wired as an independent `Task`
+batched alongside opening or finishing the wizard rather than through
+`Finished`/`Opened`'s own result — `app::tasks::tests::finishing_*`
+(`src/app/tasks.rs`) cover `finish`'s new two-argument signature (no
+longer takes `remember` at all, since it no longer stores anything itself)
+and still pass. Not verified live: the dialog's own on-screen appearance,
+which would need stopping this machine's real `gnome-keyring-daemon` to
+trigger — not done, consistent with this project's practice of not
+disrupting Dave's own running session (see UI-1).
 
 ### The window (`src/app/wizard.rs`, `src/app/pages/profile.rs`, `src/app.rs`, `src/app/tasks.rs`)
 

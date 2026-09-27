@@ -462,6 +462,8 @@ fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, Engi
         let uploads = ParallelUploads::new(backends.repository(), bars.slot.clone());
         backends = RepositoryBackends::new(Arc::new(uploads), backends.repo_hot());
     }
+    #[cfg(feature = "test-support")]
+    super::cache_settings::disable_for_tests();
     let mut options = RepositoryOptions::default();
     super::cache_settings::apply(&mut options);
     Ok(Repository::new_with_progress(

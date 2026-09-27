@@ -380,27 +380,13 @@ mod tests {
         assert_eq!(merged.added[0].id, "new-to-this-computer");
     }
 
-    #[test]
-    fn history_is_merged_for_new_and_existing_backups_alike() {
-        let id = uuid::Uuid::new_v4().to_string();
-        let existing = [profile(&id)];
-        let export = Export {
-            version: VERSION,
-            profiles: vec![profile(&id)],
-            history: vec![(
-                id.clone(),
-                vec![Event {
-                    time: 1,
-                    kind: EventKind::BackedUp,
-                    source: event_log::Source::Desktop,
-                }],
-            )],
-        };
-
-        merge(&existing, &export);
-
-        assert_eq!(event_log::load(&id).len(), 1);
-    }
+    // `history_is_merged_for_new_and_existing_backups_alike` lives in
+    // `tests/settings_export_history.rs` instead of here: merging history
+    // writes into the real `event_log` state store (there is no test-only
+    // namespace for it), so it needs a redirected `XDG_STATE_HOME` — a
+    // process-wide setting this crate's own test binary cannot give it
+    // without risking every other unit test that also touches state
+    // running concurrently in the same process.
 
     #[test]
     fn unreadable_text_is_reported_not_panicked_on() {

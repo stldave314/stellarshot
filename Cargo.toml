@@ -32,6 +32,11 @@ default = []
 # Forces developer debug logging off at compile time. Every packaging target
 # passes this so a release can never ship with logging enabled.
 release-build = []
+# Active for every `cargo test` binary, unit and integration alike, through
+# the self-referential dev-dependency below. Lets library code behave
+# differently only for its own tests without an env var or a runtime check
+# that a real build would also pay for.
+test-support = []
 
 [dependencies]
 i18n-embed-fl = "0.10"
@@ -199,6 +204,9 @@ version = "0.16"
 features = ["fluent-system", "desktop-requester"]
 
 [dev-dependencies]
+# Self-referential: enables `test-support` for every test binary, unit and
+# integration alike, without threading a feature flag through each one.
+stellarshot = { path = ".", features = ["test-support"] }
 tempfile = "3"
 # Only to prove the `log`-to-`tracing` bridge in `app::settings::set_logger`
 # actually forwards what rustic_core and rustic_backend log through it.

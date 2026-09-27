@@ -32,6 +32,17 @@ pub fn set(dir: Option<PathBuf>, disabled: bool) {
     *settings = Some(CacheSettings { dir, disabled });
 }
 
+/// Every repository a test creates is thrown away with the `TempDir` that
+/// held it, but rustic's cache is keyed by repository ID and lives under the
+/// real `~/.cache/rustic` regardless — thousands of test runs would otherwise
+/// leave thousands of stale entries there forever. Called once, the first
+/// time any test opens or creates a repository; harmless to call again.
+#[cfg(feature = "test-support")]
+pub(super) fn disable_for_tests() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| set(None, true));
+}
+
 pub(super) fn apply(options: &mut rustic_core::RepositoryOptions) {
     let settings = SETTINGS
         .read()

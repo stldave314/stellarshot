@@ -57,39 +57,50 @@ fn keyring_round_trip() {
 
 #[test]
 fn web_password_round_trip() {
+    use futures_util::FutureExt;
+
     let runtime = runtime();
 
     runtime.block_on(async {
         // Unlike a profile's password, the web interface's has no
         // disambiguating ID to test against safely: whatever is already
         // there (nothing, on a machine that has never set this up) is saved
-        // and put back at the end, rather than risking this test clobbering
-        // a real one.
+        // and put back at the end — including if an assertion below panics,
+        // caught here so this test can never leave a real saved password
+        // clobbered with its own "first"/"second" test values.
         let previous = keyring::load_web_password().await;
 
-        keyring::store_web_password(&Secret::new("first"))
-            .await
-            .expect("a Secret Service must be running and unlocked for this test");
-        assert_eq!(
-            keyring::load_web_password()
+        let result = std::panic::AssertUnwindSafe(async {
+            keyring::store_web_password(&Secret::new("first"))
                 .await
-                .map(|s| s.expose().to_owned()),
-            Some("first".to_owned())
-        );
+                .expect("a Secret Service must be running and unlocked for this test");
+            assert_eq!(
+                keyring::load_web_password()
+                    .await
+                    .map(|s| s.expose().to_owned()),
+                Some("first".to_owned())
+            );
 
-        keyring::store_web_password(&Secret::new("second"))
-            .await
-            .unwrap();
-        assert_eq!(
-            keyring::load_web_password()
+            keyring::store_web_password(&Secret::new("second"))
                 .await
-                .map(|s| s.expose().to_owned()),
-            Some("second".to_owned())
-        );
+                .unwrap();
+            assert_eq!(
+                keyring::load_web_password()
+                    .await
+                    .map(|s| s.expose().to_owned()),
+                Some("second".to_owned())
+            );
+        })
+        .catch_unwind()
+        .await;
 
-        match previous {
-            Some(secret) => keyring::store_web_password(&secret).await.unwrap(),
+        match &previous {
+            Some(secret) => keyring::store_web_password(secret).await.unwrap(),
             None => keyring::forget_web_password().await.unwrap(),
+        }
+
+        if let Err(err) = result {
+            std::panic::resume_unwind(err);
         }
     });
 }

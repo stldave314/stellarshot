@@ -238,6 +238,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in place once complete. A folder entry with no recorded permissions now
   extracts as an ordinary, enterable folder instead of one nothing can be
   opened inside.
+- **The desktop entry's "New Backup" and "Restore Files" actions, and a
+  failed backup's notification, now do what they say even when Stellarshot
+  is already running** (closing the window keeps it running in the panel,
+  so this is the common case) — they used to just raise the window with no
+  idea what was actually asked for.
 
 ## [0.6.0] - 2026-09-26
 

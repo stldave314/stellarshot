@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use stellarshot::app::{App, settings};
+use stellarshot::app::{App, Launch, settings};
 
 fn main() -> ExitCode {
     // `args()` panics outright on a non-UTF-8 argument; `args_os()` never
@@ -34,6 +34,9 @@ fn main() -> ExitCode {
         .position(|arg| arg == "--profile")
         .and_then(|index| args.get(index + 1))
         .cloned();
+    // What an already-running instance is told to do instead of a second
+    // window: see `Launch`'s own doc comment.
+    flags.launch = Launch::from_flags(flags.start_wizard, flags.start_restore, &flags.select);
     match cosmic::app::run_single_instance::<App>(settings, flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

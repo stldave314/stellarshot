@@ -2144,6 +2144,25 @@ window process and no second applet; `ps -o stat` shows no `Z`.
 
 ### UI-2. Launch flags are lost when an instance is running
 
+**Status: Done.** Added a `Launch` enum (`NewBackup`, `Restore`,
+`Profile(id)`) that is both `Flags::launch` (set in `main.rs` from the
+same `--new-backup`/`--restore`/`--profile` parsing that already fed
+`start_wizard`/`start_restore`/`select`) and `CosmicFlags::SubCommand`,
+with `Args = Vec<String>` carrying the profile ID when there is one.
+`App::dbus_activation` now reads `msg.msg`'s `Details::ActivateAction`
+back into a `Launch` (D-Bus itself only ever carries plain strings, so
+this is a hand-written parse, not automatic) and applies it to the
+already-running window: `NewBackup` sends the same `Message::NewBackup`
+`init` does; `Profile(id)` calls the same `rebuild_nav`/`activate_selected`
+pair `init` does; `Restore` sets `restore_when_unlocked` if the target
+profile is not yet unlocked (mirroring `init`, which can never see an
+already-unlocked profile), or dispatches `Message::Restore` directly if
+it is — a case `init` never had to handle, since nothing is unlocked yet
+at a fresh start, caught by reading `init`'s own logic closely rather
+than assuming it could be copied unchanged. Fixed the `CosmicFlags` impl's
+doc comment, which flatly said there was nothing to forward — exactly the
+bug this fixes.
+
 **High · M · Verified**
 
 **Files:** `src/main.rs:15-29`, `src/app.rs:285-293` (`CosmicFlags`),
@@ -2166,6 +2185,16 @@ then focus or open the window.
 **Verify.** With the window closed to the panel: `stellarshot --new-backup`
 opens the wizard, and `stellarshot --profile <id>` selects that backup. Add a
 unit test for `Flags` → `(action, args)` → `Launch` round-tripping.
+
+**Verify, what actually ran.** Added exactly that round-trip test
+(`a_launch_survives_the_round_trip_to_wire_strings_and_back`), plus one for
+the precedence order and one for an unrecognized/malformed action, all
+passing. Not run live: this needs a second `stellarshot` process launched
+against an already-running one over the session D-Bus, which is real
+multi-process desktop-session behavior this sandbox has no window server
+for — disclosed rather than claimed, the same gap as UI-1's own click-through
+and every other "needs a live COSMIC session" item this project has left
+honestly unverified rather than guessed at.
 
 ---
 

@@ -706,6 +706,18 @@ State and effects are tested without rendering:
 - **Finishing the wizard, against real repositories:** create makes the
   repository; open takes its folders from the latest snapshot; open with the
   wrong password fails as `WrongPassword`.
+- **UI-2, launching again while already running:** `a_launch_survives_the_round_trip_to_wire_strings_and_back`
+  proves `Launch::from_flags` and its own `to_string()`/`from_wire` survive
+  the exact shape a real D-Bus `activate_action` call carries (plain
+  strings, not the typed enum) for every flag combination; a second test
+  proves the precedence order (`--new-backup` over `--restore` over
+  `--profile <id>`, matching `main.rs`'s own `if`/`else if` chain) and a
+  third that an unrecognized action, or `profile` with no ID, is not
+  treated as any launch at all rather than panicking or picking one
+  anyway. Not run live: exercising the real second-process-over-D-Bus
+  path needs an actual desktop session with a running compositor, which
+  this sandbox does not have — the same category of gap as UI-1's own
+  disclosed click-through.
 
 ### rustic's and rclone's diagnostics reach a log (`src/app/settings.rs`, `src/debug.rs`)
 

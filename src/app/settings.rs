@@ -87,7 +87,9 @@ fn rustic_log_path() -> Option<std::path::PathBuf> {
     let dir = std::env::var_os("XDG_STATE_HOME")
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/state")))?
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/state"))
+        })?
         .join("stellarshot");
     crate::engine::lock::create_private_dir(&dir).ok()?;
     Some(dir.join("backend.log"))
@@ -132,8 +134,9 @@ fn init_tracing(log_path: Option<std::path::PathBuf>, truncate: bool) {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("stellarshot=warn,rustic_core=warn,rustic_backend=info")
     });
-    let log_file = log_path
-        .and_then(|path| crate::debug::open_private_log_file(path.to_string_lossy().as_ref(), truncate));
+    let log_file = log_path.and_then(|path| {
+        crate::debug::open_private_log_file(path.to_string_lossy().as_ref(), truncate)
+    });
     let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(log_file.map(|file| fmt::layer().with_writer(Mutex::new(file)).with_ansi(false)))
@@ -148,6 +151,7 @@ pub fn get_flags() -> Flags {
         start_wizard: false,
         start_restore: false,
         select: None,
+        launch: None,
     }
 }
 

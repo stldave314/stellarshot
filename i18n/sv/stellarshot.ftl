@@ -441,6 +441,7 @@ error-app-updated = Stellarshot uppdaterades medan det kördes, så det kan inte
 error-invalid-remote = Den här säkerhetskopians molnfjärranslutning känns inte igen av Stellarshot som sin egen och kan därför inte öppnas.
 error-unsafe-path = En fil i den här säkerhetskopian pekar på en plats utanför återställningsmappen ({ $path }), så inget återställdes.
 error-not-found = { $path } finns inte i den här säkerhetskopian.
+error-too-busy = Webbgränssnittet har redan så många öppna förfrågningar mot den här säkerhetskopian som det tillåter samtidigt. Försök igen om en stund.
 place-checking-for = Kontrollerar… { $time }
 wizard-creating = Skapar… { $time }
 wizard-opening = Öppnar… { $time }

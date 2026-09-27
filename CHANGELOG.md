@@ -57,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The LAN network scope's empty IP allow-list now means "private network
   addresses only"**, not everyone: it binds every network interface on this
   machine, and the allow-list wording and this fallback now say so.
+- **Reading a backup's snapshots or browsing one over the web interface is
+  now capped** at a small number of requests open on that repository at
+  once; past that, a request is refused immediately (`503`, with a
+  `Retry-After` header) instead of queuing behind a slow remote or letting
+  memory use grow with however many requests arrive at once.
 - **A failed web interface request no longer echoes technical detail back to
   whoever asked.** A password command's stderr, rclone's own stderr, and
   local paths used to be included; the response now carries a stable

@@ -237,10 +237,7 @@ fn app(config: AppConfig, origins: HashSet<url::Origin>) -> Router {
     let scope = Arc::new(scope);
     let auth = Arc::new(auth);
     let origins = Arc::new(origins);
-    let state = Arc::new(routes::AppState {
-        profiles,
-        global_exclude_patterns,
-    });
+    let state = Arc::new(routes::AppState::new(profiles, global_exclude_patterns));
     Router::new()
         .route("/api/v1/health", get(health))
         .merge(routes::router(state))

@@ -23,11 +23,11 @@ use serde::{Deserialize, Serialize};
 use crate::app::tasks;
 use crate::debug::WEB;
 use crate::engine::{self, EngineError, ErrorKind, SnapshotSummary, TreeEntry};
+use crate::error_log;
 use crate::event_log;
 use crate::profile::Profile;
 use crate::runner::{self, Job, Operation, Output};
 use crate::status::{self, Status};
-use crate::error_log;
 
 /// What every route needs: the backups to act on, and the exclusion patterns
 /// that apply to all of them, the same as [`crate::scheduled`] reads once at
@@ -35,6 +35,38 @@ use crate::error_log;
 pub struct AppState {
     pub profiles: Vec<Profile>,
     pub global_exclude_patterns: Vec<String>,
+    /// Bounds how many requests may have a repository open (loading its
+    /// whole index) at once: a slow remote otherwise ties up a blocking
+    /// thread per request, and parallel requests multiply memory use with
+    /// nothing to stop it. [`list_snapshots`] and [`browse`] hold a permit
+    /// for as long as they have the repository open; [`list_backups`] (no
+    /// repository) and [`run_backup`] (already serialized by the
+    /// repository's own lock) do not need one.
+    repository_permits: tokio::sync::Semaphore,
+}
+
+impl AppState {
+    pub fn new(profiles: Vec<Profile>, global_exclude_patterns: Vec<String>) -> Self {
+        Self {
+            profiles,
+            global_exclude_patterns,
+            repository_permits: tokio::sync::Semaphore::new(
+                crate::constants::WEB_REPOSITORY_REQUEST_PERMITS,
+            ),
+        }
+    }
+}
+
+/// `Err` (503, with a `Retry-After` header) if every permit is already
+/// taken; the caller never waits for one to free up, since queuing behind a
+/// slow remote is the exact cost this exists to avoid passing on.
+fn try_open_repository(state: &AppState) -> Result<tokio::sync::SemaphorePermit<'_>, ApiError> {
+    state.repository_permits.try_acquire().map_err(|_| {
+        ApiError(EngineError::new(
+            ErrorKind::TooBusy,
+            "no repository permit free",
+        ))
+    })
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -80,7 +112,8 @@ impl IntoResponse for ApiError {
             ErrorKind::DestinationUnavailable
             | ErrorKind::TimedOut
             | ErrorKind::RcloneMissing
-            | ErrorKind::AuthFailed => StatusCode::SERVICE_UNAVAILABLE,
+            | ErrorKind::AuthFailed
+            | ErrorKind::TooBusy => StatusCode::SERVICE_UNAVAILABLE,
             ErrorKind::LocationNotEmpty
             | ErrorKind::RepositoryDamaged
             | ErrorKind::Io
@@ -107,7 +140,14 @@ impl IntoResponse for ApiError {
             message: safe_message(self.0.kind),
             request_id,
         };
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        if self.0.kind == ErrorKind::TooBusy {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("5"),
+            );
+        }
+        response
     }
 }
 
@@ -141,6 +181,9 @@ fn safe_message(kind: ErrorKind) -> &'static str {
         ErrorKind::TimedOut => "the storage did not answer in time",
         ErrorKind::RcloneMissing => "rclone is required for this backup but not installed",
         ErrorKind::AuthFailed => "signing in to the cloud account did not complete",
+        ErrorKind::TooBusy => {
+            "this backup already has as many requests open as this daemon allows at once"
+        }
         ErrorKind::LocationNotEmpty
         | ErrorKind::RepositoryDamaged
         | ErrorKind::Io
@@ -185,6 +228,7 @@ async fn list_snapshots(
     let profile = backup_by_id(&state.profiles, &id)?;
     let location = profile.location()?;
     let secret = profile.password().await?.ok_or_else(no_password)?;
+    let _permit = try_open_repository(&state)?;
     let snapshots =
         tasks::blocking(move || Ok(engine::open(&location, &secret)?.browse()?.snapshots()))
             .await?;
@@ -205,6 +249,7 @@ async fn browse(
     let profile = backup_by_id(&state.profiles, &id)?;
     let location = profile.location()?;
     let secret = profile.password().await?.ok_or_else(no_password)?;
+    let _permit = try_open_repository(&state)?;
     let dir = query.path.unwrap_or_else(|| PathBuf::from("/"));
     let entries = tasks::blocking(move || {
         engine::open(&location, &secret)?
@@ -314,13 +359,22 @@ mod tests {
     /// whoever asked, only in this daemon's own log.
     #[tokio::test]
     async fn the_response_body_never_carries_the_engine_errors_own_detail() {
-        let error = ApiError(EngineError::new(ErrorKind::Internal, "LEAKME: secret detail"));
+        let error = ApiError(EngineError::new(
+            ErrorKind::Internal,
+            "LEAKME: secret detail",
+        ));
         let body = error.into_response().into_body();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
         let text = String::from_utf8(bytes.to_vec()).unwrap();
         assert!(!text.contains("LEAKME"), "leaked the detail: {text}");
-        assert!(text.contains("\"request_id\""), "missing a request ID: {text}");
-        assert!(text.contains("\"kind\":\"internal\""), "missing the kind: {text}");
+        assert!(
+            text.contains("\"request_id\""),
+            "missing a request ID: {text}"
+        );
+        assert!(
+            text.contains("\"kind\":\"internal\""),
+            "missing the kind: {text}"
+        );
     }
 
     #[test]
@@ -328,6 +382,38 @@ mod tests {
         let profiles = vec![test_profile("a"), test_profile("b")];
         assert_eq!(backup_by_id(&profiles, "b").unwrap().id, "b");
         assert!(backup_by_id(&profiles, "missing").is_err());
+    }
+
+    /// Proves the cap itself, not just that a `Semaphore` exists: once every
+    /// permit is taken, a further attempt is refused (`TooBusy`, 503) rather
+    /// than queuing behind whichever request is slow, which is the whole
+    /// point of a cap rather than an unbounded queue. Releasing one frees it
+    /// up again.
+    #[test]
+    fn once_every_permit_is_taken_the_next_repository_open_is_refused() {
+        let state = AppState::new(Vec::new(), Vec::new());
+        let held: Vec<_> = (0..crate::constants::WEB_REPOSITORY_REQUEST_PERMITS)
+            .map(|_| try_open_repository(&state).unwrap())
+            .collect();
+        let refused = try_open_repository(&state);
+        assert!(refused.is_err());
+        assert_eq!(
+            refused.unwrap_err().0.kind,
+            crate::engine::ErrorKind::TooBusy
+        );
+        drop(held);
+        assert!(try_open_repository(&state).is_ok());
+    }
+
+    #[test]
+    fn a_too_busy_response_is_503_with_a_retry_after_header() {
+        let response = ApiError(EngineError::new(ErrorKind::TooBusy, "")).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            response
+                .headers()
+                .contains_key(axum::http::header::RETRY_AFTER)
+        );
     }
 
     fn test_profile(id: &str) -> Profile {
@@ -393,10 +479,7 @@ mod tests {
     async fn spawn(profiles: Vec<Profile>) -> std::net::SocketAddr {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let state = Arc::new(AppState {
-            profiles,
-            global_exclude_patterns: Vec::new(),
-        });
+        let state = Arc::new(AppState::new(profiles, Vec::new()));
         tokio::spawn(async move { axum::serve(listener, router(state)).await });
         addr
     }

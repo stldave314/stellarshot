@@ -204,6 +204,11 @@ unique prefix, or `latest`. `path` defaults to `/` (the snapshot's root).
 
 `kind` is one of `file`, `directory`, `symlink`, `other`.
 
+Opening a repository loads its whole index, so this route and the
+snapshots one above it share a small cap on how many may have one open at
+once; past it, a request gets `503` with `Retry-After` immediately rather
+than queuing behind a slow remote.
+
 ### `POST /api/v1/backups/{id}/run`
 
 Starts that backup now, the same thing "Back Up Now" does on the desktop.

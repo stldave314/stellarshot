@@ -923,6 +923,18 @@ the service during a web-started backup, and History shows it as canceled.
 
 ### WEB-9. Bound the cost of read requests
 
+**Status: Core fix done; the Browser cache is not.** `AppState` now holds a
+`tokio::sync::Semaphore` (`WEB_REPOSITORY_REQUEST_PERMITS`, already in
+`constants.rs`); `list_snapshots` and `browse` each hold a permit for as
+long as they have the repository open, acquired with `try_acquire` (never
+waited for) so a saturated daemon answers 503 with `Retry-After: 5`
+immediately rather than queuing behind a slow remote. Not done: caching the
+opened `Browser` per profile, and the pagination/result-cap planning for
+future routes (WEB-12). Not run tonight: 20 real parallel `curl` requests
+against a large repository (this sandbox's socket-level test hang — see
+WEB-3's status note — makes that specific live check impractical right now;
+the cap itself is proven directly against the semaphore instead).
+
 **Low · M · Verified**
 
 **Files:** `src/web/routes.rs:113-148`, `src/engine/browse.rs:169-185`
@@ -2537,6 +2549,28 @@ and `lock.rs`'s `is_running` test reimplementing the probe it tests.
   not After hooks work ([REL-2](#rel-2-after-hooks-are-skipped-when-the-repository-fails-to-open)).
 
 ### TST-5. Coverage gaps
+
+**Status: 2 of 8 done** (the web header-parsing and TLS items are the
+peer session's own territory tonight).
+
+- **`Target::Original` restores:** already covered — this list item was
+  stale; `src/engine/tests.rs` already exercises it in seven places.
+- **`KeepRules` with `Some(0)`:** new
+  `keep_last_zero_removes_every_unpinned_snapshot` proves `last: Some(0)`
+  actually removes everything (distinct from `None`, "this rule is off" —
+  a real, reachable value from the retention settings' own spinner, with
+  no built-in minimum above 0).
+- **Prune on an append-only repository:** new
+  `an_append_only_repository_refuses_to_prune` — genuinely unverified
+  before tonight, since `Repo::prune` (unlike `delete_snapshots`) never
+  checks `is_append_only()` itself and relies entirely on rustic_core's
+  own refusal. Confirmed that reliance is justified: rustic_core refuses
+  with the same `ErrorKind::Internal` the existing deletion-refusal test
+  already expects.
+- File-vs-directory and symlink conflicts on restore, an `archive_folder`
+  failure partway through: not started.
+- Web header-parsing edge cases and the WEB-7 TLS `curl` checks: the peer
+  session's own files (`web.rs`/`web/routes.rs`/`web_tls.rs`).
 
 **Medium · M**
 

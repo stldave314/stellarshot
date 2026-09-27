@@ -441,6 +441,7 @@ error-app-updated = Stellarshot isch aktualisiert worde, während's gloffen isch
 error-invalid-remote = Das Cloud-Remote vo däre Sicherig wird vo Stellarshot nöd als eigets erkennt, drum cha's nöd öffnet wärde.
 error-unsafe-path = E Datei i dere Sicherig zeigt uf en Ort usserhalb vom Wiederherstelligsordner ({ $path }), drum isch nüt wiederhergstellt worde.
 error-not-found = { $path } isch nid i dere Sicherig.
+error-too-busy = D Weboberflächi hät scho so vieli Aafroge für die Sicherig offe, wie si gliichzitig zuelaht. Versuech's i Chürzi wieder.
 place-checking-for = Wird prüeft … { $time }
 wizard-creating = Wird gmacht … { $time }
 wizard-opening = Wird ufgmacht … { $time }

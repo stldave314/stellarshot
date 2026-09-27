@@ -71,6 +71,10 @@ pub enum ErrorKind {
     /// A snapshot ID, or a path inside one, that this repository does not
     /// have: see `browse::not_found`. The detail is the missing ID or path.
     NotFound,
+    /// The web interface already has as many requests open on this
+    /// backup's repository as it will allow at once: see
+    /// `web::routes::REPOSITORY_PERMITS`.
+    TooBusy,
     /// Anything else; the detail is the only explanation available.
     Internal,
 }

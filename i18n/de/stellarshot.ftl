@@ -441,6 +441,7 @@ error-app-updated = Stellarshot wurde aktualisiert, während es lief, und kann d
 error-invalid-remote = Das Cloud-Speicher-Remote dieser Sicherung wird von Stellarshot nicht als eigenes erkannt und kann deshalb nicht geöffnet werden.
 error-unsafe-path = Eine Datei in dieser Sicherung verweist auf einen Ort außerhalb des Wiederherstellungsordners ({ $path }), daher wurde nichts wiederhergestellt.
 error-not-found = { $path } ist nicht in dieser Sicherung enthalten.
+error-too-busy = Die Weboberfläche hat bereits so viele Anfragen für diese Sicherung offen, wie sie gleichzeitig zulässt. Versuchen Sie es in Kürze erneut.
 place-checking-for = Wird geprüft … { $time }
 wizard-creating = Wird erstellt … { $time }
 wizard-opening = Wird geöffnet … { $time }

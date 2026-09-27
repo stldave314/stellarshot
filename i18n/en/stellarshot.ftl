@@ -457,6 +457,7 @@ error-app-updated = Stellarshot was updated while it was running, so it can no l
 error-invalid-remote = This backup's cloud storage remote is not one Stellarshot recognizes as its own, so it cannot be opened.
 error-unsafe-path = A file in this snapshot names a location outside the folder being restored into ({ $path }), so nothing was restored.
 error-not-found = { $path } is not in this snapshot.
+error-too-busy = The web interface already has as many requests open on this backup as it allows at once. Try again shortly.
 place-checking-for = Checking… { $time }
 wizard-creating = Creating… { $time }
 wizard-opening = Opening… { $time }

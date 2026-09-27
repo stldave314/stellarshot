@@ -223,6 +223,27 @@ Found only by running the real end-to-end test, not by reading the code: an earl
 
 Not covered by an automated test: the "Mount as Folder…"/"Open Folder"/"Unmount" buttons themselves in `src/app/pages/restore.rs`, or the folder-choosing dialog they open — UI wiring, not new logic, following the same `Effect`/blocking-task pattern already proven for **Download** and **Open Copy**. Also not proven: behavior with `allow_other` or multi-user access — not offered, since only the user who authenticated with the repository's password can see the mount at all, which is the intended scope.
 
+REL-15 replaced `open`'s whole-file read (a `Vec<u8>` holding the entire
+file, for as long as it stayed open) with rustic's own `OpenFile`/
+`read_at`: opening a file now reads nothing at all, and `read` fetches
+only the blob range each call asks for. `a_mounted_snapshot_can_be_read_with_plain_filesystem_calls` already reads a real 64 KiB file
+(`nested/deeper/data.bin`) through the mount and still passes, now
+exercising this path for real rather than the removed one — the same
+test also reads `private.txt`, `link-to-plain` and a non-UTF-8-named
+file, none of which changed behavior. Considered adding
+`MountOption::AutoUnmount` for a crashed process, per the review plan,
+but `fuser`'s own `Session::new` refuses to enable it unless the mount
+also allows root or other users — exactly the `allow_other`/multi-user
+access this file's own note above says is deliberately not offered — so
+it was left out rather than trading one gap for a real access-control
+change nothing here decided. Every `Mutex::lock().unwrap()` in this file
+also became poison-tolerant (a small `lock()` helper), so one FUSE call
+panicking cannot take every later call on the same handle table down
+with it; not independently tested (deliberately triggering a panic mid-
+request to prove the recovery would need its own test-only seam this
+project has no equivalent of elsewhere), but a small, mechanical,
+easily-read change.
+
 ### A History page across every backup (`src/event_log.rs`, `src/app/pages/history.rs`, `src/app/pages/profile.rs`, `src/app.rs`)
 
 | Test | What it proves |
@@ -415,6 +436,31 @@ Three more changes from watching the app actually get used, none of them logic a
 | `archive_folder_produces_a_tar_gz_with_the_same_tree` | A folder downloaded as a `.tar.gz`, extracted with a real `tar`/`gzip` reader, matches the original tree exactly — names, content and Unix permissions, proven against a tree with nested folders, unicode names, a `0600` file and a symlink |
 
 `Browser` moved from a size-optimized index (`IndexedIdsStatus`) to a fully-loaded one (`IndexedFullStatus`, via `to_indexed()` rather than `to_indexed_ids()`) so `dump` is available to call at all; every other browse operation (list, search, versions, diff, missing) keeps working unchanged, since `IndexedFullStatus` is a superset. Not covered by an automated test: the "Download…" buttons themselves in `src/app/pages/restore.rs`, or the save-file dialog they open — UI wiring, not new logic, following the same pattern already proven for **Open Copy** and **Restore This Version…**.
+
+REL-15: `archive_folder` used to read each file fully into a `Vec` before
+handing it to the tar writer — checked `dump_file` for the same problem
+first rather than assuming the review plan's file list meant both were
+equally affected, and found it already streamed straight into the
+destination `File` with no buffering step at all. Only `archive_folder`
+needed the streaming fix, done with a small `Read` adapter
+(`BlobReader`) over rustic's `OpenFile`, so `tar::Builder::append_data`
+now pulls bytes on demand the same way it would from a real file.
+`archive_folder_produces_a_tar_gz_with_the_same_tree`'s byte-for-byte
+comparison against the extracted archive still passes unchanged, now
+exercising that streaming path instead of the removed buffer — a real
+correctness check on the new code, though it does not itself measure
+memory. Both `dump_file` and `archive_folder` now write to a temporary
+file first (via the `atomicwrites` crate already used elsewhere in this
+project) and move it into place only once the write actually finishes;
+`archive_folder_refuses_a_file`'s existing `assert!(!destination.exists())`
+still passes, though that specific assertion was already true before this
+change too (the folder-vs-file check runs before any file is touched
+either way) — the atomicity this adds instead covers a failure *partway
+through* a real write, which no existing test forces (would need a way to
+make the backend fail mid-archive; not built). A directory entry with no
+recorded mode now defaults to `0o755`, not `0o644` — not independently
+tested, since a real local backup's directories always have a real mode
+already; a backend that omits it is the untested case this exists for.
 
 ### Conditions for a scheduled backup (`src/conditions.rs`, `src/app/wizard/mod.rs`)
 

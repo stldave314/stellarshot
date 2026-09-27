@@ -228,6 +228,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spurious failure notification** when it happens to run into the
   repository's lock — the same retry-next-time treatment a locked backup
   itself already got.
+- **Opening a large file from a mounted snapshot no longer reads the
+  whole thing into memory first.** A multi-gigabyte file now opens and
+  reads instantly, the same as a normal file would.
+- **Downloading a folder as a `.tar.gz` no longer buffers each file fully
+  in memory before writing it**, and no longer leaves a truncated archive
+  behind if something goes wrong partway — both it and downloading a
+  single file are now written to a temporary location first and only put
+  in place once complete. A folder entry with no recorded permissions now
+  extracts as an ordinary, enterable folder instead of one nothing can be
+  opened inside.
 
 ## [0.6.0] - 2026-09-26
 

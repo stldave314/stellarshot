@@ -1934,6 +1934,8 @@ assert the original content is unchanged.
 
 ### REL-15. Large files are loaded whole into memory
 
+**Status: Done, except `MountOption::AutoUnmount` — see why below.**
+
 **Medium · M · Verified**
 
 **Files:** `src/engine/mount.rs:290-330` (`open` stores the whole file in
@@ -1963,6 +1965,55 @@ assert the original content is unchanged.
 **Verify.** Mount a snapshot containing a 2 GB file, then
 `dd if=<mount>/big of=/dev/null bs=1M count=10` while watching RSS; it stays
 flat. Archive with a failing backend; no destination file is left behind.
+
+**What actually landed.** `Browser::read_file` (whole-file, only ever used
+by mount) is gone. `SnapshotFs::open` now calls a new
+`Browser::open_file`, which returns rustic's own `OpenFile` — not content,
+just the list of blobs a file is stored across — so opening even a huge
+file no longer reads anything. `read` calls a new `Browser::read_open_file`,
+which goes through `OpenFile::read_at` to fetch only the blob range each
+call actually needs (through rustic's own blob cache, so re-reading the
+same range does not re-fetch it); there is no separate cache to size or
+manage on this side, since `OpenFile` itself is small regardless of the
+file's size. All 5 of `mount.rs`'s `lock().unwrap()`s now go through a
+small `lock()` helper that recovers a poisoned mutex instead of panicking
+again — one FUSE call panicking (each runs on its own background thread)
+no longer takes every later call on the same handle table down with it.
+
+`archive_folder` no longer buffers a file fully into a `Vec` before handing
+it to the tar writer: a small `BlobReader` implements `Read` directly over
+an `OpenFile`, so `tar::Builder::append_data` pulls bytes on demand the
+same way it would from a real file on disk. Checked first whether `dump_file`
+had the same problem the plan's file list implied — it does not: it already
+wrote straight into `impl Write` (a `File`) with no `Vec` in between, so
+only `archive_folder` needed this half of the fix. Both `dump_file` and
+`archive_folder` now write through a new `write_atomically` (built on the
+`atomicwrites` crate already used by `tasks::write_file`, not a hand-rolled
+`.part` + rename): the destination is created only once the whole write —
+the dump, or every file in the tar — has actually succeeded, so a failure
+partway leaves nothing at the destination rather than a truncated file. A
+directory entry in the tar with no recorded mode of its own now defaults
+to `0o755` (was `0o644`, not even enterable once extracted) — files and
+symlinks keep the previous `0o644` default.
+
+**Why `MountOption::AutoUnmount` did not land.** Read `fuser`'s own
+`Session::new` before adding it, rather than assuming a one-line change:
+`AutoUnmount` refuses to enable unless the session's ACL is `AllowRoot` or
+`AllowOther`, neither of which this mount currently sets (it deliberately
+mounts visible to the owning user only). Adding it as the plan describes
+would either fail every mount outright (still `SessionACL::Owner`) or
+require `AllowOther`/`AllowRoot`, which would let other local users see a
+mounted, decrypted snapshot that only the mounting user can see today — a
+real access-control change the plan's own text does not call for and
+which nothing here is positioned to decide unilaterally. Left as a
+disclosed gap rather than guessed at; `Mount`'s existing `Drop` impl
+already unmounts on every ordinary exit path (including a panic that
+unwinds, since `Drop` still runs then), so the only case this would have
+additionally covered is the process being killed outright (`SIGKILL`, a
+hard crash) before it can unwind at all.
+
+**Verify, what actually ran.** The existing `a_mounted_snapshot_can_be_read_with_plain_filesystem_calls` test already reads a real 64 KiB file
+through a real FUSE mount, and `archive_folder_produces_a_tar_gz_with_the_same_tree` already round-trips a real folder through a real `.tar.gz` and compares its extracted content byte-for-byte — both continued to pass unchanged, now exercising `open_file`/`read_open_file`/`BlobReader` for real rather than the removed whole-file path, which is meaningful coverage even though neither asserts on memory use directly. The full `engine::tests::` module (73 tests) passed with this change in place. Not done: the plan's own live `dd`-while-watching-RSS proof against a multi-gigabyte file — this sandbox has no spare multi-gigabyte scratch space to build that fixture in, and the code-level argument for why memory now stays flat (nothing here retains file content past one `read` call's own short-lived `Vec<u8>`) is disclosed as reasoning rather than dressed up as a live measurement.
 Measure peak memory archiving a 1 GB file with `/usr/bin/time -v`.
 
 ---

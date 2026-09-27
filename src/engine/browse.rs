@@ -9,10 +9,12 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use rustic_core::repofile::{Node, NodeType, SnapshotFile};
+use rustic_core::vfs::OpenFile;
 use rustic_core::{IndexedFullStatus, LsOptions, Repository, TreeId};
 use serde::{Deserialize, Serialize};
 
@@ -218,6 +220,52 @@ fn index_of<'a>(ids: impl Iterator<Item = &'a str>, prefix: &str) -> Result<usiz
     }
 }
 
+/// Run `write` against a temporary file next to `destination`, moving it
+/// into place only once `write` returns `Ok`. A failure at any point —
+/// `write`'s own error, or an I/O error saving or renaming — leaves
+/// `destination` exactly as it was before the call, never a truncated
+/// file: the temporary file lives in its own temporary directory, deleted
+/// together with it if `write` never reaches the end.
+fn write_atomically(
+    destination: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> Result<(), EngineError>,
+) -> Result<(), EngineError> {
+    atomicwrites::AtomicFile::new(destination, atomicwrites::AllowOverwrite)
+        .write(write)
+        .map_err(|err| match err {
+            atomicwrites::Error::Internal(err) => EngineError::from(err),
+            atomicwrites::Error::User(err) => err,
+        })
+}
+
+/// Reads an [`OpenFile`]'s content one `read` at a time, through
+/// [`OpenFile::read_at`], rather than all at once: used to stream a file
+/// straight into a tar entry (see [`Browser::archive_folder`]) without
+/// ever holding its whole content in memory.
+struct BlobReader<'a> {
+    repo: &'a Repository<IndexedFullStatus>,
+    open_file: OpenFile,
+    position: usize,
+    size: usize,
+}
+
+impl Read for BlobReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.position >= self.size {
+            return Ok(0);
+        }
+        let want = buf.len().min(self.size - self.position);
+        let data = self
+            .open_file
+            .read_at(self.repo, self.position, want)
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        let read = data.len();
+        buf[..read].copy_from_slice(&data);
+        self.position += read;
+        Ok(read)
+    }
+}
+
 impl Repo {
     /// Load the tree index and every snapshot, for browsing.
     pub fn browse(self) -> Result<Browser, EngineError> {
@@ -310,26 +358,42 @@ impl Browser {
         Ok(tree.nodes.iter().map(mount_entry).collect())
     }
 
-    /// `path`'s whole content, for mounting the snapshot as a filesystem: a
-    /// filesystem reads by byte range, which rustic's own `dump` does not
-    /// support directly, so a mounted file is read once into memory on
-    /// open and served from there — fine for the documents and archives
-    /// this is for, less so for something huge, which is read whole into
-    /// memory regardless of how much of it is actually opened.
-    pub fn read_file(&self, snapshot: &str, path: &Path) -> Result<Vec<u8>, EngineError> {
+    /// Open `path` for reading by byte range, for mounting the snapshot as
+    /// a filesystem. Unlike a plain `dump`, this reads nothing itself: the
+    /// returned [`OpenFile`] is just the list of blobs the file's content
+    /// is stored across (see [`Self::read_open_file`]), so opening even a
+    /// huge file costs nothing proportional to its size.
+    pub fn open_file(&self, snapshot: &str, path: &Path) -> Result<OpenFile, EngineError> {
         let (file, _) = self.snapshot(snapshot)?;
         let repo = self.repo()?;
         let node = node_at(&repo, file, path)?;
         if !node.is_file() {
             return Err(not_found(&path.display().to_string()));
         }
-        let mut buffer = Vec::new();
-        repo.dump(&node, &mut buffer)?;
-        Ok(buffer)
+        Ok(repo.open_file(&node)?)
+    }
+
+    /// Up to `length` bytes of `open_file` starting at `offset`, as a
+    /// filesystem's own `read(offset, size)` needs: fewer than asked for,
+    /// including zero, once `offset` reaches the end, never an error just
+    /// for reading past it. Only the blobs this range actually touches
+    /// are fetched (through rustic's own blob cache, so reading the same
+    /// range twice does not refetch it).
+    pub fn read_open_file(
+        &self,
+        open_file: &OpenFile,
+        offset: usize,
+        length: usize,
+    ) -> Result<Vec<u8>, EngineError> {
+        let repo = self.repo()?;
+        Ok(open_file.read_at(&repo, offset, length)?.to_vec())
     }
 
     /// Write `path`'s content, as it was in `snapshot`, to `destination`,
     /// without restoring anything else. Fails if `path` is not a file.
+    /// Written to a temporary file first, moved into place only once
+    /// complete, so a failure partway never leaves a truncated file at
+    /// `destination`.
     pub fn dump_file(
         &self,
         snapshot: &str,
@@ -342,14 +406,17 @@ impl Browser {
         if !node.is_file() {
             return Err(not_found(&path.display().to_string()));
         }
-        let mut out = std::fs::File::create(destination)?;
-        repo.dump(&node, &mut out)?;
-        Ok(())
+        write_atomically(destination, |out| {
+            repo.dump(&node, out)?;
+            Ok(())
+        })
     }
 
     /// Write `path` (a folder), as it was in `snapshot`, to `destination` as
     /// a gzip-compressed tar archive, without restoring anything. Fails if
-    /// `path` is not a folder.
+    /// `path` is not a folder. Written to a temporary file first, moved
+    /// into place only once complete, for the same reason as
+    /// [`Self::dump_file`].
     pub fn archive_folder(
         &self,
         snapshot: &str,
@@ -362,42 +429,55 @@ impl Browser {
         if !root.is_dir() {
             return Err(not_found(&path.display().to_string()));
         }
-        let out = std::fs::File::create(destination)?;
-        let gzip = flate2::write::GzEncoder::new(out, flate2::Compression::default());
-        let mut tar = tar::Builder::new(gzip);
-        for item in repo.ls(&root, &LsOptions::default())? {
-            let (relative, node) = item?;
-            let mut header = tar::Header::new_gnu();
-            header.set_mode(node.meta.mode.unwrap_or(0o644));
-            if let Some(mtime) = node.meta.mtime {
-                header.set_mtime(mtime.as_second().max(0) as u64);
+        write_atomically(destination, |out| {
+            let gzip = flate2::write::GzEncoder::new(out, flate2::Compression::default());
+            let mut tar = tar::Builder::new(gzip);
+            for item in repo.ls(&root, &LsOptions::default())? {
+                let (relative, node) = item?;
+                let mut header = tar::Header::new_gnu();
+                // A directory with no recorded mode of its own must still
+                // be enterable once extracted: `0o644` (no execute bit)
+                // would leave `tar` itself unable to write anything inside
+                // it before this fix was even reached.
+                let default_mode = if node.is_dir() { 0o755 } else { 0o644 };
+                header.set_mode(node.meta.mode.unwrap_or(default_mode));
+                if let Some(mtime) = node.meta.mtime {
+                    header.set_mtime(mtime.as_second().max(0) as u64);
+                }
+                if let Some(uid) = node.meta.uid {
+                    header.set_uid(u64::from(uid));
+                }
+                if let Some(gid) = node.meta.gid {
+                    header.set_gid(u64::from(gid));
+                }
+                if node.is_dir() {
+                    header.set_entry_type(tar::EntryType::Directory);
+                    header.set_size(0);
+                    header.set_cksum();
+                    tar.append_data(&mut header, &relative, std::io::empty())?;
+                } else if node.is_symlink() {
+                    header.set_entry_type(tar::EntryType::Symlink);
+                    header.set_size(0);
+                    header.set_cksum();
+                    tar.append_link(&mut header, &relative, node.node_type.to_link())?;
+                } else if node.is_file() {
+                    header.set_size(node.meta.size);
+                    header.set_cksum();
+                    // Streamed through `BlobReader`, not read whole into a
+                    // `Vec` first: a single huge file in the folder being
+                    // archived no longer costs its own full size in memory.
+                    let mut reader = BlobReader {
+                        repo: &repo,
+                        open_file: repo.open_file(&node)?,
+                        position: 0,
+                        size: node.meta.size as usize,
+                    };
+                    tar.append_data(&mut header, &relative, &mut reader)?;
+                }
             }
-            if let Some(uid) = node.meta.uid {
-                header.set_uid(u64::from(uid));
-            }
-            if let Some(gid) = node.meta.gid {
-                header.set_gid(u64::from(gid));
-            }
-            if node.is_dir() {
-                header.set_entry_type(tar::EntryType::Directory);
-                header.set_size(0);
-                header.set_cksum();
-                tar.append_data(&mut header, &relative, std::io::empty())?;
-            } else if node.is_symlink() {
-                header.set_entry_type(tar::EntryType::Symlink);
-                header.set_size(0);
-                header.set_cksum();
-                tar.append_link(&mut header, &relative, node.node_type.to_link())?;
-            } else if node.is_file() {
-                header.set_size(node.meta.size);
-                header.set_cksum();
-                let mut content = Vec::new();
-                repo.dump(&node, &mut content)?;
-                tar.append_data(&mut header, &relative, content.as_slice())?;
-            }
-        }
-        tar.into_inner()?.finish()?;
-        Ok(())
+            tar.into_inner()?.finish()?;
+            Ok(())
+        })
     }
 
     /// Every entry in `snapshot` whose name contains `query` (ignoring case),

@@ -88,6 +88,17 @@ pub fn mount(
     })
 }
 
+/// Lock `mutex`, recovering the data even if a previous FUSE call panicked
+/// while holding it. `fuser` runs every call on its own background thread;
+/// without this, one panicking request would poison the lock and make
+/// every request after it panic too, just for touching the same mutex,
+/// rather than only that one request failing.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Paths within the snapshot, numbered as FUSE inodes: assigned the first
 /// time something asks about a path, kept for as long as the mount lives.
 #[derive(Default)]
@@ -128,10 +139,12 @@ struct SnapshotFs {
     browser: Arc<Browser>,
     snapshot: String,
     inodes: Mutex<Inodes>,
-    /// A file's whole content, cached from `open` until `release`, keyed by
-    /// the file handle this filesystem hands out (not the inode, so the
-    /// same file opened twice does not share or fight over one buffer).
-    open_files: Mutex<HashMap<u64, Vec<u8>>>,
+    /// The blob list needed to read a file's content by range, from
+    /// `open` until `release`, keyed by the file handle this filesystem
+    /// hands out (not the inode, so the same file opened twice does not
+    /// share or fight over one handle). Not the content itself: opening a
+    /// file, however large, costs nothing proportional to its size.
+    open_files: Mutex<HashMap<u64, rustic_core::vfs::OpenFile>>,
     next_handle: AtomicU64,
     /// The mounting user's own uid and gid, reported as the owner of
     /// everything in the mount: whoever the original owner was, this is
@@ -155,11 +168,11 @@ impl SnapshotFs {
     }
 
     fn path_of(&self, ino: INodeNo) -> Option<PathBuf> {
-        self.inodes.lock().unwrap().path(u64::from(ino))
+        lock(&self.inodes).path(u64::from(ino))
     }
 
     fn ino_for(&self, path: &Path) -> INodeNo {
-        INodeNo(self.inodes.lock().unwrap().ino_for(path))
+        INodeNo(lock(&self.inodes).ino_for(path))
     }
 }
 
@@ -310,10 +323,10 @@ impl Filesystem for SnapshotFs {
             reply.error(Errno::ENOENT);
             return;
         };
-        match self.browser.read_file(&self.snapshot, &path) {
-            Ok(content) => {
+        match self.browser.open_file(&self.snapshot, &path) {
+            Ok(open_file) => {
                 let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-                self.open_files.lock().unwrap().insert(handle, content);
+                lock(&self.open_files).insert(handle, open_file);
                 reply.opened(FileHandle(handle), fuser::FopenFlags::empty());
             }
             Err(err) => {
@@ -334,14 +347,21 @@ impl Filesystem for SnapshotFs {
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
-        let files = self.open_files.lock().unwrap();
-        let Some(content) = files.get(&u64::from(fh)) else {
+        let files = lock(&self.open_files);
+        let Some(open_file) = files.get(&u64::from(fh)) else {
             reply.error(Errno::EBADF);
             return;
         };
-        let start = (offset as usize).min(content.len());
-        let end = start.saturating_add(size as usize).min(content.len());
-        reply.data(&content[start..end]);
+        match self
+            .browser
+            .read_open_file(open_file, offset as usize, size as usize)
+        {
+            Ok(data) => reply.data(&data),
+            Err(err) => {
+                debug_log!(MOUNT, "read handle {fh:?}: {err}");
+                reply.error(Errno::EIO);
+            }
+        }
     }
 
     fn release(
@@ -354,7 +374,7 @@ impl Filesystem for SnapshotFs {
         _flush: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        self.open_files.lock().unwrap().remove(&u64::from(fh));
+        lock(&self.open_files).remove(&u64::from(fh));
         reply.ok();
     }
 }

@@ -159,6 +159,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A pack upload that panics instead of merely failing no longer hangs the
   backup forever.** The panic is now caught and treated as the same kind of
   failure a returned error already was.
+- **The setup wizard's "excluded" size no longer undercounts.** Its
+  "nothing excluded" baseline was still applying the maximum-size limit,
+  cache-folder skipping, `.gitignore`, and pattern-file exclusions, only
+  ignoring the plain exclude list and glob patterns — so a backup using
+  any of those reported less excluded than it actually excluded.
 - **An excluded path containing a wildcard character (`*`, `?`, `[`) in its
   actual name is now excluded correctly**, instead of being interpreted as a
   pattern that could match unrelated files — or, in one case, the backup's

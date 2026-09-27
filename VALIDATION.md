@@ -525,6 +525,7 @@ REL-11: `run` used to spawn a raw `current_exe()`, detecting a package upgrade b
 | `exclude_through_a_symlinked_path_still_applies` (`src/engine/tests.rs`) | An exclusion written through a symlinked path (`/home` → `/var/home`) still leaves the folder out |
 | `estimate_respects_cancel` | A canceled estimate stops and reports nothing, so a stale total never replaces a newer one |
 | `the_arithmetic_adds_up_to_the_estimate` | "Included − excluded = total" holds exactly; each excluded folder is sized, nested ones count once towards the total, and what only a pattern removes is reported apart |
+| `the_everything_baseline_ignores_every_kind_of_exclusion_not_just_two` | REL-13: the "everything" baseline used to clear only `excludes`/`exclude_patterns`, leaving `exclude_larger_than`, `exclude_caches`, pattern files and `git_ignore` active and undercounting what "everything" means. A fresh fixture with a real `CACHEDIR.TAG` file proves both `exclude_larger_than` and `exclude_caches` are now ignored for the baseline — writing it caught its own 43-byte arithmetic mistake first (the marker file's own signature line, forgotten from the expected total), a reminder that a check that passes on the first try without ever failing for the wrong reason has usually not been looked at hard enough |
 
 ### Storage through rclone (`tests/rclone.rs`, `src/engine/rclone.rs`)
 

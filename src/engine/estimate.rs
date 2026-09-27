@@ -104,10 +104,15 @@ pub fn exclusion_breakdown(
     folders: &[PathBuf],
     cancel: &AtomicBool,
 ) -> Result<Option<ExclusionBreakdown>, EngineError> {
+    // Every field that can leave something out, cleared — not just
+    // `excludes`/`exclude_patterns`, which used to leave the "nothing
+    // excluded" baseline still excluding by pattern file, size,
+    // `.gitignore`, or a cache directory tag, undercounting what
+    // "everything" actually means.
     let everything = BackupRequest {
-        excludes: Vec::new(),
-        exclude_patterns: Vec::new(),
-        ..request.clone()
+        sources: request.sources.clone(),
+        one_file_system: request.one_file_system,
+        ..BackupRequest::default()
     };
     let roots = canonical(&request.sources);
     let folders = canonical(folders);
@@ -293,6 +298,50 @@ mod tests {
             "node_modules, which only the pattern takes out"
         );
         assert_eq!(breakdown.per_source, vec![everything, 10_000 + 300]);
+    }
+
+    /// REL-13: the "everything" baseline used to clear only `excludes` and
+    /// `exclude_patterns`, leaving `exclude_larger_than`, `exclude_caches`,
+    /// `git_ignore` and pattern files active — undercounting what
+    /// "everything" actually means. A fresh, focused fixture rather than
+    /// extending `the_arithmetic_adds_up_to_the_estimate`: that test's
+    /// `by_patterns`/`per_source` assertions are exact numbers that a third
+    /// and fourth kind of exclusion would also shift, for no added
+    /// confidence in this specific fix.
+    #[test]
+    fn the_everything_baseline_ignores_every_kind_of_exclusion_not_just_two() {
+        let dir = TempDir::new().unwrap();
+        let home = dir.path().join("home");
+        write(&home.join("small.bin"), 1_000);
+        write(&home.join("big.bin"), 50_000);
+        let tagged = home.join("tagged_cache");
+        write(&tagged.join("data.bin"), 3_000);
+        fs::write(
+            tagged.join("CACHEDIR.TAG"),
+            b"Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .unwrap();
+        let request = BackupRequest {
+            sources: vec![home],
+            // Neither of these two is `excludes`/`exclude_patterns`; either
+            // one being left active in the baseline would undercount it.
+            exclude_larger_than: Some(10_000), // would otherwise cut big.bin
+            exclude_caches: true,              // would otherwise cut tagged_cache's contents
+            ..BackupRequest::default()
+        };
+        let never = AtomicBool::new(false);
+
+        let breakdown = exclusion_breakdown(&request, &[], &never).unwrap().unwrap();
+
+        assert_eq!(
+            breakdown.included,
+            // The CACHEDIR.TAG marker file itself is a real 43-byte file
+            // too, and must count when exclude_caches is ignored for the
+            // baseline, the same as everything else under `tagged_cache`.
+            1_000 + 50_000 + 3_000 + 43,
+            "the 'everything' baseline must ignore exclude_larger_than and \
+             exclude_caches too, not just excludes/exclude_patterns"
+        );
     }
 
     #[test]

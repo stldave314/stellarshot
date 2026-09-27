@@ -1810,6 +1810,21 @@ shows one "holds the lock" line.
 
 ### REL-13. The exclusion breakdown leaves some exclusions in place
 
+**Status: Done.** The "everything" baseline is now built as
+`BackupRequest { sources, one_file_system, ..BackupRequest::default() }`,
+clearing every exclusion field (`exclude_patterns_ignoring_case`,
+`exclude_pattern_files`, `exclude_larger_than`, `exclude_caches`,
+`git_ignore`) rather than only `excludes`/`exclude_patterns`. New test
+(`the_everything_baseline_ignores_every_kind_of_exclusion_not_just_two`)
+with its own focused fixture — extending the existing
+`the_arithmetic_adds_up_to_the_estimate` instead would have shifted that
+test's other exact-number assertions (`by_patterns`, `per_source`) for no
+added confidence in this specific fix. Caught its own bug while writing
+it: the expected total was off by 43 bytes at first, the exact size of the
+`CACHEDIR.TAG` marker file's own signature line — a real reminder that the
+marker file is itself a real file the baseline must also count once
+`exclude_caches` is ignored, not merely evidence the fix generally works.
+
 **Medium · S · Verified**
 
 **Files:** `src/engine/estimate.rs:100-115`

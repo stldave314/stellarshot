@@ -136,6 +136,12 @@ for scheduled backups. Settings shows its status — **Running**, **Stopped**,
 - **Restart** — the button to press after changing the port or the TLS
   certificate, or to recover from **Failed to start**.
 
+Stopping or restarting it (from Settings, `systemctl`, or a package
+upgrade) gives it up to 30 seconds to finish what it is doing rather than
+killing it outright: a backup it started keeps running, and if it is still
+going once that window passes, it is recorded on the History page as
+canceled instead of simply vanishing with nothing recorded at all.
+
 You can also control it directly:
 
 ```
@@ -229,6 +235,8 @@ backup, and does not restore one.
 ```
 
 The run appears on the History page, marked as started from the web.
+Requesting a run that is already going answers `409`, rather than starting
+a second one that would only fail once it found the repository locked.
 
 ### Errors
 

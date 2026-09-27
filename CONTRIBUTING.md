@@ -73,6 +73,19 @@ rustic upgrade is contained in one module.
 through `stellarshot --run` and holds the repository lock. rustic cannot be
 interrupted; a process can.
 
+*Deliberate exception:* `stellarshot-web`'s `POST /api/v1/backups/{id}/run`
+runs the backup in-process (`web::routes::record_backup`), not through a
+`--run` child. The daemon is already its own process — the isolation a
+child buys the desktop window (surviving a crash mid-backup, still being
+interruptible when rustic itself is not) protects the window's own
+long-lived process specifically, and the daemon has no such long-lived
+foreground state to protect. What a child process buys that this still
+needs, and gets a different way: interruptibility on shutdown, via
+`web::wait_for_sigterm_then_drain` and `web::routes::drain_running_jobs`
+(a real backup still running when the grace period passes is aborted and
+recorded canceled, rather than left to be killed by systemd with nothing
+recorded at all).
+
 **Prove behavior against real files.** Tests that delete, write or restore
 work on real directories in temporary folders, and assert on what must survive
 as well as what must change.

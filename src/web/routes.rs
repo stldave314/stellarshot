@@ -10,8 +10,10 @@
 //! routes testable against a router built directly from a chosen list of
 //! profiles, with no dependency on this machine's real settings.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -43,6 +45,13 @@ pub struct AppState {
     /// repository) and [`run_backup`] (already serialized by the
     /// repository's own lock) do not need one.
     repository_permits: tokio::sync::Semaphore,
+    /// Backups [`run_backup`] started that have not finished yet, by an ID
+    /// of this state's own making (not the profile ID: two runs of the same
+    /// backup, one after another, must not be confused with each other).
+    /// Drained on shutdown by [`drain_running_jobs`]; see its own comment
+    /// for why a backup being aborted needs this at all.
+    running_jobs: Mutex<HashMap<u64, (String, tokio::task::AbortHandle)>>,
+    next_job_id: AtomicU64,
 }
 
 impl AppState {
@@ -53,7 +62,72 @@ impl AppState {
             repository_permits: tokio::sync::Semaphore::new(
                 crate::constants::WEB_REPOSITORY_REQUEST_PERMITS,
             ),
+            running_jobs: Mutex::new(HashMap::new()),
+            next_job_id: AtomicU64::new(0),
         }
+    }
+
+    /// Registers `handle` as belonging to `profile_id`'s run, so shutdown
+    /// can find it. Returns the ID to pass back to
+    /// [`AppState::untrack_job`] once it finishes on its own.
+    fn track_job(&self, profile_id: String, handle: &tokio::task::JoinHandle<()>) -> u64 {
+        let id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+        self.running_jobs
+            .lock()
+            .unwrap()
+            .insert(id, (profile_id, handle.abort_handle()));
+        id
+    }
+
+    fn untrack_job(&self, id: u64) {
+        self.running_jobs.lock().unwrap().remove(&id);
+    }
+}
+
+/// Waits for every job [`AppState::track_job`] is still tracking to finish,
+/// up to `timeout`; whatever is still running once it passes is recorded as
+/// canceled (the same [`event_log`] entry a real interruption gets
+/// elsewhere in this app) and then aborted, so [`super::serve`] can still
+/// exit once this returns rather than waiting on a backup indefinitely.
+/// Polls rather than being woken by each job's own completion: simpler than
+/// plumbing a `Notify` through every call site for something that only ever
+/// runs once, at shutdown, where a few hundred milliseconds of extra wait
+/// changes nothing observable.
+pub(super) async fn drain_running_jobs(state: &AppState, timeout: std::time::Duration) {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while !state.running_jobs.lock().unwrap().is_empty() {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let stragglers: Vec<(String, tokio::task::AbortHandle)> = state
+        .running_jobs
+        .lock()
+        .unwrap()
+        .drain()
+        .map(|(_, value)| value)
+        .collect();
+    if stragglers.is_empty() {
+        return;
+    }
+    let now = jiff::Timestamp::now().as_second();
+    for (profile_id, abort_handle) in stragglers {
+        error_log!(
+            WEB,
+            "shutting down with {profile_id}'s backup still running; recording it canceled"
+        );
+        event_log::record(
+            &profile_id,
+            now,
+            event_log::EventKind::Failed {
+                stage: crate::run_state::Stage::Backup,
+                kind: ErrorKind::Canceled,
+                detail: "the web interface was shut down while this backup was running".to_owned(),
+            },
+            event_log::Source::Web,
+        );
+        abort_handle.abort();
     }
 }
 
@@ -260,7 +334,7 @@ async fn browse(
     Ok(Json(entries))
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct RunStarted {
     started: bool,
 }
@@ -282,6 +356,16 @@ async fn run_backup(
 ) -> Result<(StatusCode, Json<RunStarted>), ApiError> {
     let profile = backup_by_id(&state.profiles, &id)?;
     let location = profile.location()?;
+    // Checked before the password is even asked for: starting a second run
+    // while the first is still going only fails later anyway (a `Locked`
+    // error, after running the password command a second time for
+    // nothing), so there is nothing to gain from doing any of that first.
+    if engine::lock::is_running(&location) {
+        return Err(ApiError(EngineError::new(
+            ErrorKind::Locked,
+            "this backup is already running",
+        )));
+    }
     let secret = profile.password().await?.ok_or_else(no_password)?;
     let request = profile.backup_request(&state.global_exclude_patterns);
     let job = Job {
@@ -289,7 +373,14 @@ async fn run_backup(
         hooks: profile.hooks.clone(),
         ..Job::new(location.clone(), secret)
     };
-    tokio::spawn(record_backup(profile.id, location, job));
+    let profile_id = profile.id;
+    let handle = tokio::spawn(record_backup(profile_id.clone(), location, job));
+    let job_id = state.track_job(profile_id, &handle);
+    let untrack_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let _ = handle.await;
+        untrack_state.untrack_job(job_id);
+    });
     Ok((StatusCode::ACCEPTED, Json(RunStarted { started: true })))
 }
 
@@ -616,6 +707,92 @@ mod tests {
         let (status, _) = post_json(addr, "/api/v1/backups/nope/run").await;
 
         assert_eq!(status, 404);
+    }
+
+    /// Calls the handler directly rather than over a real socket
+    /// (`run_backup`'s own extractors, `State`/`Path`, are plain tuple
+    /// structs, constructible without a router): a real held write lock,
+    /// not a mock, is what proves this — the same lock a running backup
+    /// actually holds, checked with the same `lock::is_running` the status
+    /// display already trusts.
+    #[tokio::test]
+    async fn a_second_run_request_while_the_first_is_still_going_is_refused() {
+        let backup = real_backup();
+        let location = backup.profile.location().unwrap();
+        let _lock = engine::lock::acquire(&location).unwrap();
+        let id = backup.profile.id.clone();
+        let state = Arc::new(AppState::new(vec![backup.profile], Vec::new()));
+
+        let result = run_backup(State(state), Path(id)).await;
+
+        let Err(error) = result else {
+            panic!("expected the second run to be refused, got {result:?}");
+        };
+        assert_eq!(error.0.kind, ErrorKind::Locked);
+    }
+
+    /// A random ID, the same way `real_backup_with_id` keeps a real run
+    /// from colliding with real state: `event_log` has no test namespace
+    /// of its own, so this is what keeps these two tests from reading or
+    /// writing this machine's actual history.
+    #[tokio::test]
+    async fn a_job_that_finishes_before_the_timeout_is_not_recorded_canceled() {
+        let profile_id = uuid::Uuid::new_v4().to_string();
+        let state = AppState::new(Vec::new(), Vec::new());
+        let handle = tokio::spawn(async {});
+        let job_id = state.track_job(profile_id.clone(), &handle);
+        handle.await.unwrap();
+        state.untrack_job(job_id);
+
+        drain_running_jobs(&state, std::time::Duration::from_millis(500)).await;
+
+        assert!(
+            !event_log::load(&profile_id).iter().any(|event| matches!(
+                event.kind,
+                event_log::EventKind::Failed {
+                    kind: ErrorKind::Canceled,
+                    ..
+                }
+            )),
+            "a job that already finished should not be recorded as canceled"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_job_still_running_past_the_timeout_is_recorded_canceled_and_aborted() {
+        let profile_id = uuid::Uuid::new_v4().to_string();
+        let state = AppState::new(Vec::new(), Vec::new());
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&finished);
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        state.track_job(profile_id.clone(), &handle);
+
+        drain_running_jobs(&state, std::time::Duration::from_millis(100)).await;
+
+        assert!(
+            event_log::load(&profile_id).iter().any(|event| matches!(
+                event.kind,
+                event_log::EventKind::Failed {
+                    kind: ErrorKind::Canceled,
+                    ..
+                }
+            )),
+            "a job still running past the timeout should be recorded canceled"
+        );
+        // If `drain_running_jobs` only stopped waiting rather than actually
+        // aborting the task, the 300ms sleep above would still complete on
+        // its own shortly after `drain_running_jobs`'s own 100ms timeout —
+        // waiting well past that point (400ms total since the task was
+        // spawned) before checking is what distinguishes a real abort from
+        // just not having waited long enough.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert!(
+            !finished.load(std::sync::atomic::Ordering::SeqCst),
+            "the job should have been aborted, not left running to finish on its own"
+        );
     }
 
     #[tokio::test]

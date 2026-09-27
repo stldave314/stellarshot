@@ -34,7 +34,6 @@ use subtle::ConstantTimeEq;
 use crate::app::config::{NetworkScope, StellarshotConfig};
 use crate::debug::WEB;
 use crate::engine::Secret;
-use crate::profile::Profile;
 use crate::{debug_log, error_log};
 
 mod routes;
@@ -180,6 +179,10 @@ pub fn main(_args: &[String]) -> ExitCode {
             token_hash: config.web.token_hash,
             throttle: Throttle::new(),
         };
+        let state = Arc::new(routes::AppState::new(
+            config.profiles,
+            config.global_exclude_patterns,
+        ));
         serve(
             addr,
             tls,
@@ -188,9 +191,8 @@ pub fn main(_args: &[String]) -> ExitCode {
                 allowed_addresses: config.web.allowed_addresses,
                 scope: config.web.scope,
                 auth,
-                profiles: config.profiles,
-                global_exclude_patterns: config.global_exclude_patterns,
             },
+            state,
         )
         .await
     })
@@ -203,8 +205,6 @@ struct AppConfig {
     allowed_addresses: Vec<String>,
     scope: NetworkScope,
     auth: AuthConfig,
-    profiles: Vec<Profile>,
-    global_exclude_patterns: Vec<String>,
 }
 
 /// Where to listen, or `None` if the network scope is off.
@@ -225,19 +225,16 @@ fn bind_address(scope: NetworkScope, port: u16) -> Option<SocketAddr> {
 /// "Ordering" documentation for [`middleware`] — so the allow-list, added
 /// last, is what a request meets first, before authentication is even
 /// considered.
-fn app(config: AppConfig, origins: HashSet<url::Origin>) -> Router {
+fn app(config: AppConfig, origins: HashSet<url::Origin>, state: Arc<routes::AppState>) -> Router {
     let AppConfig {
         allowed_addresses,
         scope,
         auth,
-        profiles,
-        global_exclude_patterns,
     } = config;
     let allowed = Arc::new(allowed_addresses);
     let scope = Arc::new(scope);
     let auth = Arc::new(auth);
     let origins = Arc::new(origins);
-    let state = Arc::new(routes::AppState::new(profiles, global_exclude_patterns));
     Router::new()
         .route("/api/v1/health", get(health))
         .merge(routes::router(state))
@@ -285,6 +282,7 @@ async fn serve(
     tls: axum_server::tls_rustls::RustlsConfig,
     port: u16,
     config: AppConfig,
+    state: Arc<routes::AppState>,
 ) -> ExitCode {
     // Bound explicitly (rather than letting `axum_server` bind lazily on
     // first poll) so a port already in use or otherwise unavailable is
@@ -310,14 +308,41 @@ async fn serve(
         }
     };
     let origins = allowed_origins(config.scope, port);
-    let result = server
-        .serve(app(config, origins).into_make_service_with_connect_info::<SocketAddr>())
-        .await;
+    let handle = axum_server::Handle::new();
+    let router = app(config, origins, Arc::clone(&state))
+        .into_make_service_with_connect_info::<SocketAddr>();
+    let serving = server.handle(handle.clone()).serve(router);
+    let shutdown = wait_for_sigterm_then_drain(handle, state);
+    let (result, ()) = tokio::join!(serving, shutdown);
     if let Err(err) = result {
         error_log!(WEB, "server stopped: {err}");
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// Waits for SIGTERM (sent by `systemctl stop`/`restart`, including the
+/// WEB-1 restart-on-settings-change), then stops accepting new connections
+/// and gives already-running work [`crate::constants::WEB_GRACEFUL_SHUTDOWN_TIMEOUT`]
+/// to finish, rather than the previous behavior — nothing caught the
+/// signal at all, so the default action killed the process (and whatever
+/// backup it had started) with no chance to record anything.
+async fn wait_for_sigterm_then_drain(
+    handle: axum_server::Handle<SocketAddr>,
+    state: Arc<routes::AppState>,
+) {
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        Ok(signal) => signal,
+        Err(err) => {
+            error_log!(WEB, "could not install a SIGTERM handler: {err}");
+            return;
+        }
+    };
+    sigterm.recv().await;
+    debug_log!(WEB, "received SIGTERM; draining in-flight work");
+    handle.graceful_shutdown(Some(crate::constants::WEB_GRACEFUL_SHUTDOWN_TIMEOUT));
+    routes::drain_running_jobs(&state, crate::constants::WEB_GRACEFUL_SHUTDOWN_TIMEOUT).await;
 }
 
 async fn health() -> impl IntoResponse {
@@ -1194,10 +1219,9 @@ mod tests {
                         allowed_addresses,
                         scope: NetworkScope::Lan,
                         auth,
-                        profiles: Vec::new(),
-                        global_exclude_patterns: Vec::new(),
                     },
                     HashSet::new(),
+                    Arc::new(routes::AppState::new(Vec::new(), Vec::new())),
                 )
                 .into_make_service_with_connect_info::<SocketAddr>(),
             )
@@ -1426,10 +1450,9 @@ mod tests {
                         allowed_addresses: Vec::new(),
                         scope: NetworkScope::Localhost,
                         auth: no_auth(),
-                        profiles: Vec::new(),
-                        global_exclude_patterns: Vec::new(),
                     },
                     HashSet::new(),
+                    Arc::new(routes::AppState::new(Vec::new(), Vec::new())),
                 )
                 .into_make_service_with_connect_info::<SocketAddr>(),
             ),

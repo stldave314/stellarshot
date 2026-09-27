@@ -65,6 +65,7 @@ fn service_text(executable: &Path) -> Option<String> {
          ExecStart={exec}\n\
          Restart=on-failure\n\
          RestartSec=5\n\
+         TimeoutStopSec=60\n\
          \n\
          [Install]\n\
          WantedBy=default.target\n"
@@ -218,6 +219,7 @@ mod tests {
         assert!(text.contains("ExecStart=\"/usr/bin/stellarshot-web\"\n"));
         assert!(text.contains("Type=simple\n"));
         assert!(text.contains("Restart=on-failure\n"));
+        assert!(text.contains("TimeoutStopSec=60\n"));
         assert!(text.contains("WantedBy=default.target\n"));
     }
 

@@ -62,6 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only on the next manual restart — a regenerated token's old value used to
   keep working, and a removed allow-list entry used to keep reaching the
   daemon, until then.
+- **Starting a backup that is already running over the web interface now
+  answers `409`** instead of starting a second one that would only fail
+  later, having run the password command again for nothing.
+- **Stopping or restarting the web interface no longer kills a backup it
+  started with nothing to show for it.** It now waits up to 30 seconds for
+  work already in progress to finish; if a backup is still going once that
+  passes, it is recorded on the History page as canceled instead of simply
+  disappearing.
 - **Reading a backup's snapshots or browsing one over the web interface is
   now capped** at a small number of requests open on that repository at
   once; past that, a request is refused immediately (`503`, with a

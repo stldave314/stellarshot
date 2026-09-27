@@ -49,7 +49,7 @@ bytesize = "2"
 rustic_backend = { version = "0.7", default-features = false, features = ["rclone", "rest"] }
 serde_json = "1"
 sha2 = "0.11"
-tokio = { version = "1", features = ["macros", "process", "io-util", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "process", "io-util", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 jiff = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Bridges `log` (what rustic_core and rustic_backend, including rclone's own

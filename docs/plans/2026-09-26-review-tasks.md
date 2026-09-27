@@ -907,6 +907,27 @@ Make the last two standing tests; today they are only checked by hand in
 
 ### WEB-8. Graceful shutdown and duplicate run requests
 
+**Status: Done**, taking the plan's own documented-exception alternative
+for the in-process-vs-child-process item (see `CONTRIBUTING.md`) rather
+than the larger `app::child::run` refactor. `run_backup`
+checks `engine::lock::is_running` before ever asking for the password, and
+returns 409 (`ErrorKind::Locked`) if the backup is already going — proven
+by holding a real lock and calling the handler directly, not a mock.
+`serve` now builds an `axum_server::Handle`, and a task waits for SIGTERM
+(the signal `systemctl stop`/`restart`, and the WEB-1 restart-on-change,
+already send — nothing caught it before, so the default action just
+killed the process with no chance to record anything) before calling
+`handle.graceful_shutdown` and draining `AppState`'s own tracked jobs
+(`routes::drain_running_jobs`) for up to `WEB_GRACEFUL_SHUTDOWN_TIMEOUT`
+(30s, in `constants.rs`); whatever is still running past that is recorded
+`Canceled` in the event log and aborted, so the process can still exit —
+proven with a real spawned task that is genuinely aborted (checked by
+waiting past when it would otherwise have finished on its own), not merely
+that draining stopped waiting for it. Added `TimeoutStopSec=60` to the
+unit, comfortably over the 30s grace period. Not run tonight: the live
+"stop the service during a web-started backup, History shows it canceled"
+proof (needs a real running daemon and systemd).
+
 **Low · M · Verified**
 
 **Files:** `src/web.rs:171-176`, `src/web/routes.rs:160-216`,

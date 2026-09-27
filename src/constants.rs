@@ -132,6 +132,15 @@ pub const WEB_REQUEST_BODY_LIMIT: usize = 16 * 1024;
 /// slow remote cannot tie up an unbounded number of blocking threads or
 /// multiply memory use under parallel load.
 pub const WEB_REPOSITORY_REQUEST_PERMITS: usize = 2;
+/// How long a SIGTERM (Stop, Restart) gives the web daemon to stop
+/// accepting new connections and let in-flight HTTP requests and any
+/// backup it started finish, before it gives up waiting: HTTP requests
+/// answer almost at once regardless (`POST .../run` returns before the
+/// backup itself is done), so this really only bounds how long a backup
+/// already running gets before it is recorded as canceled and the process
+/// exits anyway. Comfortably under the unit's own `TimeoutStopSec`, so
+/// systemd never has to force it.
+pub const WEB_GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Shortest password Settings accepts for the web interface's shared
 /// password (OWASP ASVS 5.0 §6.2's minimum for a user-chosen password with

@@ -235,10 +235,9 @@ impl Place {
             Kind::Rest => {
                 let url = self.rest_url.trim();
                 let parsed = url::Url::parse(url).ok()?;
-                matches!(parsed.scheme(), "http" | "https")
-                    .then(|| Destination::Rest {
-                        url: url.to_owned(),
-                    })
+                matches!(parsed.scheme(), "http" | "https").then(|| Destination::Rest {
+                    url: url.to_owned(),
+                })
             }
         }
     }
@@ -930,7 +929,9 @@ mod tests {
     fn a_well_formed_rest_url_is_a_usable_destination() {
         let mut place = Place::default();
         place.update(Message::Kind(Kind::Rest));
-        place.update(Message::RestUrl("https://alex:s3cret@nas:8000/repo/".into()));
+        place.update(Message::RestUrl(
+            "https://alex:s3cret@nas:8000/repo/".into(),
+        ));
         assert_eq!(
             place.destination(),
             Some(Destination::Rest {

@@ -133,7 +133,8 @@ async fn drive(
     // second, temporary copy here that `secrecy` has no reach into, purely
     // to get it onto the wire to the child.
     let job = zeroize::Zeroizing::new(
-        serde_json::to_vec(&job).map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?,
+        serde_json::to_vec(&job)
+            .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?,
     );
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&job).await?;

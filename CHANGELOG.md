@@ -60,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every released `.deb`, `.rpm` and tarball now carries a signed
+  attestation** that GitHub Actions actually built it from this
+  repository's own source, checkable with `gh attestation verify` before
+  installing it.
 - **A settings icon in the header bar**, right-aligned next to the window
   controls, matching where COSMIC Store and COSMIC Files put theirs. It
   opens the same Settings page as View → Settings.

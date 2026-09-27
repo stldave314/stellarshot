@@ -2593,6 +2593,40 @@ advisory makes the deny job fail.
 
 ### CI-3. Reproducible and locked builds
 
+**Status: Done.** `--locked` on every `cargo build`/`test`/`clippy`/`deb`
+invocation in `install.sh` and both workflows (the `cargo generate-rpm`
+step doesn't build anything itself — it packages what `cmd_build` already
+built with `--locked` — so it needed no change). `cmd_build` now runs
+through `cargo auditable build` when the tool is installed (every
+packaging target and CI always has it; a plain from-source build degrades
+gracefully with a warning rather than gaining a new hard dependency),
+embedding the exact dependency tree into the binary itself.
+
+**Verified for real, not just wired up:** downloaded a prebuilt
+`cargo-auditable` binary (GitHub releases, matched by the version tag, not
+compiled) and ran `cargo auditable build --bin stellarshot` against this
+project. `cargo audit bin` itself refused the *debug* binary for exceeding
+its 100 MB size cap (debug builds carry full debuginfo; the release
+profile here also sets `strip = true`, so a real release binary is far
+smaller and won't hit it) — worked around by extracting the embedded
+`.dep-v0` ELF section directly (`objcopy --dump-section`) and confirming
+it's exactly what `cargo-auditable`'s own docs promise: zlib-compressed
+JSON listing every dependency (`ab_glyph`, `accesskit`, and on), not junk
+or an empty section. The actual release-profile build and a `cargo audit
+bin` run against it were not performed tonight (a full release compile of
+this GUI app is a genuinely heavy job, and this was enough to confirm the
+mechanism works against this exact dependency tree).
+
+Also added: `actions/attest-build-provenance` to the release workflow's
+`build` job (its own narrow `id-token`/`attestations` permissions, neither
+of which grants push access — kept separate from `publish`'s `contents:
+write`), signing every `dist/*.deb`/`*.rpm`/`*.tar.gz`. README documents
+`gh attestation verify … --repo stldave314/stellarshot` in the install
+section — the exact flag syntax (`--repo` vs `--owner`) was confirmed
+against GitHub's own CLI manual page, since the `gh` installed in this
+sandbox (2.45.0) predates the `attestation` subcommand and couldn't
+verify it by running it directly.
+
 **Medium · S · Verified**
 
 **Problem.** `install.sh:62,141`, the CI test step and `cargo deb` don't pass

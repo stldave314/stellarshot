@@ -55,7 +55,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --all-features
+        run: cargo clippy --all-targets --all-features --locked
 
       # tests/keyring.rs needs a real Secret Service and fails without one,
       # so the suite runs inside a private D-Bus session with an unlocked
@@ -64,7 +64,7 @@ jobs:
         run: |
           dbus-run-session -- bash -c '
             echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
-            cargo test --all-features
+            cargo test --all-features --locked
           '
 
       # Proves the release feature really removes developer logging, instead of

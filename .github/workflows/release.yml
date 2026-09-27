@@ -32,6 +32,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      id-token: write # for actions/attest-build-provenance below
+      attestations: write # ditto; neither one grants push access to the repo
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -72,7 +74,7 @@ jobs:
         run: |
           dbus-run-session -- bash -c '
             echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
-            cargo test --all-features
+            cargo test --all-features --locked
           '
 
       # A release must never ship with developer logging on, and that has to be
@@ -91,6 +93,15 @@ jobs:
 
       - name: List artifacts
         run: ls -lh dist/
+
+      # A verifiable, signed record of exactly this GitHub Actions run
+      # having produced these specific files, checkable with
+      # `gh attestation verify` (documented in the README) against
+      # tampering after the fact, not just against a wrong build.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: "dist/*.deb,dist/*.rpm,dist/*.tar.gz"
 
       # The release notes are the version's section of CHANGELOG.md, so the
       # release page says what changed rather than listing commits. A tag

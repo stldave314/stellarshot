@@ -59,7 +59,23 @@ as_root() {
 cmd_build() {
     need cargo "install a Rust toolchain from https://rustup.rs"
     info "Building (features: $FEATURES)"
-    cargo build --release --features "$FEATURES" ${CARGO_JOBS:+-j "$CARGO_JOBS"}
+    # `cargo auditable` embeds the exact dependency tree into the binary
+    # itself, so `cargo audit bin` (or a distribution's own scanner) can
+    # check what a *shipped* binary actually contains, not just what
+    # Cargo.lock said at build time. Optional: a plain source build should
+    # not gain a new hard dependency, but every packaging target
+    # (`cmd_deb`/`cmd_rpm`/`cmd_tarball`, and CI) goes through this same
+    # function, so installing it once makes every release artifact
+    # auditable without a separate code path to keep in sync.
+    if cargo auditable --version >/dev/null 2>&1; then
+        cargo auditable build --release --locked --features "$FEATURES" \
+            ${CARGO_JOBS:+-j "$CARGO_JOBS"}
+    else
+        warn "cargo-auditable not installed; building without embedded dependency data" \
+            "(cargo install cargo-auditable)"
+        cargo build --release --locked --features "$FEATURES" \
+            ${CARGO_JOBS:+-j "$CARGO_JOBS"}
+    fi
     info "Built target/release/$BIN_APP, target/release/$BIN_APPLET and target/release/$BIN_WEB"
 }
 
@@ -141,7 +157,7 @@ cmd_deb() {
     info "Building .deb"
     # The feature has to be threaded through explicitly: cargo-deb runs its own
     # build and would otherwise not pass it.
-    cargo deb --output "$DIST" -- --features "$FEATURES"
+    cargo deb --output "$DIST" -- --locked --features "$FEATURES"
     info "Wrote $(ls -1 "$DIST"/*.deb | tail -1)"
 }
 

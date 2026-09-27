@@ -147,7 +147,13 @@ packages. Everything else works without it.
 ### Packages
 
 `.deb`, `.rpm` and a portable tarball are attached to each
-[release](../../releases).
+[release](../../releases), each with a signed attestation that GitHub
+Actions actually built it from this repository's own source, checkable
+before installing it:
+
+```sh
+gh attestation verify stellarshot_*.deb --repo stldave314/stellarshot
+```
 
 ```sh
 sudo apt install ./stellarshot_*.deb      # Debian, Ubuntu, Pop!_OS

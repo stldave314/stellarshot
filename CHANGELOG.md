@@ -57,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The LAN network scope's empty IP allow-list now means "private network
   addresses only"**, not everyone: it binds every network interface on this
   machine, and the allow-list wording and this fallback now say so.
+- **A failed web interface request no longer echoes technical detail back to
+  whoever asked.** A password command's stderr, rclone's own stderr, and
+  local paths used to be included; the response now carries a stable
+  description and a request ID instead, and the detail goes only to this
+  daemon's own log, tied to that same ID. A repository password problem now
+  answers `409`, not `401` (a valid API token no longer looks like "bad
+  credentials"), and a bad or missing path in a snapshot answers `400`/`404`
+  instead of `500`.
 
 ### Added
 

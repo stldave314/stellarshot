@@ -183,15 +183,28 @@ pub fn main(_args: &[String]) -> ExitCode {
         serve(
             addr,
             tls,
-            config.web.scope,
             config.web.port,
-            config.web.allowed_addresses,
-            auth,
-            config.profiles,
-            config.global_exclude_patterns,
+            AppConfig {
+                allowed_addresses: config.web.allowed_addresses,
+                scope: config.web.scope,
+                auth,
+                profiles: config.profiles,
+                global_exclude_patterns: config.global_exclude_patterns,
+            },
         )
         .await
     })
+}
+
+/// Everything [`app`] needs to build the router, bundled so [`serve`] does
+/// not need eight separate parameters for what is really one unit of
+/// configuration.
+struct AppConfig {
+    allowed_addresses: Vec<String>,
+    scope: NetworkScope,
+    auth: AuthConfig,
+    profiles: Vec<Profile>,
+    global_exclude_patterns: Vec<String>,
 }
 
 /// Where to listen, or `None` if the network scope is off.
@@ -212,14 +225,14 @@ fn bind_address(scope: NetworkScope, port: u16) -> Option<SocketAddr> {
 /// "Ordering" documentation for [`middleware`] — so the allow-list, added
 /// last, is what a request meets first, before authentication is even
 /// considered.
-fn app(
-    allowed_addresses: Vec<String>,
-    scope: NetworkScope,
-    auth: AuthConfig,
-    origins: HashSet<url::Origin>,
-    profiles: Vec<Profile>,
-    global_exclude_patterns: Vec<String>,
-) -> Router {
+fn app(config: AppConfig, origins: HashSet<url::Origin>) -> Router {
+    let AppConfig {
+        allowed_addresses,
+        scope,
+        auth,
+        profiles,
+        global_exclude_patterns,
+    } = config;
     let allowed = Arc::new(allowed_addresses);
     let scope = Arc::new(scope);
     let auth = Arc::new(auth);
@@ -233,10 +246,7 @@ fn app(
         .merge(routes::router(state))
         .layer(middleware::from_fn_with_state(auth, authenticate))
         .layer(middleware::from_fn_with_state(origins, reject_cross_site))
-        .layer(middleware::from_fn_with_state(
-            (allowed, scope),
-            allow_list,
-        ))
+        .layer(middleware::from_fn_with_state((allowed, scope), allow_list))
         .layer(tower_http::timeout::TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             crate::constants::WEB_REQUEST_TIMEOUT,
@@ -276,12 +286,8 @@ fn app(
 async fn serve(
     addr: SocketAddr,
     tls: axum_server::tls_rustls::RustlsConfig,
-    scope: NetworkScope,
     port: u16,
-    allowed_addresses: Vec<String>,
-    auth: AuthConfig,
-    profiles: Vec<Profile>,
-    global_exclude_patterns: Vec<String>,
+    config: AppConfig,
 ) -> ExitCode {
     // Bound explicitly (rather than letting `axum_server` bind lazily on
     // first poll) so a port already in use or otherwise unavailable is
@@ -306,19 +312,9 @@ async fn serve(
             return ExitCode::FAILURE;
         }
     };
-    let origins = allowed_origins(scope, port);
+    let origins = allowed_origins(config.scope, port);
     let result = server
-        .serve(
-            app(
-                allowed_addresses,
-                scope,
-                auth,
-                origins,
-                profiles,
-                global_exclude_patterns,
-            )
-            .into_make_service_with_connect_info::<SocketAddr>(),
-        )
+        .serve(app(config, origins).into_make_service_with_connect_info::<SocketAddr>())
         .await;
     if let Err(err) = result {
         error_log!(WEB, "server stopped: {err}");
@@ -581,14 +577,14 @@ impl Throttle {
             return Err(remaining);
         }
         prune_expired(&mut attempts, now);
-        if attempts.len() >= MAX_TRACKED_ADDRESSES && !attempts.contains_key(&addr) {
-            if let Some(oldest) = attempts
+        if attempts.len() >= MAX_TRACKED_ADDRESSES
+            && !attempts.contains_key(&addr)
+            && let Some(oldest) = attempts
                 .iter()
                 .min_by_key(|(_, a)| a.first_failure)
                 .map(|(addr, _)| *addr)
-            {
-                attempts.remove(&oldest);
-            }
+        {
+            attempts.remove(&oldest);
         }
         let updated = next_attempts(attempts.get(&addr).copied(), now);
         if updated.count == MAX_ATTEMPTS {
@@ -771,28 +767,48 @@ mod tests {
     #[test]
     fn a_single_address_only_allows_itself_in_every_scope() {
         let allowed = vec!["192.168.1.10".to_owned()];
-        for scope in [NetworkScope::Off, NetworkScope::Localhost, NetworkScope::Lan] {
+        for scope in [
+            NetworkScope::Off,
+            NetworkScope::Localhost,
+            NetworkScope::Lan,
+        ] {
             assert!(is_allowed(&allowed, scope, "192.168.1.10".parse().unwrap()));
-            assert!(!is_allowed(&allowed, scope, "192.168.1.11".parse().unwrap()));
+            assert!(!is_allowed(
+                &allowed,
+                scope,
+                "192.168.1.11".parse().unwrap()
+            ));
         }
     }
 
     #[test]
     fn a_cidr_range_allows_every_address_inside_it() {
         let allowed = vec!["192.168.1.0/24".to_owned()];
-        assert!(is_allowed(&allowed, NetworkScope::Lan, "192.168.1.1".parse().unwrap()));
+        assert!(is_allowed(
+            &allowed,
+            NetworkScope::Lan,
+            "192.168.1.1".parse().unwrap()
+        ));
         assert!(is_allowed(
             &allowed,
             NetworkScope::Lan,
             "192.168.1.254".parse().unwrap()
         ));
-        assert!(!is_allowed(&allowed, NetworkScope::Lan, "192.168.2.1".parse().unwrap()));
+        assert!(!is_allowed(
+            &allowed,
+            NetworkScope::Lan,
+            "192.168.2.1".parse().unwrap()
+        ));
     }
 
     #[test]
     fn an_unparseable_entry_matches_nothing_rather_than_panicking() {
         let allowed = vec!["not an address".to_owned()];
-        assert!(!is_allowed(&allowed, NetworkScope::Lan, "192.168.1.1".parse().unwrap()));
+        assert!(!is_allowed(
+            &allowed,
+            NetworkScope::Lan,
+            "192.168.1.1".parse().unwrap()
+        ));
     }
 
     fn no_auth() -> AuthConfig {
@@ -989,9 +1005,7 @@ mod tests {
 
     #[test]
     fn an_origin_matching_the_allowed_set_is_let_through() {
-        let origin: url::Origin = url::Url::parse("https://127.0.0.1:8737")
-            .unwrap()
-            .origin();
+        let origin: url::Origin = url::Url::parse("https://127.0.0.1:8737").unwrap().origin();
         let mut origins = HashSet::new();
         origins.insert(origin);
         let mut headers = HeaderMap::new();
@@ -1054,9 +1068,13 @@ mod tests {
         let addr = spawn(Vec::new(), password_auth("secret")).await;
         let wrong = Some("Basic aWdub3JlZDp3cm9uZw==");
         for attempt in 1..=10 {
-            let response =
-                get_with_headers(addr, "/api/v1/health", wrong, "Sec-Fetch-Site: cross-site\r\n")
-                    .await;
+            let response = get_with_headers(
+                addr,
+                "/api/v1/health",
+                wrong,
+                "Sec-Fetch-Site: cross-site\r\n",
+            )
+            .await;
             assert!(
                 response.starts_with("HTTP/1.1 403"),
                 "attempt {attempt}: expected 403, got: {response}"
@@ -1175,12 +1193,14 @@ mod tests {
             axum::serve(
                 listener,
                 app(
-                    allowed_addresses,
-                    NetworkScope::Lan,
-                    auth,
+                    AppConfig {
+                        allowed_addresses,
+                        scope: NetworkScope::Lan,
+                        auth,
+                        profiles: Vec::new(),
+                        global_exclude_patterns: Vec::new(),
+                    },
                     HashSet::new(),
-                    Vec::new(),
-                    Vec::new(),
                 )
                 .into_make_service_with_connect_info::<SocketAddr>(),
             )
@@ -1405,12 +1425,14 @@ mod tests {
         tokio::spawn(
             server.serve(
                 app(
-                    Vec::new(),
-                    NetworkScope::Localhost,
-                    no_auth(),
+                    AppConfig {
+                        allowed_addresses: Vec::new(),
+                        scope: NetworkScope::Localhost,
+                        auth: no_auth(),
+                        profiles: Vec::new(),
+                        global_exclude_patterns: Vec::new(),
+                    },
                     HashSet::new(),
-                    Vec::new(),
-                    Vec::new(),
                 )
                 .into_make_service_with_connect_info::<SocketAddr>(),
             ),

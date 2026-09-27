@@ -21,11 +21,13 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::app::tasks;
+use crate::debug::WEB;
 use crate::engine::{self, EngineError, ErrorKind, SnapshotSummary, TreeEntry};
 use crate::event_log;
 use crate::profile::Profile;
 use crate::runner::{self, Job, Operation, Output};
 use crate::status::{self, Status};
+use crate::error_log;
 
 /// What every route needs: the backups to act on, and the exclusion patterns
 /// that apply to all of them, the same as [`crate::scheduled`] reads once at
@@ -90,7 +92,65 @@ impl IntoResponse for ApiError {
             | ErrorKind::InvalidRemote
             | ErrorKind::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        (status, Json(self.0)).into_response()
+        // `EngineError.detail` can hold the password command's stderr,
+        // rclone's own stderr, or a local path — never handed to whoever
+        // asked, even on a 5xx. It still goes to the log, tied to the same
+        // ID the response carries, so it is not lost, only kept server-side.
+        let request_id = uuid::Uuid::new_v4().to_string();
+        error_log!(
+            WEB,
+            "request {request_id} failed ({status}): {}",
+            self.0.detail
+        );
+        let body = ApiErrorBody {
+            kind: self.0.kind,
+            message: safe_message(self.0.kind),
+            request_id,
+        };
+        (status, Json(body)).into_response()
+    }
+}
+
+/// The response body for a failed request: never [`EngineError::detail`],
+/// which is not safe to hand to whoever asked (see [`ApiError`]'s own
+/// `IntoResponse`). `request_id` is what to mention when asking for help;
+/// the matching detail is in this daemon's own log.
+#[derive(Serialize)]
+struct ApiErrorBody {
+    kind: ErrorKind,
+    message: &'static str,
+    request_id: String,
+}
+
+/// A description of `kind` safe to hand to any caller: stable across
+/// releases (unlike the localized, UI-facing text in `app::errors`, which
+/// also is not built into this binary), and never anything technical that
+/// `EngineError::detail` might have carried instead.
+fn safe_message(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::WrongPassword => "the repository password is wrong",
+        ErrorKind::PasswordNotRemembered => "no password is remembered for this backup",
+        ErrorKind::NotARepository | ErrorKind::NotFound => {
+            "no backup, snapshot or path matches this request"
+        }
+        ErrorKind::UnsafePath => "the requested path is not valid",
+        ErrorKind::AlreadyExists => "a repository already exists at that location",
+        ErrorKind::Locked => "the backup is already running",
+        ErrorKind::Canceled => "the operation was canceled",
+        ErrorKind::DestinationUnavailable => "the backup's storage could not be reached",
+        ErrorKind::TimedOut => "the storage did not answer in time",
+        ErrorKind::RcloneMissing => "rclone is required for this backup but not installed",
+        ErrorKind::AuthFailed => "signing in to the cloud account did not complete",
+        ErrorKind::LocationNotEmpty
+        | ErrorKind::RepositoryDamaged
+        | ErrorKind::Io
+        | ErrorKind::KeyringUnavailable
+        | ErrorKind::DeleteUnsupported
+        | ErrorKind::ConditionsNotMet
+        | ErrorKind::HookFailed
+        | ErrorKind::AppUpdated
+        | ErrorKind::InvalidRemote
+        | ErrorKind::Internal => "the request could not be completed",
     }
 }
 
@@ -247,6 +307,20 @@ mod tests {
             let error = ApiError(EngineError::new(kind, "test"));
             assert_eq!(error.into_response().status(), expected, "{kind:?}");
         }
+    }
+
+    /// `EngineError.detail` can hold a password command's stderr, rclone's
+    /// own stderr, or a local path — none of it belongs in a response to
+    /// whoever asked, only in this daemon's own log.
+    #[tokio::test]
+    async fn the_response_body_never_carries_the_engine_errors_own_detail() {
+        let error = ApiError(EngineError::new(ErrorKind::Internal, "LEAKME: secret detail"));
+        let body = error.into_response().into_body();
+        let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(!text.contains("LEAKME"), "leaked the detail: {text}");
+        assert!(text.contains("\"request_id\""), "missing a request ID: {text}");
+        assert!(text.contains("\"kind\":\"internal\""), "missing the kind: {text}");
     }
 
     #[test]

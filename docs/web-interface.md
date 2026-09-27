@@ -220,13 +220,23 @@ The run appears on the History page, marked as started from the web.
 ### Errors
 
 A failure comes back as JSON with an HTTP status matching what went wrong
-(`401` for bad credentials, `404` for an unknown backup ID, `409` for a
-backup already running, `503` for an unreachable destination, `500`
-otherwise) and a body describing it:
+(`401` for bad credentials, `400` for a malformed path, `404` for an unknown
+backup ID, `409` for a backup already running or a repository password
+problem, `503` for an unreachable destination, `500` otherwise) and a body
+describing it:
 
 ```json
-{ "kind": "not-a-repository", "detail": "no backup with that ID" }
+{
+  "kind": "not-a-repository",
+  "message": "no backup, snapshot or path matches this request",
+  "request_id": "b6c1f6b0-2a9e-4b3a-9b7a-1e6b0a2f9c3d"
+}
 ```
+
+`message` is a stable, generic description — never the technical detail a
+failure inside the engine actually carried (a password command's stderr,
+rclone's own stderr, a local path), which stays out of every response and
+goes only to this daemon's own log, tied to `request_id`.
 
 `429 Too Many Requests` (with a `Retry-After` header, no JSON body) means
 your address is locked out after repeated failures — see

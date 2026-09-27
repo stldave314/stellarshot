@@ -633,6 +633,28 @@ openssl s_client -connect HOST:8737 </dev/null | grep -c 'BEGIN CERT'   # must p
 
 ### WEB-3. Lockout and brute-force protection
 
+**Status: Done, except item 2's password-strength number is 12 not a
+different value someone might argue for, and the manual `xargs -P64 curl`
+proof below is not yet run against a real compiled binary tonight.** A
+failure only counts against the throttle when the request presented `Basic`
+or `Bearer` credentials (`presented_credentials`); lockouts escalate 5/15/60
+minutes then cap at 24 hours, one level further each time an address returns
+after its previous window fully passed; a global budget (50 failures/10
+minutes across every address) pauses password auth for everyone, tokens
+unaffected; the check-and-reserve happens under one lock
+(`Throttle::try_begin`), closing the race a separate check-then-increment
+left open — proven with 64 real OS threads hammering it at once, not merely
+asserted; both locks use `unwrap_or_else(PoisonError::into_inner)`; the
+address map is pruned after a week of inactivity and capped at 10,000
+entries; Settings now refuses a web password under 12 characters
+(`password_long_enough`). `docs/web-interface.md` documents the
+`X-Forwarded-For` position (item 7). Automated `cargo test` coverage for the
+real-socket scenarios (credential-less requests, cross-site requests,
+concurrent HTTP-level lockout) could not be run to a clean finish tonight —
+see this file's own note below and `VALIDATION.md`'s "Brute-force
+throttling" section for why, and for the OS-thread-level test that proves
+the one property those would have that a pure logic test alone could not.
+
 **Medium · M · Verified**
 
 **Files:** `src/web.rs:220-330` (`authenticate`, `Throttle`),
@@ -694,6 +716,13 @@ seq 64 | xargs -P64 -I{} curl -sk -o /dev/null -w '%{http_code}\n' -u x:wrong \
 
 ### WEB-4. "Reachable on the network" binds every interface with an open allow-list
 
+**Status: Done.** `is_allowed` takes the scope and falls back to
+`WEB_PRIVATE_RANGES` (now in `constants.rs`) in `Lan` scope when the
+allow-list is empty, and to loopback only in `Localhost` scope; `matches`
+canonicalizes the address first. `docs/web-interface.md` says "every network
+interface" rather than "the same network". Not run tonight: the live VPN-
+interface check (this sandbox has no VPN interface to test against).
+
 **Medium · S · Verified**
 
 **Files:** `src/web.rs:104-110,205-215`, `src/app/config.rs:93-97,132-135`,
@@ -719,6 +748,14 @@ and expect a rejection.
 ---
 
 ### WEB-5. Security events are not logged in release builds
+
+**Status: Partially done.** `Throttle::try_begin` logs once (`error_log!`)
+the moment an address's lockout starts, and `note_global_failure` logs once
+when the global budget is exceeded — both already rate-limited to one line
+per event by construction, not by a separate check. Not done: the startup
+warning for password auth enabled with nothing loaded from the keyring, the
+fail-closed-and-loud exit when no usable method remains, and adding the
+peer address/auth method to History entries from the web source.
 
 **Medium · S · Verified**
 
@@ -748,6 +785,23 @@ line. Live: `journalctl --user -u stellarshot-web -n 5` shows it.
 ---
 
 ### WEB-6. Response hygiene: headers, status codes, error detail
+
+**Status: Done.** Every response carries the five security headers
+(`nosniff`, `no-store`, CSP, `no-referrer`, same-origin CORP), no HSTS. A 401
+carries `WWW-Authenticate: Bearer realm="stellarshot"`. `WrongPassword`/
+`PasswordNotRemembered` now map to 409, `AuthFailed` to 503, `UnsafePath` to
+400, the new `NotFound` kind to 404 — none of the repository-password or
+malformed-path cases return 401 or 500 anymore. `ApiError`'s response body
+is now `{kind, message, request_id}`, never `EngineError.detail` (which can
+carry a password command's or rclone's own stderr, or a local path); the
+detail still reaches the log, tied to the same `request_id`, via
+`error_log!`. Auth scheme matching (`Basic`/`Bearer`) is case-insensitive.
+The password comparison hashes both sides before `ct_eq`, so not even the
+password's length leaks through timing. Not done: a live `curl -skI` header
+check against the real compiled binary tonight (covered by the same-shaped
+`every_response_carries_the_fixed_security_headers_regardless_of_status`
+test instead, itself part of tonight's socket-test environment gap — see
+WEB-3's status note).
 
 **Low · S · Verified**
 
@@ -927,6 +981,17 @@ within a minute.
 ---
 
 ### WEB-11. There is no CSRF protection
+
+**Status: Done.** `reject_cross_site` runs before authentication and refuses
+(403) anything whose `Sec-Fetch-Site` says cross-site, or whose `Origin`
+(the fallback for a client old enough not to send `Sec-Fetch-Site`) is
+`null` or does not match `allowed_origins` (built from the network scope and
+port). Neither header present (curl, a script, a non-browser client) is let
+through. This closes WEB-3's "anyone can lock out the owner" bug too: a
+cross-site request is refused before it ever reaches the throttle. Not done:
+enumerating this machine's actual LAN IP addresses in `allowed_origins`
+(documented as a deliberate, disclosed gap, not an oversight — see the LAN
+match arm's own comment).
 
 **Medium · S · Verified (absence) / Confirm first (URL-credential case)**
 
@@ -2779,6 +2844,21 @@ Word-boundary greps miss identifiers joined with underscores, so search
 without `\b` when checking.
 
 ### DOC-2. Docs that contradict the code
+
+**Status: Every non-`docs/web-interface.md` item checked and already
+resolved, except the screenshots.** `SECURITY.md:37` was corrected as part
+of SEC-3 tonight. README's shortcuts table already has F1; the backend log
+path README references is the *developer debug* log
+(`/tmp/stellarshot-debug.log`), which SEC-5 deliberately did not move, so
+there was never a stale reference to fix there; tarball install
+instructions were added as part of CI-5. `CHANGELOG.md` no longer says
+"quit completely" anywhere (resolved before tonight, alongside UI-3's own
+Quit action landing). The `docs/web-interface.md` items are the peer
+session's own territory (WEB-1/6/8). **Not done:** regenerating
+`docs/screenshots/`, which needs a live COSMIC session and this session's
+own AT-SPI/interactive-UI limitations apply — not attempted rather than
+risk an unreliable result, or disturbing Dave's actual desktop session in
+the middle of the night to drive it.
 
 **Medium · S · Verified**
 

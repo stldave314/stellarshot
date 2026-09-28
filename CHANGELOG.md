@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recomputed continuously; folder listings, the deleted-files list, and
   the wizard's own folder-size browser now show up to 500 entries at a
   time, the same limit search results already used.
+- **"Stop setting up this backup?" now has a "Keep Editing" option**,
+  alongside "Finish Later" and "Discard" — closing the dialog without
+  choosing either used to be the only way back to the wizard.
 
 ## [0.7.0] - 2026-09-27
 

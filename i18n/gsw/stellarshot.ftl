@@ -565,6 +565,7 @@ wizard-cancel-title = D Yrichtig vo däre Sicherig abbräche?
 wizard-cancel-body = Du chasch später i de Sytiliste druf zrugg cho, oder alles bisher Yigäh verwerfe.
 wizard-finish-later = Später fertig mache
 wizard-discard = Verwerfe
+wizard-keep-editing = Wiiter bearbeite
 place-google-advanced = Mini eigete Google-API-Zuedaate bruuche …
 place-google-advanced-description = Mäld dich a mit emne eigete Google-Cloud-Client, statt mit däm, wo rclone mit alle teilt, wo no kei eigete yrichtet händ. Bruucht sowohl e Client-ID als au es Client-Secret vo dim eigete Google-Cloud-Projekt; lah beides leer, zum de gteilte Standard bruuche.
 place-google-client-id = Client-ID

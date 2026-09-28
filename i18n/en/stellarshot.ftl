@@ -647,6 +647,7 @@ wizard-cancel-title = Stop setting up this backup?
 wizard-cancel-body = You can come back to it later from the sidebar, or discard everything typed so far.
 wizard-finish-later = Finish Later
 wizard-discard = Discard
+wizard-keep-editing = Keep Editing
 place-google-advanced = Use my own Google API credentials…
 place-google-advanced-description = Sign in with a Google Cloud client of your own instead of the shared one rclone provides, so this backup's Google Drive traffic does not compete with everyone else who has never set up their own. Needs both a client ID and a client secret from your own Google Cloud project; leave both blank to use the shared default.
 place-google-client-id = Client ID

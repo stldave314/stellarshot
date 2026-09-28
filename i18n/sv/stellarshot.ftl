@@ -565,6 +565,7 @@ wizard-cancel-title = Avbryta inställningen av den här säkerhetskopian?
 wizard-cancel-body = Du kan återkomma till den senare från sidopanelen, eller kasta allt som skrivits hittills.
 wizard-finish-later = Slutför senare
 wizard-discard = Kasta
+wizard-keep-editing = Fortsätt redigera
 place-google-advanced = Använd mina egna Google API-uppgifter…
 place-google-advanced-description = Logga in med en egen Google Cloud-klient istället för den rclone delar med alla som inte har satt upp en egen. Behöver både ett klient-ID och en klienthemlighet från ditt eget Google Cloud-projekt; lämna båda tomma för att använda den delade standarden.
 place-google-client-id = Klient-ID

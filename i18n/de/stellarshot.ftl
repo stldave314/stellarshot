@@ -565,6 +565,7 @@ wizard-cancel-title = Die Einrichtung dieser Sicherung abbrechen?
 wizard-cancel-body = Du kannst später in der Seitenleiste dazu zurückkehren, oder alles bisher Eingegebene verwerfen.
 wizard-finish-later = Später fertigstellen
 wizard-discard = Verwerfen
+wizard-keep-editing = Weiter bearbeiten
 place-google-advanced = Meine eigenen Google-API-Zugangsdaten verwenden …
 place-google-advanced-description = Melde dich mit einem eigenen Google-Cloud-Client an statt mit dem, den rclone mit allen teilt, die noch keinen eigenen eingerichtet haben. Braucht sowohl eine Client-ID als auch ein Client-Secret aus deinem eigenen Google-Cloud-Projekt; lass beides leer, um den geteilten Standard zu verwenden.
 place-google-client-id = Client-ID

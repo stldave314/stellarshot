@@ -2740,6 +2740,10 @@ impl Application for App {
                 .secondary_action(
                     widget::button::destructive(fl!("wizard-discard"))
                         .on_press(Message::Dialog(DialogMessage::DiscardWizard)),
+                )
+                .tertiary_action(
+                    widget::button::standard(fl!("wizard-keep-editing"))
+                        .on_press(Message::Dialog(DialogMessage::Close)),
                 ),
             Dialog::Quit => widget::dialog()
                 .title(fl!("quit-confirm-title"))

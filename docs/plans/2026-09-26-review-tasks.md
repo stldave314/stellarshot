@@ -2551,7 +2551,7 @@ leaves the list unchanged.
 
 ### UI-11. Consistency and polish
 
-**Status: 3 of 8 done.**
+**Status: 4 of 8 done.**
 
 - "Remove backup" is now `destructive`, "Unmount" is now `standard`.
 - The applet's icon bug turned out deeper than described here: it wasn't
@@ -2572,12 +2572,25 @@ leaves the list unchanged.
   read once into a new `App::hostname` field at startup, threaded into
   `web_address` as a parameter instead of read internally (also let two
   existing tests stop depending on the real machine's actual hostname).
+- The wizard-cancel dialog now has a third, "Keep Editing" action
+  (`widget::dialog`'s own `.tertiary_action`) that just dismisses the
+  confirmation via the existing `DialogMessage::Close` — the wizard itself
+  was never touched by canceling this dialog, so nothing new was needed to
+  make that "cancel" case actually available, only a button for it.
 
 **Not done:** the fake-tabs-from-buttons pattern in `restore.rs`, the
-magic page widths and sizes scattered across ten files, the wizard-cancel
-dialog's missing "keep editing" option, the "restart to apply" caption for
-settings that need one, and moving `event_log::record`/`dejadup::find`'s
-synchronous file I/O off the UI thread.
+magic page widths and sizes scattered across ten files, the "restart to
+apply" caption for settings that need one, and moving
+`event_log::record`/`dejadup::find`'s synchronous file I/O off the UI
+thread. Weighed the file-I/O item specifically and set it aside for now:
+unlike everything else fixed in this batch (a sidebar rebuild, the
+applet's polling, the diff recomputation), `record`'s five call sites
+each fire once per discrete event — a backup finishing, a snapshot
+deleted — not on every message or tick, so the real-world cost is a
+world apart from what the rest of tonight's UI-5/UI-6/UI-7 fixes were
+actually solving; correctly threading five call sites through new
+`Task`-returning effects felt like more risk than that lower-severity
+half of the finding was worth taking on right now.
 
 **Low · S each · Verified**
 

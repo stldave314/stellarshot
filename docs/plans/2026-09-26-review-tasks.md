@@ -2299,6 +2299,24 @@ the trash icon, Cancel, and the list is unchanged.
 
 ### UI-5. The sidebar is rebuilt on every profile message
 
+**Status: Core fix done; `reload_runs` is not.** Added `refresh_nav_row`,
+which updates one profile's own sidebar row's text and icon in place via
+`nav.text_set`/`nav.icon_set`, and pointed `Message::Profile`'s dispatch
+(every per-profile message — a password keystroke, a progress event every
+250ms during a backup) at it instead of `rebuild_nav`. Traced every
+remaining `rebuild_nav` call site first to confirm each one is genuinely
+structural (a profile removed, a wizard finished, the config changed
+externally) and already has its own separate call, so nothing lost a
+needed rebuild. `reload_runs` still reads every profile's run-state file
+from disk on the UI thread, on every 30-second tick and after every
+recorded run — moving it into `tasks::blocking` is real remaining work,
+not done here: its two callers inside `run_profile_effects` already build
+and return their own `Task` per match arm, so threading a second task out
+of `record_run` needs those arms restructured to batch both, which felt
+like more risk than this pass should take on for a lower-severity half of
+the same finding (reading a few small files occasionally, versus the
+keyboard-focus-dropping rebuild the other half fixed).
+
 **Medium · S · Verified**
 
 **Files:** `src/app.rs:751-828` (`rebuild_nav`), `2500`, `863-874`

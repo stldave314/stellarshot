@@ -27,6 +27,7 @@ status-detail = { $destination } · { $count ->
    *[other] { $count } ögonblicksbilder
 }
 back-up-now = Säkerhetskopiera nu
+estimate-size = Uppskatta storlek
 choose-what-title = Välj vad som ska säkerhetskopieras
 choose-what-body = Den här säkerhetskopian har inga mappar att säkerhetskopiera än.
 choose-what-button = Välj mappar…

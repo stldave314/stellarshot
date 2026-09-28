@@ -27,6 +27,7 @@ status-detail = { $destination } · { $count ->
    *[other] { $count } snapshots
 }
 back-up-now = Back Up Now
+estimate-size = Estimate Size
 choose-what-title = Choose what to back up
 choose-what-body = This backup does not have any folders to back up yet.
 choose-what-button = Choose Folders…

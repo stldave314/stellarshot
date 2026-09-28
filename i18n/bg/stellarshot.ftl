@@ -27,6 +27,7 @@ status-detail = { $destination } · { $count ->
    *[other] { $count } моментни състояния
 }
 back-up-now = Резервно копие сега
+estimate-size = Оценка на размера
 choose-what-title = Изберете какво да се копира
 choose-what-body = За това резервно копие все още няма избрани папки.
 choose-what-button = Избиране на папки…

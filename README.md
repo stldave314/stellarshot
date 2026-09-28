@@ -53,6 +53,9 @@ snapshot you ever made.
   and the rclone connection under it at once, a canceled or interrupted
   backup never leaves a half-written snapshot, and closing the window lets a
   running backup finish.
+- **"Estimate Size" next to "Back Up Now"** shows how much an existing
+  backup would cover right now, without opening it or asking for its
+  password: the same folder walk the setup wizard's own live estimate uses.
 - **Passwords remembered in your keyring**, if you want (it is on by default).
   They go to the desktop's Secret Service (GNOME Keyring, KWallet) and nowhere
   else. Without it, the page asks once per session.
@@ -336,6 +339,12 @@ limiting requests. The backup carries on by itself either way.
 If the password is not remembered, the page asks for it first. Enter it once
 and it is kept for the rest of the session (and in the keyring if you leave
 **Remember password** on).
+
+Next to **Back Up Now** is **Estimate Size**, showing how much this backup
+covers right now — a count of files and total size — without opening the
+backup or asking for its password. It only walks the folders on disk, so it
+does not know how much of that is already stored or how long an actual
+backup would take.
 
 ### Getting files back
 

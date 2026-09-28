@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **An "Estimate Size" button next to "Back Up Now"** shows how much a
+  backup would cover right now — a file count and total size — without
+  opening it or asking for its password. It only walks the source folders
+  on disk, the same as the setup wizard's own live estimate, so it does not
+  account for what is already stored or how long an actual backup would
+  take.
+
 ## [0.7.0] - 2026-09-27
 
 A full security and reliability audit: hardening across secrets handling,

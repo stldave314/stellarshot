@@ -10,6 +10,7 @@ use std::sync::atomic::AtomicBool;
 use cosmic::dialog::file_chooser;
 use cosmic::iced::futures::{SinkExt, Stream, channel::mpsc};
 
+use crate::app::pages::profile::SizeEstimateEvent;
 use crate::app::portal::url_to_path;
 use crate::app::wizard::browse;
 use crate::app::wizard::{EstimateEvent, Mode};
@@ -293,6 +294,42 @@ pub fn estimate(
         }
         let _ = worker.await;
     })
+}
+
+/// Size what `request` covers, as a stream of events — the same local walk
+/// [`estimate`] does, without the exclusion-arithmetic pass, for an
+/// already-configured backup that has no wizard-style exclude folder list to
+/// size separately.
+pub fn estimate_size(
+    request: BackupRequest,
+    cancel: Arc<AtomicBool>,
+) -> impl Stream<Item = SizeEstimateEvent> {
+    cosmic::iced::stream::channel(
+        16,
+        move |mut out: mpsc::Sender<SizeEstimateEvent>| async move {
+            let (progress_tx, mut progress_rx) = mpsc::channel::<SizeEstimateEvent>(16);
+            let worker = tokio::task::spawn_blocking(move || {
+                let mut tx = progress_tx.clone();
+                let result = engine::estimate(&request, &cancel, &mut |total| {
+                    let _ = tx.try_send(SizeEstimateEvent::Progress(total));
+                });
+                let mut tx = progress_tx;
+                let mut deliver = |event| {
+                    let _ = cosmic::iced::futures::executor::block_on(tx.send(event));
+                };
+                match result {
+                    Ok(Some(total)) => deliver(SizeEstimateEvent::Done(total)),
+                    Ok(None) => {}
+                    Err(err) => deliver(SizeEstimateEvent::Failed(err)),
+                }
+            });
+            use cosmic::iced::futures::StreamExt;
+            while let Some(event) = progress_rx.next().await {
+                let _ = out.send(event).await;
+            }
+            let _ = worker.await;
+        },
+    )
 }
 
 /// List `dir`'s immediate children with their sizes, as a stream of wizard

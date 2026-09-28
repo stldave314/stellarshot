@@ -27,6 +27,7 @@ status-detail = { $destination } · { $count ->
    *[other] { $count } Momentaufnahmen
 }
 back-up-now = Jetzt sichern
+estimate-size = Größe schätzen
 choose-what-title = Wähle, was gesichert wird
 choose-what-body = Für diese Sicherung sind noch keine Ordner ausgewählt.
 choose-what-button = Ordner wählen …

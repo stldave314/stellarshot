@@ -27,6 +27,7 @@ status-detail = { $destination } · { $count ->
    *[other] { $count } Momentuufnahme
 }
 back-up-now = Jetzt sichere
+estimate-size = Grössi schätze
 choose-what-title = Wähl, was gsicheret wird
 choose-what-body = Für die Sicherig sind no kei Ordner usgwählt.
 choose-what-button = Ordner wähle …

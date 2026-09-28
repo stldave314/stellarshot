@@ -3,6 +3,8 @@
 //! One backup profile: is it safe, back it up now, its snapshots, and
 //! keeping it healthy.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use cosmic::iced::{Alignment, Length};
@@ -14,7 +16,8 @@ use crate::app::format::{self, Ago};
 use crate::app::wizard::retention_label;
 use crate::constants::STALL_NOTICE;
 use crate::engine::{
-    EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SnapshotSummary, Statistics,
+    EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SizeEstimate,
+    SnapshotSummary, Statistics,
 };
 use crate::event_log::EventKind;
 use crate::fl;
@@ -86,6 +89,17 @@ impl Running {
     }
 }
 
+/// Progress of a local, filesystem-only size estimate ("how much would this
+/// back up"), as it reaches this page. The same walk the setup wizard uses
+/// to size a backup before it exists, without the exclusion-arithmetic pass
+/// an already-configured backup has no use for.
+#[derive(Debug, Clone)]
+pub enum SizeEstimateEvent {
+    Progress(SizeEstimate),
+    Done(SizeEstimate),
+    Failed(EngineError),
+}
+
 /// Everything the page knows beyond the profile's saved settings.
 pub struct ProfileState {
     secret: Option<Secret>,
@@ -103,6 +117,11 @@ pub struct ProfileState {
     /// and lists the destination, so it waits for the user to ask.
     statistics: Option<Result<Statistics, EngineError>>,
     calculating_statistics: bool,
+    /// A one-off local size estimate, started by pressing "Estimate Size":
+    /// no unlock or repository access needed, so it works even on a locked
+    /// backup, unlike statistics above.
+    estimate: Option<Result<SizeEstimate, EngineError>>,
+    estimating: bool,
     /// What has happened to this backup, oldest first. Loaded once when the
     /// page opens; every later entry is added here directly, since whatever
     /// adds one already knows what it is.
@@ -146,6 +165,8 @@ pub enum Message {
     NextRunLoaded(Option<i64>),
     CalculateStatistics,
     StatisticsLoaded(Result<Statistics, EngineError>),
+    EstimateSize,
+    Estimate(SizeEstimateEvent),
     HistoryLoaded(Vec<crate::event_log::Event>),
 }
 
@@ -196,6 +217,9 @@ pub enum Effect {
     FetchNextRun,
     /// Read the repository's statistics: it needs the password.
     FetchStatistics(Secret),
+    /// Walk this backup's own sources locally and total their size: no
+    /// unlock or repository access needed.
+    EstimateSize(Arc<AtomicBool>),
     /// Add an entry to this backup's history.
     LogEvent(EventKind),
     /// Read this backup's history from disk: once, when the page opens.
@@ -218,6 +242,8 @@ impl Default for ProfileState {
             next_run: None,
             statistics: None,
             calculating_statistics: false,
+            estimate: None,
+            estimating: false,
             history: Vec::new(),
             history_loaded: false,
             restore_when_unlocked: false,
@@ -568,6 +594,29 @@ impl ProfileState {
                 self.statistics = Some(result);
                 Vec::new()
             }
+            Message::EstimateSize => {
+                if self.estimating || profile.sources.is_empty() {
+                    Vec::new()
+                } else {
+                    self.estimating = true;
+                    self.estimate = None;
+                    vec![Effect::EstimateSize(Arc::new(AtomicBool::new(false)))]
+                }
+            }
+            Message::Estimate(event) => {
+                match event {
+                    SizeEstimateEvent::Progress(total) => self.estimate = Some(Ok(total)),
+                    SizeEstimateEvent::Done(total) => {
+                        self.estimate = Some(Ok(total));
+                        self.estimating = false;
+                    }
+                    SizeEstimateEvent::Failed(err) => {
+                        self.estimate = Some(Err(err));
+                        self.estimating = false;
+                    }
+                }
+                Vec::new()
+            }
             Message::HistoryLoaded(mut history) => {
                 // Whatever this page logged itself while the read was in
                 // flight goes after it, but only what the read cannot
@@ -818,9 +867,12 @@ impl ProfileState {
             None => profile.destination.describe(),
         };
         let can_back_up = self.is_unlocked() && !profile.sources.is_empty();
+        // No unlock needed: this only walks the source folders on disk, the
+        // same as the setup wizard's own live estimate.
+        let can_estimate = !self.estimating && !profile.sources.is_empty();
 
         card(
-            widget::column::with_capacity(4)
+            widget::column::with_capacity(5)
                 .spacing(spacing.space_xs)
                 .push(widget::text::title4(headline))
                 .push(widget::text::caption(detail))
@@ -829,7 +881,7 @@ impl ProfileState {
                     widget::text::caption(fl!("next-run", time = format::local_time(time)))
                 }))
                 .push(
-                    widget::row::with_capacity(2)
+                    widget::row::with_capacity(3)
                         .spacing(spacing.space_xs)
                         .push(
                             widget::button::suggested(fl!("back-up-now"))
@@ -840,9 +892,36 @@ impl ProfileState {
                                 (self.is_unlocked() && self.has_snapshots())
                                     .then_some(Message::Restore),
                             ),
+                        )
+                        .push(
+                            widget::button::standard(fl!("estimate-size"))
+                                .on_press_maybe(can_estimate.then_some(Message::EstimateSize)),
                         ),
-                ),
+                )
+                .push_maybe(self.estimate_line()),
         )
+    }
+
+    /// The result of pressing "Estimate Size": a count in progress, the
+    /// total once known, or why it could not be counted.
+    fn estimate_line(&self) -> Option<Element<'_, Message>> {
+        if self.estimating {
+            return Some(widget::text::caption(fl!("wizard-estimate-counting")).into());
+        }
+        match self.estimate.as_ref()? {
+            Ok(total) => {
+                let files = total.files as i64;
+                Some(
+                    widget::text::caption(fl!(
+                        "wizard-estimate",
+                        size = format::bytes(total.bytes),
+                        files = files
+                    ))
+                    .into(),
+                )
+            }
+            Err(err) => Some(widget::text::caption(errors::explain(err)).into()),
+        }
     }
 
     fn unlock_card(&self) -> Element<'_, Message> {
@@ -1303,6 +1382,48 @@ mod tests {
                 [Effect::FetchStatistics(_)]
             ),
             "a finished calculation can be run again"
+        );
+    }
+
+    #[test]
+    fn size_is_estimated_once_per_press_and_works_while_locked() {
+        // Unlike statistics, no unlock is needed: this only walks the
+        // source folders on disk.
+        let mut state = ProfileState::new();
+        assert!(matches!(
+            state.update(Message::EstimateSize, &profile()).as_slice(),
+            [Effect::EstimateSize(_)]
+        ));
+        assert!(
+            state.update(Message::EstimateSize, &profile()).is_empty(),
+            "a second press does not start another estimate"
+        );
+
+        let total = SizeEstimate {
+            files: 3,
+            bytes: 1024,
+            per_source: vec![1024],
+        };
+        state.update(
+            Message::Estimate(SizeEstimateEvent::Done(total)),
+            &profile(),
+        );
+        assert!(
+            matches!(
+                state.update(Message::EstimateSize, &profile()).as_slice(),
+                [Effect::EstimateSize(_)]
+            ),
+            "a finished estimate can be run again"
+        );
+
+        // A backup with nothing to back up yet has nothing to estimate.
+        let mut empty_sources = profile();
+        empty_sources.sources.clear();
+        let mut state = ProfileState::new();
+        assert!(
+            state
+                .update(Message::EstimateSize, &empty_sources)
+                .is_empty()
         );
     }
 

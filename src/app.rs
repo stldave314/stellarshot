@@ -1771,6 +1771,15 @@ impl App {
                         ))
                     })
                 }
+                profile::Effect::EstimateSize(cancel) => {
+                    let request = profile.backup_request(&self.config.global_exclude_patterns);
+                    Task::run(tasks::estimate_size(request, cancel), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::Estimate(event),
+                        ))
+                    })
+                }
                 profile::Effect::FetchNextRun => {
                     let profile_id = id.clone();
                     Task::perform(

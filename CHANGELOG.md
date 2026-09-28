@@ -61,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of nothing. The "Delete everything" confirmation field and the
   unlock field both focus themselves automatically and confirm on Enter,
   instead of needing a mouse click or several Tab presses first.
+- **Comparing two snapshots with a very large difference, browsing a
+  folder with many entries, or excluding folders from deep inside a very
+  large one no longer redoes the same work on every tick while idle, or
+  tries to render every single entry at once.** A comparison's own counts
+  and folder grouping are now computed once when it finishes rather than
+  recomputed continuously; folder listings, the deleted-files list, and
+  the wizard's own folder-size browser now show up to 500 entries at a
+  time, the same limit search results already used.
 
 ## [0.7.0] - 2026-09-27
 

@@ -144,7 +144,7 @@ pub struct RestorePage {
     // Compare
     from: Option<usize>,
     to: Option<usize>,
-    diff: Option<Vec<DiffEntry>>,
+    diff: Option<Diff>,
     diff_selection: BTreeSet<PathBuf>,
     /// Folders (relative to the diff's own common root) whose changes are
     /// expanded, rather than collapsed behind a count.
@@ -612,7 +612,7 @@ impl RestorePage {
                 self.busy = false;
                 match result {
                     Ok(diff) => {
-                        self.diff = Some(diff);
+                        self.diff = Some(Diff::new(diff));
                         Vec::new()
                     }
                     Err(err) => vec![Effect::ShowError(fl!("browse-failed"), err)],
@@ -973,7 +973,10 @@ impl RestorePage {
             list = list.push(widget::text::body(fl!("folder-empty")));
         }
         let snapshot = self.snapshot_id().unwrap_or_default();
-        for entry in entries {
+        // Capped the same way a global search's own results already are: a
+        // folder with far more than RESULT_LIMIT entries costs RESULT_LIMIT
+        // rows, not however many actually live there.
+        for entry in entries.iter().take(RESULT_LIMIT) {
             list = list.push(self.entry_row(entry));
             if self.expanded.as_ref() == Some(&entry.path) {
                 list = list.push(self.versions_view(&entry.path, &snapshot));
@@ -1135,7 +1138,7 @@ impl RestorePage {
                 list = list.push(widget::text::body(fl!("deleted-none")));
             }
             Some(found) => {
-                for entry in found {
+                for entry in found.iter().take(RESULT_LIMIT) {
                     let path = entry.path.clone();
                     let checked = self.missing_selection.contains(&entry.path);
                     list = list.push(
@@ -1184,29 +1187,23 @@ impl RestorePage {
                 list = list.push(widget::text::body(fl!("compare-none")))
             }
             Some(diff) => {
-                let (added, removed, changed) =
-                    diff.iter().fold((0, 0, 0), |(a, r, c), d| match d.change {
-                        Change::Added => (a + 1, r, c),
-                        Change::Removed => (a, r + 1, c),
-                        Change::Modified => (a, r, c + 1),
-                    });
                 list = list.push(widget::text::caption(fl!(
                     "compare-summary",
-                    added = (added as i64),
-                    removed = (removed as i64),
-                    changed = (changed as i64)
+                    added = (diff.added as i64),
+                    removed = (diff.removed as i64),
+                    changed = (diff.changed as i64)
                 )));
-                for (folder, entries) in group_diff(diff) {
+                for (folder, entries) in diff.groups.iter().take(RESULT_LIMIT) {
                     if entries.len() == 1 {
                         // Nothing to drill into for a folder with only one
                         // change: show it directly, in full, like before.
-                        let entry = entries[0];
+                        let entry = &entries[0];
                         list = list.push(self.diff_entry_row(entry, &entry.path));
                     } else {
-                        let expanded = self.diff_expanded.contains(&folder);
-                        list = list.push(self.diff_folder_row(&folder, entries.len(), expanded));
+                        let expanded = self.diff_expanded.contains(folder);
+                        list = list.push(self.diff_folder_row(folder, entries.len(), expanded));
                         if expanded {
-                            for entry in entries {
+                            for entry in entries.iter().take(RESULT_LIMIT) {
                                 let name = entry
                                     .path
                                     .file_name()
@@ -1517,6 +1514,45 @@ fn common_ancestor<'a>(paths: impl Iterator<Item = &'a Path>) -> PathBuf {
         });
     }
     common.unwrap_or_default().into_iter().collect()
+}
+
+/// A finished comparison's own added/removed/changed counts and its
+/// folder-grouped breakdown, computed once when it arrives rather than
+/// recomputed on every render — a full pass over a 50,000-entry diff is not
+/// something `view()` should pay for again on every message, including the
+/// once-a-second tick, just to redraw the same result.
+struct Diff {
+    added: usize,
+    removed: usize,
+    changed: usize,
+    groups: Vec<(PathBuf, Vec<DiffEntry>)>,
+}
+
+impl Diff {
+    fn new(entries: Vec<DiffEntry>) -> Self {
+        let (added, removed, changed) =
+            entries
+                .iter()
+                .fold((0, 0, 0), |(a, r, c), entry| match entry.change {
+                    Change::Added => (a + 1, r, c),
+                    Change::Removed => (a, r + 1, c),
+                    Change::Modified => (a, r, c + 1),
+                });
+        let groups = group_diff(&entries)
+            .into_iter()
+            .map(|(folder, refs)| (folder, refs.into_iter().cloned().collect()))
+            .collect();
+        Self {
+            added,
+            removed,
+            changed,
+            groups,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
 }
 
 /// `entries` grouped by the folder each directly sits in, relative to their
@@ -1898,6 +1934,29 @@ mod tests {
         assert_eq!(groups.len(), 2, "src and docs are separate groups");
         assert!(groups.iter().any(|(folder, _)| folder == Path::new("src")));
         assert!(groups.iter().any(|(folder, _)| folder == Path::new("docs")));
+    }
+
+    #[test]
+    fn diff_counts_and_groups_are_computed_once_not_on_every_render() {
+        let entries = vec![
+            diff_entry("/home/alex/a.txt", Change::Added),
+            diff_entry("/home/alex/b.txt", Change::Removed),
+            diff_entry("/home/alex/project/src/main.rs", Change::Modified),
+            diff_entry("/home/alex/project/src/lib.rs", Change::Modified),
+        ];
+
+        let diff = Diff::new(entries);
+
+        assert!(!diff.is_empty());
+        assert_eq!((diff.added, diff.removed, diff.changed), (1, 1, 2));
+        assert_eq!(diff.groups.len(), 2, "one root group, one src group");
+    }
+
+    #[test]
+    fn an_empty_diff_reports_itself_empty() {
+        let diff = Diff::new(Vec::new());
+        assert!(diff.is_empty());
+        assert_eq!((diff.added, diff.removed, diff.changed), (0, 0, 0));
     }
 
     #[test]

@@ -2339,6 +2339,30 @@ list or the wizard state changes. Move `reload_runs` into `tasks::blocking`.
 
 ### UI-6. The restore page does per-frame work and renders unbounded lists
 
+**Status: Done.** The line references had drifted (this file has changed a
+lot tonight), but both concerns were real and both fixed:
+
+- `group_diff` and the added/removed/changed fold ran inside `view()`,
+  recomputed on every message including the once-a-second tick, over
+  whatever the comparison actually found. Added a `Diff` type holding
+  both, computed exactly once when `Message::Compared` arrives; `view()`
+  now just reads its fields.
+- Four separate unbounded loops rendered every entry with no cap at all:
+  the folder-browse listing, the deleted-files list, and both the
+  top-level diff groups and an expanded group's own entries. All four now
+  take the same `RESULT_LIMIT` (500) the global search already used —
+  matching that existing precedent rather than inventing a new "Show
+  more" mechanism this codebase doesn't otherwise have.
+- The wizard's own folder-size browser (`wizard/browse.rs`) had the same
+  problem in its recursive tree walk, uncapped in either direction (rows
+  per folder or total depth). Added a `ROW_LIMIT` there too, checked once
+  per row so the whole tree — not just one folder's worth of children —
+  stops growing past it.
+
+Verified with two new unit tests for `Diff::new`'s counting and grouping;
+not verified as an actual CPU measurement against a real 50,000-entry
+tree, which this sandbox has no easy way to generate or profile.
+
 **Medium · M · Verified**
 
 **Files:** `src/app/pages/restore.rs:976-981,1182-1198`,

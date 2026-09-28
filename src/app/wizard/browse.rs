@@ -78,6 +78,12 @@ pub struct Browse {
     nodes: BTreeMap<PathBuf, Node>,
 }
 
+/// Hard cap on rows rendered at once: expanding enough folders to need more
+/// than this is rare, and re-walking tens of thousands of them into fresh
+/// widgets on every keystroke or tick — `view()` runs on both — is not
+/// something a tree this deep should ever cost.
+const ROW_LIMIT: usize = 500;
+
 impl Browse {
     pub fn is_open(&self) -> bool {
         self.root.is_some()
@@ -200,6 +206,9 @@ impl Browse {
         excludes: &'a [PathBuf],
         under_excluded_ancestor: bool,
     ) {
+        if rows.len() >= ROW_LIMIT {
+            return;
+        }
         let Some(node) = self.nodes.get(path) else {
             return;
         };
@@ -208,6 +217,9 @@ impl Browse {
         rows.push(self.row(path, node, depth, mark, excludes, under_excluded_ancestor));
         if let Some(children) = &node.children {
             for child in children {
+                if rows.len() >= ROW_LIMIT {
+                    break;
+                }
                 self.push_rows(
                     rows,
                     child,

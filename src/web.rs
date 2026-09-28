@@ -602,6 +602,16 @@ fn matches(entry: &str, addr: IpAddr) -> bool {
     entry.parse::<IpAddr>() == Ok(addr)
 }
 
+/// Whether `entry` would ever match anything at all — a single address or a
+/// CIDR range, the same two shapes [`matches`] accepts. Settings uses this
+/// to catch a typo before it is saved: an allow-list entry that cannot
+/// parse can never match the very address it was meant to admit, which
+/// otherwise fails silently until the next connection is refused.
+pub fn valid_allow_list_entry(entry: &str) -> bool {
+    let entry = entry.trim();
+    !entry.is_empty() && (entry.parse::<ipnet::IpNet>().is_ok() || entry.parse::<IpAddr>().is_ok())
+}
+
 /// Require whichever of the enabled methods actually applies: a request is
 /// let through if it satisfies *any* enabled method. If none is enabled,
 /// every request is rejected — a daemon someone deliberately configured with
@@ -1117,6 +1127,18 @@ mod tests {
             NetworkScope::Lan,
             "192.168.1.1".parse().unwrap()
         ));
+    }
+
+    #[test]
+    fn valid_allow_list_entry_accepts_exactly_what_matches_accepts() {
+        for entry in ["192.168.1.1", "192.168.1.0/24", "::1", "2001:db8::/32"] {
+            assert!(valid_allow_list_entry(entry), "{entry} should be valid");
+        }
+        for entry in ["", "   ", "not an address", "192.168.1.0/99", "192.168.1"] {
+            assert!(!valid_allow_list_entry(entry), "{entry} should be invalid");
+        }
+        // Settings trims before saving; validation must agree either way.
+        assert!(valid_allow_list_entry("  192.168.1.1  "));
     }
 
     fn no_auth() -> AuthConfig {

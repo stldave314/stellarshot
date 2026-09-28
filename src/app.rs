@@ -31,6 +31,7 @@ use crate::run_state::{self, RunState};
 use crate::runner::{Event as RunnerEvent, Job, Operation};
 use crate::schedule;
 use crate::settings_export;
+use crate::web::valid_allow_list_entry;
 use crate::web_daemon;
 use crate::{debug_log, error_log, fl};
 
@@ -84,6 +85,10 @@ pub struct App {
     web_password_input: String,
     web_allowed_address_input: String,
     web_port_input: String,
+    /// Whether the last save attempt succeeded, shown under the password
+    /// field instead of a dialog. Cleared as soon as the field is edited
+    /// again.
+    web_password_status: Option<Result<(), EngineError>>,
     /// Whether the daemon is running, for Settings' status indicator.
     /// Queried fresh each time Settings is opened, and after every
     /// Start/Stop/Restart: nothing pushes a live update the rest of the
@@ -517,30 +522,46 @@ impl App {
                 fl!("web-scope-lan-description"),
                 NetworkScope::Lan,
             ))
-            .add(
-                widget::settings::item::builder(fl!("web-port"))
-                    .description(fl!("web-port-description"))
-                    .control(
+            .add({
+                // Starts holding the port actually in effect (reset whenever
+                // Settings opens — see `Message::ToggleContextPage`), so
+                // this is never empty behind a placeholder that only looks
+                // pre-filled. Checked on every keystroke, not just on Save:
+                // an invalid value disables Save and says why underneath,
+                // instead of a save that silently could not have worked.
+                let port_valid = parse_port(&self.web_port_input).is_some();
+                let mut field = widget::column::with_capacity(2)
+                    .spacing(spacing.space_xxs)
+                    .push(
                         widget::row::with_capacity(2)
                             .spacing(spacing.space_xs)
                             .push(
-                                widget::text_input(
-                                    self.config.web.port.to_string(),
-                                    &self.web_port_input,
-                                )
-                                .on_input(Message::WebPortInput)
-                                .on_submit(|_| Message::SaveWebPort)
-                                .width(Length::Fixed(120.0)),
+                                widget::text_input("", &self.web_port_input)
+                                    .on_input(Message::WebPortInput)
+                                    .on_submit(|_| Message::SaveWebPort)
+                                    .width(Length::Fixed(120.0)),
                             )
                             .push(
                                 widget::button::standard(fl!("save"))
-                                    .on_press(Message::SaveWebPort),
+                                    .on_press_maybe(port_valid.then_some(Message::SaveWebPort)),
                             ),
-                    ),
-            )
+                    );
+                if !port_valid {
+                    field = field.push(widget::text::caption(fl!("web-port-invalid")));
+                }
+                widget::settings::item::builder(fl!("web-port"))
+                    .description(fl!("web-port-description"))
+                    .control(field)
+            })
             .add_maybe(
-                web_address(self.config.web.scope, self.config.web.port)
-                    .map(|url| widget::text::body(fl!("web-address", url = url))),
+                web_address(self.config.web.scope, self.config.web.port).map(|url| {
+                    let row: Element<'_, Message> = widget::row::with_capacity(2)
+                        .spacing(spacing.space_xxs)
+                        .push(widget::text::body(fl!("web-address-label")))
+                        .push(widget::button::link(url.clone()).on_press(Message::LaunchUrl(url)))
+                        .into();
+                    row
+                }),
             )
             .add(
                 widget::settings::item::builder(fl!("web-auth-password"))
@@ -551,25 +572,56 @@ impl App {
                     ),
             )
             .add_maybe(self.config.web.password_enabled.then(|| {
-                widget::settings::item::builder(fl!("web-password-set")).control(
-                    widget::row::with_capacity(2)
-                        .spacing(spacing.space_xs)
-                        .push(
-                            widget::secure_input(
-                                fl!("web-password-placeholder"),
-                                &self.web_password_input,
-                                None,
-                                true,
+                // Checked on every keystroke, the same as the port field
+                // above: a caption under the field says how many more
+                // characters are needed, live, instead of a dialog only
+                // after Save is pressed.
+                let count = self.web_password_input.chars().count();
+                let long_enough = password_long_enough(&self.web_password_input);
+                let can_save = !self.web_password_input.is_empty() && long_enough;
+                let mut field = widget::column::with_capacity(2)
+                    .spacing(spacing.space_xxs)
+                    .push(
+                        widget::row::with_capacity(2)
+                            .spacing(spacing.space_xs)
+                            .push(
+                                widget::secure_input(
+                                    fl!("web-password-placeholder"),
+                                    &self.web_password_input,
+                                    None,
+                                    true,
+                                )
+                                .on_input(Message::WebPasswordInput)
+                                .on_submit(|_| Message::SaveWebPassword)
+                                .width(Length::Fill),
                             )
-                            .on_input(Message::WebPasswordInput)
-                            .on_submit(|_| Message::SaveWebPassword)
-                            .width(Length::Fill),
-                        )
-                        .push(
-                            widget::button::standard(fl!("save"))
-                                .on_press(Message::SaveWebPassword),
-                        ),
-                )
+                            .push(
+                                widget::button::standard(fl!("save"))
+                                    .on_press_maybe(can_save.then_some(Message::SaveWebPassword)),
+                            ),
+                    );
+                if !self.web_password_input.is_empty() && !long_enough {
+                    let count = count as i64;
+                    let minimum = crate::constants::WEB_PASSWORD_MIN_LENGTH as i64;
+                    field = field.push(widget::text::caption(fl!(
+                        "web-password-length",
+                        count = count,
+                        minimum = minimum
+                    )));
+                }
+                match &self.web_password_status {
+                    Some(Ok(())) => {
+                        field = field.push(widget::text::caption(fl!("web-password-saved-body")));
+                    }
+                    Some(Err(err)) => {
+                        field = field.push(widget::text::caption(errors::describe(
+                            &fl!("web-password-failed"),
+                            err,
+                        )));
+                    }
+                    None => {}
+                }
+                widget::settings::item::builder(fl!("web-password-set")).control(field)
             }))
             .add(
                 widget::settings::item::builder(fl!("web-auth-token"))
@@ -608,21 +660,37 @@ impl App {
                 ),
             );
         }
-        web_allowed = web_allowed.add(
-            widget::row::with_capacity(2)
-                .spacing(spacing.space_xs)
-                .align_y(Alignment::Center)
+        {
+            // Checked as it is typed, not only once it is already saved and
+            // an address that could never match anything (a typo, the wrong
+            // shape) has silently locked out whoever just added it — the
+            // same shape of bug the port and password fields above had.
+            let text = self.web_allowed_address_input.trim();
+            let valid = text.is_empty() || valid_allow_list_entry(text);
+            let mut add_row = widget::column::with_capacity(2)
+                .spacing(spacing.space_xxs)
                 .push(
-                    widget::text_input(
-                        fl!("web-allowed-placeholder"),
-                        &self.web_allowed_address_input,
-                    )
-                    .on_input(Message::WebAllowedAddressInput)
-                    .on_submit(|_| Message::AddWebAllowedAddress)
-                    .width(Length::Fill),
-                )
-                .push(widget::button::standard(fl!("add")).on_press(Message::AddWebAllowedAddress)),
-        );
+                    widget::row::with_capacity(2)
+                        .spacing(spacing.space_xs)
+                        .align_y(Alignment::Center)
+                        .push(
+                            widget::text_input(
+                                fl!("web-allowed-placeholder"),
+                                &self.web_allowed_address_input,
+                            )
+                            .on_input(Message::WebAllowedAddressInput)
+                            .on_submit(|_| Message::AddWebAllowedAddress)
+                            .width(Length::Fill),
+                        )
+                        .push(widget::button::standard(fl!("add")).on_press_maybe(
+                            (!text.is_empty() && valid).then_some(Message::AddWebAllowedAddress),
+                        )),
+                );
+            if !valid {
+                add_row = add_row.push(widget::text::caption(fl!("web-allowed-invalid")));
+            }
+            web_allowed = web_allowed.add(add_row);
+        }
 
         let choose_or_reset = |chosen: bool, choose: Message, reset: Message| {
             widget::row::with_capacity(2)
@@ -917,6 +985,31 @@ impl App {
         }
         if let Some(id) = chosen {
             self.nav.activate(id);
+        }
+    }
+
+    /// Update one profile's own sidebar row in place — its text (the name,
+    /// or a running backup's progress) and icon — without touching any
+    /// other row's entity ID, the sidebar's selection, or keyboard focus in
+    /// it. `rebuild_nav` clears and reinserts every row, including a fresh
+    /// entity ID for each one, which is fine for the profile list or the
+    /// wizard's own presence actually changing, but was until now the only
+    /// way this page had to reflect anything at all — including a password
+    /// keystroke or a progress event arriving every 250ms during a backup,
+    /// which dropped whatever had focus in the sidebar each time.
+    fn refresh_nav_row(&mut self, id: &str) {
+        let Some(profile) = self.config.profile(id) else {
+            return;
+        };
+        let status = self.backup_status(profile);
+        let text = self.nav_row_text(profile, status);
+        let icon = widget::icon::from_name(status.icon());
+        let entity = self.nav.iter().find(|&entity| {
+            matches!(self.nav.data::<NavItem>(entity), Some(NavItem::Profile(p)) if p == id)
+        });
+        if let Some(entity) = entity {
+            self.nav.text_set(entity, text);
+            self.nav.icon_set(entity, icon.into());
         }
     }
 
@@ -2480,6 +2573,7 @@ impl Application for App {
             web_password_input: String::new(),
             web_allowed_address_input: String::new(),
             web_port_input: String::new(),
+            web_password_status: None,
             web_daemon_status: web_daemon::Status::default(),
         };
         app.reload_runs();
@@ -2776,8 +2870,13 @@ impl Application for App {
                     .update(message, &profile);
                 // The sidebar shows whether this backup is running, and its
                 // progress while it is: every change to it is worth a
-                // refresh, not just the ones that finish a run.
-                self.rebuild_nav(None);
+                // refresh, not just the ones that finish a run — but not a
+                // full `rebuild_nav`, which this page's own messages arrive
+                // far too often for (every keystroke, every progress tick).
+                // Anything that actually changes the profile list or the
+                // wizard's presence goes through its own `rebuild_nav` call
+                // elsewhere, once the effect it returns is handled below.
+                self.refresh_nav_row(&id);
                 return self.run_profile_effects(&id, effects);
             }
             Message::Wizard(message) => {
@@ -3036,40 +3135,33 @@ impl Application for App {
                 self.update_web(|web| web.password_enabled = enabled);
                 return self.restart_web_daemon_if_active();
             }
-            Message::WebPasswordInput(text) => self.web_password_input = text,
+            Message::WebPasswordInput(text) => {
+                self.web_password_input = text;
+                self.web_password_status = None;
+            }
+            // Unreachable through the Save button while too short (it is
+            // disabled — see `settings_view`'s `can_save`), but `on_submit`
+            // still fires on Enter; quietly do nothing rather than show a
+            // dialog for what the field's own caption already explains.
             Message::SaveWebPassword => {
-                let password = std::mem::take(&mut self.web_password_input);
-                if password.is_empty() {
+                if !password_long_enough(&self.web_password_input) {
                     return Task::none();
                 }
-                if !password_long_enough(&password) {
-                    self.dialog = Some(Dialog::Info(
-                        fl!("web-password-too-short-title"),
-                        fl!(
-                            "web-password-too-short-body",
-                            minimum = (crate::constants::WEB_PASSWORD_MIN_LENGTH as i64)
-                        ),
-                    ));
-                    return Task::none();
-                }
-                let secret = Secret::new(password);
+                let secret = Secret::new(std::mem::take(&mut self.web_password_input));
                 return Task::perform(
                     async move { crate::keyring::store_web_password(&secret).await },
                     |result| app(Message::WebPasswordSaved(result)),
                 );
             }
             Message::WebPasswordSaved(Ok(())) => {
-                self.dialog = Some(Dialog::Info(
-                    fl!("web-password-saved-title"),
-                    fl!("web-password-saved-body"),
-                ));
+                self.web_password_status = Some(Ok(()));
                 return self.restart_web_daemon_if_active();
             }
             Message::WebPasswordSaved(Err(detail)) => {
-                self.show_error(
-                    &fl!("web-password-failed"),
-                    &EngineError::new(engine::ErrorKind::KeyringUnavailable, detail),
-                );
+                self.web_password_status = Some(Err(EngineError::new(
+                    engine::ErrorKind::KeyringUnavailable,
+                    detail,
+                )));
             }
             Message::WebTokenEnabled(enabled) => {
                 self.update_web(|web| web.token_enabled = enabled);
@@ -3086,9 +3178,13 @@ impl Application for App {
             }
             Message::WebPamEnabled(enabled) => self.update_web(|web| web.pam_enabled = enabled),
             Message::WebAllowedAddressInput(text) => self.web_allowed_address_input = text,
+            // Unreachable through the Add button while invalid (it is
+            // disabled — see `settings_view`'s `valid`), but `on_submit`
+            // still fires on Enter; quietly do nothing rather than save an
+            // entry that could never match anything.
             Message::AddWebAllowedAddress => {
                 let address = self.web_allowed_address_input.trim().to_owned();
-                if !address.is_empty() {
+                if valid_allow_list_entry(&address) {
                     self.web_allowed_address_input.clear();
                     self.update_web(|web| {
                         if !web.allowed_addresses.contains(&address) {
@@ -3107,19 +3203,16 @@ impl Application for App {
                 return self.restart_web_daemon_if_active();
             }
             Message::WebPortInput(text) => self.web_port_input = text,
-            Message::SaveWebPort => match parse_port(&self.web_port_input) {
-                None => {
-                    let text = self.web_port_input.trim().to_owned();
-                    self.show_error(
-                        &fl!("web-port-invalid"),
-                        &EngineError::new(engine::ErrorKind::Internal, text),
-                    );
-                }
-                Some(port) => {
-                    self.web_port_input.clear();
+            // Unreachable through the Save button while invalid (it is
+            // disabled — see `settings_view`'s `port_valid`), but `on_submit`
+            // still fires on Enter; quietly do nothing rather than show a
+            // dialog for what the field's own caption already explains.
+            Message::SaveWebPort => {
+                if let Some(port) = parse_port(&self.web_port_input) {
+                    self.web_port_input = port.to_string();
                     self.update_web(|web| web.port = port);
                 }
-            },
+            }
             Message::ChooseWebTlsCert => {
                 return Task::perform(tasks::pick_file(fl!("web-tls-cert-title")), |path| {
                     app(Message::WebTlsCertChosen(path))
@@ -3160,6 +3253,11 @@ impl Application for App {
                     self.core.window.show_context = true;
                 }
                 if self.context_page == ContextPage::Settings && self.core.window.show_context {
+                    // The field starts holding the port actually in effect,
+                    // not empty behind a placeholder that only looks
+                    // pre-filled — saving without touching it must keep the
+                    // current port, not fail with nothing to explain why.
+                    self.web_port_input = self.config.web.port.to_string();
                     return Self::web_daemon_status_task();
                 }
             }

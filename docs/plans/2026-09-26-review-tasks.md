@@ -2360,6 +2360,28 @@ Compare tab drops to near zero.
 
 ### UI-7. The applet polls every 3 seconds on its UI thread, forever
 
+**Status: Done**, all three parts. `subscription()` now picks a 3-second or
+60-second interval depending on whether the popup is actually open — the
+doc comment already claimed this, but the code never checked. `refresh()`
+runs inside `tokio::task::spawn_blocking` (the applet's own
+`SingleThreadExecutor` is a genuine multi-thread tokio runtime pinned to
+one worker, confirmed by reading its source — `spawn_blocking` runs on
+tokio's separate blocking pool regardless, not that one worker thread),
+delivered back through `Task::perform`/`Message::StatusesLoaded`, the
+exact pattern `Message::Open` already used elsewhere in this same file.
+Also added a `cosmic_config` watch subscription for the profile list
+itself, mirroring the main window's own, so a profile added or removed
+elsewhere refreshes immediately rather than waiting out the now much
+longer idle interval.
+
+**Not verified against a real running applet**: doing so would mean
+touching this machine's own live COSMIC panel session, which earlier
+`stellarshot-applet` work in this same review deliberately avoided for
+the same reason. Confirmed instead by reading the executor's own source
+(not assumed) and matching an already-proven pattern in the same file
+exactly; the plan's own `strace` check is not something this pass ran for
+real.
+
 **Medium · S · Verified**
 
 **Files:** `src/app/applet.rs:32-56,96-107`

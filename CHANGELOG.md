@@ -46,6 +46,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first place, so it was never shown at all. "Remove backup" is now
   styled as the destructive action it is; "Unmount" (never destructive)
   no longer is.
+- **The panel applet no longer polls every profile's status every 3
+  seconds forever, whether its popup is open or not.** It now does that
+  only while the popup is actually open, slows to once a minute
+  otherwise, runs the check itself off the UI thread, and refreshes
+  immediately when a backup is added, removed or changed elsewhere
+  instead of waiting for the next tick.
 
 ## [0.7.0] - 2026-09-27
 

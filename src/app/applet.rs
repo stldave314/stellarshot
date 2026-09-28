@@ -11,17 +11,19 @@
 //! `Cargo.toml`'s comment on the `libcosmic` `single-instance` feature) is
 //! the only thing it hands off rather than doing itself.
 
+use std::any::TypeId;
 use std::process::Command;
 use std::time::Duration;
 
 use cosmic::Element;
 use cosmic::app::{Core, Task};
+use cosmic::cosmic_config;
 use cosmic::iced::window::Id;
 use cosmic::iced::{Alignment, Rectangle, Subscription};
 use cosmic::surface::action::{app_popup, destroy_popup};
 use cosmic::widget::{self, list_column, settings};
 
-use crate::app::config::StellarshotConfig;
+use crate::app::config::{CONFIG_VERSION, StellarshotConfig};
 use crate::debug::UI;
 use crate::error_log;
 use crate::fl;
@@ -30,9 +32,12 @@ use crate::status::{self, Status};
 
 const ID: &str = "io.github.stldave314.Stellarshot.Applet";
 /// How often the applet re-reads every backup's status while its popup is
-/// open. Cheap (a lock probe and a couple of small config reads per
-/// backup), so this can be frequent without it mattering.
+/// actually open and someone might be looking at it.
 const REFRESH: Duration = Duration::from_secs(3);
+/// How often it does the same while the popup is closed: a lock probe and a
+/// config read per backup are each cheap on their own, but there is no
+/// reason to spend them at all when nothing could be showing the result.
+const IDLE_REFRESH: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub struct Applet {
@@ -46,14 +51,21 @@ pub enum Message {
     PopupClosed(Id),
     TogglePopup,
     Refresh,
+    StatusesLoaded(Vec<Status>),
     Open,
     Quit,
     Surface(cosmic::surface::Action<Message>),
 }
 
-fn refresh() -> Vec<Status> {
-    let now = jiff::Timestamp::now().as_second();
-    status::all(&StellarshotConfig::config().profiles, now)
+/// Off the UI thread: reads the config file and every backup's run-state
+/// file, and probes each one's repository lock.
+async fn refresh() -> Vec<Status> {
+    tokio::task::spawn_blocking(|| {
+        let now = jiff::Timestamp::now().as_second();
+        status::all(&StellarshotConfig::config().profiles, now)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Launch (or, with single-instance active, raise) the main window.
@@ -96,10 +108,14 @@ impl cosmic::Application for Applet {
         crate::core::localization::init();
         let applet = Self {
             core,
-            statuses: refresh(),
             ..Default::default()
         };
-        (applet, Task::none())
+        (
+            applet,
+            Task::perform(refresh(), |statuses| {
+                cosmic::Action::App(Message::StatusesLoaded(statuses))
+            }),
+        )
     }
 
     fn on_close_requested(&self, id: Id) -> Option<Message> {
@@ -107,7 +123,25 @@ impl cosmic::Application for Applet {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        cosmic::iced::time::every(REFRESH).map(|_| Message::Refresh)
+        let interval = if self.popup.is_some() {
+            REFRESH
+        } else {
+            IDLE_REFRESH
+        };
+        struct ConfigSubscription;
+        Subscription::batch([
+            cosmic::iced::time::every(interval).map(|_| Message::Refresh),
+            // A profile added, removed or edited elsewhere refreshes right
+            // away rather than waiting for the next tick above, which — now
+            // that the popup being closed slows that tick to a minute — could
+            // otherwise leave the list visibly stale for a while.
+            cosmic_config::config_subscription::<_, StellarshotConfig>(
+                TypeId::of::<ConfigSubscription>(),
+                crate::app::APP_ID.into(),
+                CONFIG_VERSION,
+            )
+            .map(|_| Message::Refresh),
+        ])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -117,7 +151,12 @@ impl cosmic::Application for Applet {
                     self.popup = None;
                 }
             }
-            Message::Refresh => self.statuses = refresh(),
+            Message::Refresh => {
+                return Task::perform(refresh(), |statuses| {
+                    cosmic::Action::App(Message::StatusesLoaded(statuses))
+                });
+            }
+            Message::StatusesLoaded(statuses) => self.statuses = statuses,
             Message::Open => {
                 return Task::perform(open_window(), |()| cosmic::Action::App(Message::Refresh));
             }

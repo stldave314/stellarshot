@@ -2465,6 +2465,34 @@ leaves the list unchanged.
 
 ### UI-11. Consistency and polish
 
+**Status: 3 of 8 done.**
+
+- "Remove backup" is now `destructive`, "Unmount" is now `standard`.
+- The applet's icon bug turned out deeper than described here: it wasn't
+  just reusing one generic warning icon for failed and overdue alike — the
+  cross-process `status::Status` struct (shared with the web interface's
+  own `GET /api/v1/backups`, a documented JSON shape) had no `damaged`
+  field at all, so a damaged repository could never be distinguished from
+  fine in the applet regardless of icon choice. Added `damaged` to
+  `Status` (additive, not a breaking change to that API — `docs/web-
+  interface.md` updated to match) and a `Status::backup_status()` method
+  mirroring `run_state::status`'s own precedence (running, then damage,
+  then a failure, then simply being late) from the flattened booleans the
+  wire format keeps. The panel icon and each row's own icon now use
+  `BackupStatus::icon()` through that, so a failure, an overdue backup and
+  real damage each show their own distinct icon instead of one warning
+  sign that could mean any of the three, or nothing at all.
+- `gethostname()` no longer runs on every render while Settings is open:
+  read once into a new `App::hostname` field at startup, threaded into
+  `web_address` as a parameter instead of read internally (also let two
+  existing tests stop depending on the real machine's actual hostname).
+
+**Not done:** the fake-tabs-from-buttons pattern in `restore.rs`, the
+magic page widths and sizes scattered across ten files, the wizard-cancel
+dialog's missing "keep editing" option, the "restart to apply" caption for
+settings that need one, and moving `event_log::record`/`dejadup::find`'s
+synchronous file I/O off the UI thread.
+
 **Low · S each · Verified**
 
 | Item | Where | Fix |

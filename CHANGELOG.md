@@ -40,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the entire sidebar.** Every backup's own status still updates live, but
   the sidebar's other rows, its selection, and whatever had keyboard focus
   in it are no longer disturbed by an unrelated backup's own updates.
+- **The panel applet now shows a failure, an overdue backup and real
+  damage as three distinct icons**, instead of the same generic warning
+  sign for all three — which damage could never actually reach in the
+  first place, so it was never shown at all. "Remove backup" is now
+  styled as the destructive action it is; "Unmount" (never destructive)
+  no longer is.
 
 ## [0.7.0] - 2026-09-27
 

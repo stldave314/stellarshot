@@ -182,7 +182,8 @@ Every configured backup's current status.
     "running": false,
     "last_success": 1735689600,
     "failed": false,
-    "overdue": false
+    "overdue": false,
+    "damaged": false
   }
 ]
 ```

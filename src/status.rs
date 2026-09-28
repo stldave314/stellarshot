@@ -26,6 +26,28 @@ pub struct Status {
     pub failed: bool,
     /// Significantly late for its schedule; see [`run_state::is_overdue`].
     pub overdue: bool,
+    /// The repository's last check found damage.
+    pub damaged: bool,
+}
+
+impl Status {
+    /// These fields combined into one status, in the same order of
+    /// precedence [`run_state::status`] itself uses: something running
+    /// outranks history that run may be about to change, then damage,
+    /// which is worse than an ordinary failure, then simply being late.
+    pub fn backup_status(&self) -> run_state::BackupStatus {
+        if self.running {
+            run_state::BackupStatus::Running
+        } else if self.damaged {
+            run_state::BackupStatus::Damaged
+        } else if self.failed {
+            run_state::BackupStatus::Failed
+        } else if self.overdue {
+            run_state::BackupStatus::Overdue
+        } else {
+            run_state::BackupStatus::UpToDate
+        }
+    }
 }
 
 /// `profile`'s status right now.
@@ -40,6 +62,7 @@ pub fn of(profile: &Profile, run: &RunState, now: i64) -> Status {
         last_success: run.last_success.max(profile.last_success),
         failed: run.current_failure(profile.last_success).is_some(),
         overdue: run_state::is_overdue(profile, run, now),
+        damaged: run.damaged,
     }
 }
 
@@ -109,5 +132,54 @@ mod tests {
         };
         assert!(of(&backup, &run, 30 * day).overdue, "30 days late");
         assert!(!of(&backup, &run, day).overdue, "1 day is on schedule");
+    }
+
+    #[test]
+    fn damage_outranks_a_failure_which_outranks_being_overdue() {
+        use run_state::BackupStatus;
+
+        let mut backup = profile();
+        backup.schedule = Schedule::Daily;
+        let day = 86_400;
+        let run = RunState {
+            last_success: Some(0),
+            failure: Some(crate::run_state::Failure {
+                time: 200,
+                stage: crate::run_state::Stage::Backup,
+                kind: crate::engine::ErrorKind::Internal,
+                detail: String::new(),
+            }),
+            damaged: true,
+            ..RunState::default()
+        };
+        // Overdue by the schedule, has a recorded failure, and is damaged,
+        // all three at once: damage is what actually shows.
+        let status = of(&backup, &run, 30 * day);
+        assert!(status.failed);
+        assert!(status.overdue);
+        assert!(status.damaged);
+        assert_eq!(status.backup_status(), BackupStatus::Damaged);
+
+        let just_failed = RunState {
+            damaged: false,
+            ..run
+        };
+        assert_eq!(
+            of(&backup, &just_failed, 30 * day).backup_status(),
+            BackupStatus::Failed
+        );
+    }
+
+    #[test]
+    fn running_wins_over_every_other_status() {
+        use run_state::BackupStatus;
+
+        let run = RunState {
+            damaged: true,
+            ..RunState::default()
+        };
+        let mut status = of(&profile(), &run, 1_000_000);
+        status.running = true;
+        assert_eq!(status.backup_status(), BackupStatus::Running);
     }
 }

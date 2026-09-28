@@ -1001,7 +1001,7 @@ impl RestorePage {
                     widget::button::standard(fl!("mount-open-folder"))
                         .on_press(Message::OpenMountedFolder),
                 )
-                .push(widget::button::destructive(fl!("unmount")).on_press(Message::Unmount))
+                .push(widget::button::standard(fl!("unmount")).on_press(Message::Unmount))
                 .into(),
             None => widget::button::standard(fl!("restore-mount"))
                 .on_press(Message::Mount)

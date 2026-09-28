@@ -89,6 +89,10 @@ pub struct App {
     /// field instead of a dialog. Cleared as soon as the field is edited
     /// again.
     web_password_status: Option<Result<(), EngineError>>,
+    /// This machine's mDNS name, for the web interface's LAN address. Read
+    /// once at startup rather than on every render: a real syscall, however
+    /// cheap, that a view function has no business repeating every tick.
+    hostname: String,
     /// Whether the daemon is running, for Settings' status indicator.
     /// Queried fresh each time Settings is opened, and after every
     /// Start/Stop/Restart: nothing pushes a live update the rest of the
@@ -561,14 +565,18 @@ impl App {
                     .control(field)
             })
             .add_maybe(
-                web_address(self.config.web.scope, self.config.web.port).map(|url| {
-                    let row: Element<'_, Message> = widget::row::with_capacity(2)
-                        .spacing(spacing.space_xxs)
-                        .push(widget::text::body(fl!("web-address-label")))
-                        .push(widget::button::link(url.clone()).on_press(Message::LaunchUrl(url)))
-                        .into();
-                    row
-                }),
+                web_address(self.config.web.scope, self.config.web.port, &self.hostname).map(
+                    |url| {
+                        let row: Element<'_, Message> = widget::row::with_capacity(2)
+                            .spacing(spacing.space_xxs)
+                            .push(widget::text::body(fl!("web-address-label")))
+                            .push(
+                                widget::button::link(url.clone()).on_press(Message::LaunchUrl(url)),
+                            )
+                            .into();
+                        row
+                    },
+                ),
             )
             .add(
                 widget::settings::item::builder(fl!("web-auth-password"))
@@ -2417,14 +2425,11 @@ fn password_long_enough(password: &str) -> bool {
 /// (`.local`, resolved by `avahi`/`systemd-resolved` on the same network)
 /// rather than an actual IP address, since a machine can have several and the
 /// address alone would not say which one to use.
-fn web_address(scope: NetworkScope, port: u16) -> Option<String> {
+fn web_address(scope: NetworkScope, port: u16, hostname: &str) -> Option<String> {
     match scope {
         NetworkScope::Off => None,
         NetworkScope::Localhost => Some(format!("https://127.0.0.1:{port}")),
-        NetworkScope::Lan => Some(format!(
-            "https://{}.local:{port}",
-            gethostname::gethostname().to_string_lossy(),
-        )),
+        NetworkScope::Lan => Some(format!("https://{hostname}.local:{port}")),
     }
 }
 
@@ -2587,6 +2592,7 @@ impl Application for App {
             web_allowed_address_input: String::new(),
             web_port_input: String::new(),
             web_password_status: None,
+            hostname: gethostname::gethostname().to_string_lossy().into_owned(),
             web_daemon_status: web_daemon::Status::default(),
         };
         app.reload_runs();
@@ -2700,7 +2706,7 @@ impl Application for App {
             Dialog::Remove { name, .. } => widget::dialog()
                 .title(fl!("remove-title", name = name.clone()))
                 .body(fl!("remove-body"))
-                .primary_action(widget::button::suggested(fl!("remove")).on_press_maybe(confirm))
+                .primary_action(widget::button::destructive(fl!("remove")).on_press_maybe(confirm))
                 .secondary_action(cancel),
             Dialog::DeleteAll { name, typed, .. } => widget::dialog()
                 .title(fl!("delete-title", name = name.clone()))
@@ -3448,28 +3454,29 @@ mod tests {
 
     #[test]
     fn the_web_interface_off_has_no_address_to_show() {
-        assert_eq!(web_address(NetworkScope::Off, 8737), None);
+        assert_eq!(web_address(NetworkScope::Off, 8737, "host"), None);
     }
 
     #[test]
     fn localhost_scope_points_at_the_loopback_address() {
         assert_eq!(
-            web_address(NetworkScope::Localhost, 8737),
+            web_address(NetworkScope::Localhost, 8737, "host"),
             Some("https://127.0.0.1:8737".to_owned())
         );
     }
 
     #[test]
     fn lan_scope_points_at_this_machine_s_mdns_name() {
-        let url = web_address(NetworkScope::Lan, 8737).unwrap();
-        assert!(url.starts_with("https://"));
-        assert!(url.ends_with(".local:8737"));
+        assert_eq!(
+            web_address(NetworkScope::Lan, 8737, "my-machine"),
+            Some("https://my-machine.local:8737".to_owned())
+        );
     }
 
     #[test]
     fn a_chosen_port_is_reflected_in_the_shown_address() {
         assert_eq!(
-            web_address(NetworkScope::Localhost, 9000),
+            web_address(NetworkScope::Localhost, 9000, "host"),
             Some("https://127.0.0.1:9000".to_owned())
         );
     }

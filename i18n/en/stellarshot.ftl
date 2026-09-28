@@ -599,7 +599,11 @@ web-token-generate-button = Generate a new token…
 web-token-exists = A token has been generated. Generating another replaces it.
 web-token-none = No token has been generated yet.
 web-token-title = New API token
-web-token-body = { $token }
+web-token-body = Copy this token now — it will not be shown again.
+web-token-copy = Copy
+web-token-regenerate-title = Replace the current token?
+web-token-regenerate-body = Anything already using the current token will stop working the moment a new one is generated.
+web-token-regenerate-confirm = Regenerate
 
     This is shown only once. Store it somewhere safe: generating another token replaces this one.
 web-auth-pam = This computer's own sign-in

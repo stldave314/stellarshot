@@ -620,7 +620,11 @@ web-token-generate-button = Generera en ny token…
 web-token-exists = En token har genererats. Att generera en till ersätter den.
 web-token-none = Ingen token har genererats än.
 web-token-title = Ny API-token
-web-token-body = { $token }
+web-token-body = Kopiera den här token nu — den visas inte igen.
+web-token-copy = Kopiera
+web-token-regenerate-title = Ersätta den nuvarande token?
+web-token-regenerate-body = Allt som redan använder den nuvarande token slutar fungera så snart en ny genereras.
+web-token-regenerate-confirm = Generera igen
 
     Detta visas bara en gång. Förvara den säkert: att generera en till token ersätter den här.
 web-auth-pam = Den här datorns egna inloggning

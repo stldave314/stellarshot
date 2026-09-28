@@ -2430,6 +2430,21 @@ already exists.
 
 ### UI-10. Allow-list entries and the port are not validated
 
+**Status: Done, though not exactly as scoped here.** Landed while fixing
+this same symptom reported directly (a bad allow-list entry locking out
+the person who added it, an empty-Details port error) rather than found
+independently through this checklist. `web::valid_allow_list_entry` is the
+one shared parser both the UI and `is_allowed`'s own matching now agree on
+(a unit test confirms it accepts exactly what `matches` accepts and
+rejects exactly what it does not) — close to, but not literally, the
+`web::parse_allow_entry(&str) -> Result<IpNet, _>` this section names,
+since a plain address (not a range) is also a valid entry and does not
+parse as `IpNet`. Both the port and the allow-list field now validate live
+and disable Save/Add while invalid rather than showing `web-port-invalid`
+as a dialog as suggested here — an inline caption under the field instead,
+following direct instruction that dialogs hiding the Settings panel were
+themselves part of the problem, not just the validation gap.
+
 **Medium · S · Verified**
 
 **Files:** `src/app.rs:2791-2816`, `src/web.rs:205-215`

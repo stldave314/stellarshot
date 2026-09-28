@@ -115,6 +115,7 @@ pub enum Message {
     ToggleContextPage(ContextPage),
     CloseContextDrawer,
     LaunchUrl(String),
+    CopyToClipboard(String),
     AppTheme(usize),
     SystemThemeModeChange,
     /// Settings changed on disk, for example from another window.
@@ -212,6 +213,12 @@ pub enum Dialog {
     Error(String),
     /// Something finished, and here is what happened.
     Info(String, String),
+    /// A freshly generated API token, shown once, copyable from here since
+    /// it can never be shown again after this.
+    Token(String),
+    /// About to replace the web interface's current API token: anything
+    /// still using it will stop working the moment this is confirmed.
+    RegenerateToken,
     /// Forget a profile; its data stays.
     Remove { id: String, name: String },
     /// Delete a profile's repository and everything in it.
@@ -2102,9 +2109,15 @@ impl App {
                     return Task::none();
                 }
                 match dialog {
-                    Dialog::Error(_) | Dialog::Info(..) => {
+                    Dialog::Error(_) | Dialog::Info(..) | Dialog::Token(_) => {
                         self.dialog = None;
                         Task::none()
+                    }
+                    Dialog::RegenerateToken => {
+                        let token = crate::web_token::generate();
+                        self.update_web(|web| web.token_hash = Some(token.hash));
+                        self.dialog = Some(Dialog::Token(token.raw));
+                        self.restart_web_daemon_if_active()
                     }
                     Dialog::Remove { id, .. } => {
                         self.dialog = None;
@@ -2660,6 +2673,30 @@ impl Application for App {
                     widget::button::suggested(fl!("ok"))
                         .on_press(Message::Dialog(DialogMessage::Close)),
                 ),
+            Dialog::Token(token) => widget::dialog()
+                .title(fl!("web-token-title"))
+                .body(fl!("web-token-body"))
+                .control(
+                    widget::row::with_capacity(2)
+                        .spacing(theme::active().cosmic().spacing.space_xs)
+                        .push(widget::text_input("", token.as_str()).width(Length::Fill))
+                        .push(
+                            widget::button::standard(fl!("web-token-copy"))
+                                .on_press(Message::CopyToClipboard(token.clone())),
+                        ),
+                )
+                .primary_action(
+                    widget::button::suggested(fl!("ok"))
+                        .on_press(Message::Dialog(DialogMessage::Close)),
+                ),
+            Dialog::RegenerateToken => widget::dialog()
+                .title(fl!("web-token-regenerate-title"))
+                .body(fl!("web-token-regenerate-body"))
+                .primary_action(
+                    widget::button::destructive(fl!("web-token-regenerate-confirm"))
+                        .on_press_maybe(confirm),
+                )
+                .secondary_action(cancel),
             Dialog::Remove { name, .. } => widget::dialog()
                 .title(fl!("remove-title", name = name.clone()))
                 .body(fl!("remove-body"))
@@ -3167,14 +3204,19 @@ impl Application for App {
                 self.update_web(|web| web.token_enabled = enabled);
                 return self.restart_web_daemon_if_active();
             }
+            // A token already in use is asked about first: generating a new
+            // one invalidates it immediately, breaking whatever already
+            // relies on it with no warning. Nothing to lose the first time,
+            // so that case skips straight to generating one.
             Message::GenerateWebToken => {
-                let token = crate::web_token::generate();
-                self.update_web(|web| web.token_hash = Some(token.hash));
-                self.dialog = Some(Dialog::Info(
-                    fl!("web-token-title"),
-                    fl!("web-token-body", token = token.raw),
-                ));
-                return self.restart_web_daemon_if_active();
+                if self.config.web.token_hash.is_some() {
+                    self.dialog = Some(Dialog::RegenerateToken);
+                } else {
+                    let token = crate::web_token::generate();
+                    self.update_web(|web| web.token_hash = Some(token.hash));
+                    self.dialog = Some(Dialog::Token(token.raw));
+                    return self.restart_web_daemon_if_active();
+                }
             }
             Message::WebPamEnabled(enabled) => self.update_web(|web| web.pam_enabled = enabled),
             Message::WebAllowedAddressInput(text) => self.web_allowed_address_input = text,
@@ -3285,6 +3327,7 @@ impl Application for App {
                     error_log!(UI, "failed to open {url:?}: {err}");
                 }
             }
+            Message::CopyToClipboard(text) => return cosmic::iced::clipboard::write(text),
             Message::Key(modifiers, key) => {
                 for (key_bind, action) in &self.key_binds {
                     if key_bind.matches(modifiers, &key, None) {
@@ -3476,5 +3519,7 @@ mod tests {
             .can_confirm()
         );
         assert!(Dialog::Quit.can_confirm());
+        assert!(Dialog::Token("abc123".into()).can_confirm());
+        assert!(Dialog::RegenerateToken.can_confirm());
     }
 }

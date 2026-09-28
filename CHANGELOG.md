@@ -15,6 +15,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on disk, the same as the setup wizard's own live estimate, so it does not
   account for what is already stored or how long an actual backup would
   take.
+- **A generated API token can now be copied with one click**, and
+  generating a new one asks first if a token is already in use — it stops
+  working the moment a new one exists, which used to happen with no
+  warning.
+
+### Changed
+
+- **The web interface's password, port and allow-list fields no longer
+  pop up full-screen dialogs for problems the field itself can explain.**
+  The port field now starts holding its real current value instead of
+  only looking pre-filled, validates as it is typed, and disables Save
+  with an explanation underneath instead of failing with an empty error.
+  The shared password shows "X of 12 characters" live and disables Save
+  until it is long enough. The allow-list's "Add" field now checks that
+  what was typed could ever match an address before it can be saved — a
+  typo or the wrong format used to be accepted silently and could lock
+  out whoever had just added it.
+- **The web interface's address in Settings is now a clickable link.**
+
+### Fixed
+
+- **A password keystroke or a running backup's progress no longer rebuilds
+  the entire sidebar.** Every backup's own status still updates live, but
+  the sidebar's other rows, its selection, and whatever had keyboard focus
+  in it are no longer disturbed by an unrelated backup's own updates.
 
 ## [0.7.0] - 2026-09-27
 

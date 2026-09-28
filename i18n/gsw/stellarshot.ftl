@@ -620,7 +620,11 @@ web-token-generate-button = Neus Token erzeuge…
 web-token-exists = Es Token isch scho erzeugt worde. Es wiiters ersetzt s.
 web-token-none = Es isch no kes Token erzeugt worde.
 web-token-title = Neus API-Token
-web-token-body = { $token }
+web-token-body = Kopier das Token jetzt — s wird nid nomol aazeigt.
+web-token-copy = Kopiere
+web-token-regenerate-title = S aktuelle Token ersetze?
+web-token-regenerate-body = Alles, wo scho s aktuelle Token bruucht, hört uf funktioniere, sobald es neus erzeugt wird.
+web-token-regenerate-confirm = Erneuere
 
     Das wird nur eimal aazeigt. Bewahr s sicher uf: es wiiters erzeugts Token ersetzt das da.
 web-auth-pam = D eigeti Aamäldig vo dääm Computer

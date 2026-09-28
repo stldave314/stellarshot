@@ -55,6 +55,13 @@ pub const APP_ID: &str = "io.github.stldave314.Stellarshot";
 /// How often relative times ("2 hours ago") are refreshed.
 const CLOCK_TICK: Duration = Duration::from_secs(30);
 
+/// The "type the name to confirm" field in the "Delete everything" dialog,
+/// focused as soon as the dialog opens rather than left for a mouse click or
+/// a Tab press to reach.
+fn delete_all_input_id() -> widget::Id {
+    widget::Id::new("delete-all-name")
+}
+
 pub struct App {
     core: Core,
     nav: nav_bar::Model,
@@ -1680,6 +1687,9 @@ impl App {
                         ))
                     })
                 }
+                profile::Effect::FocusUnlock => {
+                    cosmic::iced::widget::operation::focus(profile::unlock_input_id())
+                }
                 profile::Effect::Open { secret, remember } => {
                     let used = secret.clone();
                     let remember_task = if remember {
@@ -2018,7 +2028,7 @@ impl App {
                         typed: String::new(),
                         busy: false,
                     });
-                    Task::none()
+                    cosmic::iced::widget::operation::focus(delete_all_input_id())
                 }
             };
             tasks.push(task);
@@ -2531,6 +2541,7 @@ impl Application for App {
         vec![
             widget::button::icon(widget::icon::from_name("preferences-system-symbolic"))
                 .tooltip(fl!("settings"))
+                .name(fl!("settings"))
                 .on_press(Message::ToggleContextPage(ContextPage::Settings))
                 .into(),
         ]
@@ -2713,7 +2724,9 @@ impl Application for App {
                 .body(fl!("delete-body", name = name.clone()))
                 .control(
                     widget::text_input(name.as_str(), typed.as_str())
-                        .on_input(|text| Message::Dialog(DialogMessage::Typed(text))),
+                        .id(delete_all_input_id())
+                        .on_input(|text| Message::Dialog(DialogMessage::Typed(text)))
+                        .on_submit(|_| Message::Dialog(DialogMessage::Confirm)),
                 )
                 .primary_action(widget::button::destructive(fl!("delete")).on_press_maybe(confirm))
                 .secondary_action(cancel),

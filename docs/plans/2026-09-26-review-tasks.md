@@ -2404,6 +2404,46 @@ least 30 seconds.
 
 ### UI-8. Accessibility and keyboard focus
 
+**Status: Mostly done, but not against the file:line references above —
+this section's line numbers had drifted well past the current code, so
+each item was re-found from scratch with a targeted search rather than
+trusted.**
+
+- Every icon button already had both `.tooltip()` and `.name()` except
+  one: the wizard's folder-tree expand/collapse toggle
+  (`wizard/browse.rs`), which had neither. Fixed, with a new interpolated
+  `fl!` key naming the folder.
+- All 5 checkboxes across the app were missing an accessible name (only
+  one, the browse tree's "partly included" mark, had one at all, and only
+  in that one state). Fixed all 5: the browse tree's include/exclude mark
+  now has one in every state (not just partial), the hook-enabled toggle
+  has a visible "Enabled" label, and the three restore-page selection
+  checkboxes (browse, missing-files, diff) each get the row's own
+  file/folder name as an **accessible-only** name via `.name(...)` — not
+  `.label(...)`, which would have shown that same name a second time,
+  visibly, right next to the sibling text these rows already show it in.
+- The header's Settings button had a tooltip but no `.name()` — libcosmic
+  only the latter sets the accessible name. Fixed.
+- The "Delete everything" dialog's confirmation field now focuses itself
+  the instant the dialog opens (a new `widget::Id` shared between the
+  dialog's own effect handler and its view) and confirms on Enter, which
+  it never did before either.
+- The unlock field focuses itself too, but only once the keyring lookup
+  actually resolves to "nothing remembered" — focusing it any earlier,
+  right when the page opens, would steal focus into a field that might
+  disappear immediately if a saved password turns out to unlock the
+  backup automatically. A new one-shot flag (mirroring the existing
+  pattern for the keyring check and the history load on the same struct)
+  keeps it from refocusing every time the page re-activates.
+
+**Not done:** the `PasswordCommand` and `ChangePassword` dialogs' own
+input fields still are not focused on open, even though the same fix
+would apply directly. Tab order was not audited, and none of this was
+verified with Orca or `accerciser` as the plan asks — that needs a real
+screen reader session this sandbox cannot provide; verified instead by
+reading exactly what `.name()`/`.label()`/`.id()`/`focus()` each do in
+libcosmic's own source rather than assuming from their names alone.
+
 **Medium · M · Verified**
 
 **Files:**

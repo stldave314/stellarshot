@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   otherwise, runs the check itself off the UI thread, and refreshes
   immediately when a backup is added, removed or changed elsewhere
   instead of waiting for the next tick.
+- **Accessibility: every icon button, checkbox and the two fields that
+  most needed it now work properly with a screen reader or the keyboard
+  alone.** The wizard's folder-tree expand/collapse button, its
+  include/exclude checkbox in every state (previously only when partly
+  included), the hooks list's enabled toggle, and the restore page's
+  three selection checkboxes all now announce something meaningful
+  instead of nothing. The "Delete everything" confirmation field and the
+  unlock field both focus themselves automatically and confirm on Enter,
+  instead of needing a mouse click or several Tab presses first.
 
 ## [0.7.0] - 2026-09-27
 

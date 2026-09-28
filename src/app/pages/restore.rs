@@ -1037,7 +1037,11 @@ impl RestorePage {
         widget::row::with_capacity(6)
             .spacing(spacing.space_s)
             .align_y(Alignment::Center)
-            .push(widget::checkbox(checked).on_toggle(move |on| Message::Toggle(path.clone(), on)))
+            .push(
+                widget::checkbox(checked)
+                    .name(entry.name.clone())
+                    .on_toggle(move |on| Message::Toggle(path.clone(), on)),
+            )
             .push(widget::icon::from_name(icon).size(16))
             .push(widget::container(name).width(Length::Fill))
             .push(widget::text::caption(detail))
@@ -1140,6 +1144,7 @@ impl RestorePage {
                             .align_y(Alignment::Center)
                             .push(
                                 widget::checkbox(checked)
+                                    .name(format::path(&entry.path))
                                     .on_toggle(move |on| Message::ToggleMissing(path.clone(), on)),
                             )
                             .push(widget::text::body(format::path(&entry.path)).width(Length::Fill))
@@ -1244,6 +1249,7 @@ impl RestorePage {
             let checked = self.diff_selection.contains(&entry.path);
             row = row.push(
                 widget::checkbox(checked)
+                    .name(format::path(label))
                     .on_toggle(move |on| Message::ToggleDiff(path.clone(), on)),
             );
         }

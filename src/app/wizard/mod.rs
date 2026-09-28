@@ -1438,6 +1438,7 @@ impl Wizard {
                             .align_y(Alignment::Center)
                             .push(
                                 widget::checkbox(hook.enabled)
+                                    .label(fl!("hook-enabled"))
                                     .on_toggle(move |on| Message::ToggleHook(index, on)),
                             )
                             .push(

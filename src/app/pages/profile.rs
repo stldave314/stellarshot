@@ -28,6 +28,12 @@ use crate::runner::Event;
 /// How many snapshots the page shows before "Show all".
 const RECENT: usize = 5;
 
+/// The unlock card's password field, shared with `app.rs` so an effect
+/// there can focus the same field this page's own view sets it on.
+pub fn unlock_input_id() -> widget::Id {
+    widget::Id::new("unlock-password")
+}
+
 /// What a write in a child process is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Work {
@@ -107,6 +113,11 @@ pub struct ProfileState {
     unlock_password: String,
     unlock_remember: bool,
     unlocking: bool,
+    /// Whether the unlock field has already been focused once, the first
+    /// time this page activates while still locked — a keyboard-only user
+    /// landing here otherwise has to Tab or click into it themselves before
+    /// they can type a password at all.
+    unlock_focused: bool,
     snapshots: Option<Vec<SnapshotSummary>>,
     work: Option<Running>,
     show_all: bool,
@@ -173,6 +184,9 @@ pub enum Message {
 /// What the page needs the application to do.
 pub enum Effect {
     LoadKeyring,
+    /// Move keyboard focus into the unlock field: no password was found in
+    /// the keyring, so the card asking for one is about to show.
+    FocusUnlock,
     /// Open the repository with this password; remember it if asked.
     Open {
         secret: Secret,
@@ -236,6 +250,7 @@ impl Default for ProfileState {
             unlock_password: String::new(),
             unlock_remember: true,
             unlocking: false,
+            unlock_focused: false,
             snapshots: None,
             work: None,
             show_all: false,
@@ -369,7 +384,19 @@ impl ProfileState {
                     remember: false,
                 }]
             }
-            Message::KeyringLoaded(Ok(None)) => Vec::new(),
+            // No password remembered: the unlock card is about to show, so
+            // this is the first moment it is actually worth focusing —
+            // doing it any earlier, before the keyring lookup resolves,
+            // would steal focus into a field that might disappear right
+            // away if a password was found after all.
+            Message::KeyringLoaded(Ok(None)) => {
+                if self.unlock_focused {
+                    Vec::new()
+                } else {
+                    self.unlock_focused = true;
+                    vec![Effect::FocusUnlock]
+                }
+            }
             Message::KeyringLoaded(Err(error)) => {
                 vec![Effect::ShowError(fl!("password-command-failed"), error)]
             }
@@ -934,6 +961,7 @@ impl ProfileState {
                 .push(widget::text::title4(fl!("unlock-title")))
                 .push(
                     widget::secure_input(fl!("password"), &self.unlock_password, None, true)
+                        .id(unlock_input_id())
                         .on_input(Message::UnlockPassword)
                         .on_submit(|_| Message::Unlock),
                 )
@@ -1327,6 +1355,31 @@ mod tests {
             !effects.iter().any(|e| matches!(e, Effect::LoadKeyring)),
             "the keyring is not asked for twice"
         );
+    }
+
+    #[test]
+    fn the_unlock_field_is_focused_once_when_no_password_is_remembered() {
+        let mut state = ProfileState::new();
+        let effects = state.update(Message::KeyringLoaded(Ok(None)), &profile());
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::FocusUnlock)),
+            "did not focus the unlock field"
+        );
+        let effects = state.update(Message::KeyringLoaded(Ok(None)), &profile());
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FocusUnlock)),
+            "the unlock field is not refocused every time the keyring is re-checked"
+        );
+    }
+
+    #[test]
+    fn a_remembered_password_never_needs_the_unlock_field_focused() {
+        let mut state = ProfileState::new();
+        let effects = state.update(
+            Message::KeyringLoaded(Ok(Some(Secret::new("pw")))),
+            &profile(),
+        );
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FocusUnlock)));
     }
 
     #[test]

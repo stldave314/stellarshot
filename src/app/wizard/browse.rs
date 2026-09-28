@@ -276,6 +276,11 @@ impl Browse {
             .padding([0.0, 0.0, 0.0, indent(depth)]);
         if node.is_dir {
             let expanded = node.children.is_some();
+            let label = if expanded {
+                fl!("browse-collapse-folder", name = name.clone())
+            } else {
+                fl!("browse-expand-folder", name = name.clone())
+            };
             row = row.push(
                 widget::button::icon(widget::icon::from_name(if expanded {
                     "go-down-symbolic"
@@ -283,6 +288,8 @@ impl Browse {
                     "go-next-symbolic"
                 }))
                 .padding(spacing.space_xxxs)
+                .tooltip(label.clone())
+                .name(label)
                 .on_press(Message::Toggle(path.to_path_buf())),
             );
         } else {
@@ -309,10 +316,11 @@ impl Browse {
         // so every row in the tree reads the same way at a glance.
         if node.is_dir {
             let checked = mark != Mark::Excluded;
-            let mut checkbox = widget::checkbox(checked);
-            if mark == Mark::Partial {
-                checkbox = checkbox.label(fl!("browse-mark-partial"));
-            }
+            let mut checkbox = widget::checkbox(checked).label(match mark {
+                Mark::Included => fl!("browse-mark-included"),
+                Mark::Excluded => fl!("browse-mark-excluded"),
+                Mark::Partial => fl!("browse-mark-partial"),
+            });
             if !under_excluded_ancestor {
                 let owned = path.to_path_buf();
                 checkbox = checkbox.on_toggle(move |on| Message::Mark(owned.clone(), !on));

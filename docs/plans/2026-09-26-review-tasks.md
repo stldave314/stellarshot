@@ -1004,8 +1004,9 @@ does not contain `LEAKME`. Live: `curl -skI … | grep -iE 'nosniff|no-store|www
 
 ### WEB-7. TLS configuration hardening
 
-**Status: The crypto-provider fix, IP SANs and validity period are done;
-the Settings UI and the expiry warning are not.**
+**Status: The crypto-provider fix, IP SANs, validity period and the two
+standing TLS-handshake tests are done; the Settings UI and the expiry
+warning are not.**
 `rustls::crypto::aws_lc_rs::default_provider().install_default()` runs at
 the top of `web::main`; `rcgen` is now
 `default-features = false, features = ["aws_lc_rs", "pem"]`, so `ring` is
@@ -1021,15 +1022,25 @@ an IP, so no `SanType` construction by hand), and is valid for
 (SHA-256, colon-hex, matching the `curl --pinnedpubkey`/browser-viewer
 format), tested for stability and for differing between two certificates.
 Not done: showing that fingerprint in Settings, a "Regenerate
-certificate" button, warning in the log when a *user-supplied* certificate
-has expired (parsing an arbitrary certificate's own validity window
-would need a real X.509 parser as a new dependency, which felt like more
-than this one warning justified tonight), and the two items the plan
-asks to turn into standing tests (`--tls-max 1.1` and plain `http://`
-both failing) — all four need either a real running daemon/browser or a
-parser this session did not add. The `openssl s_client`/`subjectAltName`
-proof is likewise not run tonight, for the same "needs a real running
-daemon" reason as WEB-2/WEB-9's own status notes.
+certificate" button, and warning in the log when a *user-supplied*
+certificate has expired (parsing an arbitrary certificate's own validity
+window would need a real X.509 parser as a new dependency, which felt like
+more than this one warning justified tonight) — both need either a live
+Settings UI or a parser this session did not add.
+
+The two items the plan asks to turn into standing tests turned out not to
+need a live daemon at all: `a_real_handshake_capped_below_tls_1_2_never_completes`
+and `plain_http_gets_no_response_on_the_tls_only_port` (`src/web.rs`) spawn
+the exact same real, self-signed, `axum_server`/`RustlsConfig` test server
+`a_real_curl_request_over_tls_reaches_the_health_route` already did (now
+shared as `spawn_real_tls`), then run a real `curl --tls-max 1.1` and a real
+plain `curl http://` against it — both confirmed to fail fast (`000`, no
+response at all) rather than merely typechecking; run directly with
+`--nocapture` before trusting them, not just included in a passing suite.
+The `openssl s_client`/`subjectAltName` proof is still not run tonight, for
+the same "needs a real running daemon" reason as WEB-2/WEB-9's own status
+notes — showing a SAN in a handshake response is a different shape of check
+than "does the handshake even complete."
 
 **Low · S · Verified**
 

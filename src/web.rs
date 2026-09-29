@@ -1816,15 +1816,13 @@ mod tests {
         );
     }
 
-    /// Proves TLS is really terminated by [`serve`]'s own server, not merely
-    /// buildable in isolation (already proven in `web_tls`'s own tests): a
-    /// real `curl` handshake, over a real socket, through the exact function
-    /// [`main`] calls. A clean `401` (rather than `curl` failing the
-    /// handshake, or a garbled response as if talking plain HTTP to a TLS
-    /// port) is only possible if the certificate really was presented and
-    /// accepted.
-    #[tokio::test]
-    async fn a_real_curl_request_over_tls_reaches_the_health_route() {
+    /// A real, self-signed-cert TLS server serving [`app`] with no auth
+    /// method enabled, through the exact `axum_server`/`RustlsConfig` path
+    /// [`serve`] uses — not TLS built and proven in isolation, the way
+    /// `web_tls`'s own tests already do. The returned `TempDir` must
+    /// outlive the caller's own use of `addr`: it holds the certificate and
+    /// key files `tls` was loaded from.
+    async fn spawn_real_tls() -> (SocketAddr, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
         let (cert, key) = crate::web_tls::self_signed_paths(dir.path()).unwrap();
         let tls = crate::web_tls::config(Some((&cert, &key))).await.unwrap();
@@ -1846,7 +1844,19 @@ mod tests {
                 .into_make_service_with_connect_info::<SocketAddr>(),
             ),
         );
+        (addr, dir)
+    }
 
+    /// Proves TLS is really terminated by [`serve`]'s own server, not merely
+    /// buildable in isolation (already proven in `web_tls`'s own tests): a
+    /// real `curl` handshake, over a real socket, through the exact function
+    /// [`main`] calls. A clean `401` (rather than `curl` failing the
+    /// handshake, or a garbled response as if talking plain HTTP to a TLS
+    /// port) is only possible if the certificate really was presented and
+    /// accepted.
+    #[tokio::test]
+    async fn a_real_curl_request_over_tls_reaches_the_health_route() {
+        let (addr, _dir) = spawn_real_tls().await;
         let output = tokio::process::Command::new("curl")
             .args([
                 "--silent",
@@ -1865,6 +1875,67 @@ mod tests {
             code, "401",
             "no auth method is enabled, so a real handshake must still end in a clean 401, \
              not curl failing the handshake or a garbled response"
+        );
+    }
+
+    /// Nothing in this project's own code sets a minimum TLS version —
+    /// rustls itself has no code path for anything older than 1.2, so this
+    /// proves that holds for a real handshake against this server, not just
+    /// that the library refuses old versions in isolation (WEB-7 in the
+    /// review plan).
+    #[tokio::test]
+    async fn a_real_handshake_capped_below_tls_1_2_never_completes() {
+        let (addr, _dir) = spawn_real_tls().await;
+        let output = tokio::process::Command::new("curl")
+            .args([
+                "--silent",
+                "--insecure",
+                "--tls-max",
+                "1.1",
+                "--max-time",
+                "5",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+            ])
+            .arg(format!("https://{addr}/api/v1/health"))
+            .output()
+            .await
+            .expect("curl must be installed");
+        let code = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_eq!(
+            code, "000",
+            "a handshake capped at TLS 1.1 must never complete: {code}"
+        );
+    }
+
+    /// This port speaks TLS only — `serve` never binds a second, plain
+    /// listener. A plain HTTP request must get no valid response at all,
+    /// not the allow-list's or auth's own rejection (which would mean the
+    /// request reached the application layer without ever being decrypted;
+    /// WEB-7 in the review plan).
+    #[tokio::test]
+    async fn plain_http_gets_no_response_on_the_tls_only_port() {
+        let (addr, _dir) = spawn_real_tls().await;
+        let output = tokio::process::Command::new("curl")
+            .args([
+                "--silent",
+                "--max-time",
+                "5",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+            ])
+            .arg(format!("http://{addr}/api/v1/health"))
+            .output()
+            .await
+            .expect("curl must be installed");
+        let code = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert_eq!(
+            code, "000",
+            "a plain HTTP request to the TLS-only port must never get a valid response: {code}"
         );
     }
 }

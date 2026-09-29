@@ -15,6 +15,7 @@ use std::process::Command;
 
 use atomicwrites::{AllowOverwrite, AtomicFile};
 
+use crate::constants::{SCHEDULED_UNIT_NICE, SCHEDULED_UNIT_RANDOMIZED_DELAY};
 use crate::debug::SCHED;
 use crate::profile::{Destination, Profile, Schedule, valid_id};
 use crate::{debug_log, error_log};
@@ -91,7 +92,7 @@ pub fn service_text(executable: &Path, id: &str) -> Option<String> {
          [Service]\n\
          Type=oneshot\n\
          ExecStart={exec} --scheduled {id}\n\
-         Nice=10\n\
+         Nice={SCHEDULED_UNIT_NICE}\n\
          IOSchedulingClass=idle\n"
     ))
 }
@@ -101,6 +102,7 @@ pub fn timer_text(id: &str, schedule: Schedule) -> Option<String> {
         return None;
     }
     let calendar = on_calendar(schedule)?;
+    let delay = SCHEDULED_UNIT_RANDOMIZED_DELAY.as_secs();
     Some(format!(
         "# Written by Stellarshot; changes are overwritten.\n\
          [Unit]\n\
@@ -109,7 +111,7 @@ pub fn timer_text(id: &str, schedule: Schedule) -> Option<String> {
          [Timer]\n\
          OnCalendar={calendar}\n\
          Persistent=true\n\
-         RandomizedDelaySec=10min\n\
+         RandomizedDelaySec={delay}\n\
          \n\
          [Install]\n\
          WantedBy=timers.target\n"

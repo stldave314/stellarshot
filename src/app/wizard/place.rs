@@ -15,6 +15,7 @@ use cosmic::iced::Length;
 use cosmic::{Element, theme, widget};
 
 use crate::app::format;
+use crate::constants::SSH_DEFAULT_PORT as SSH_PORT;
 use crate::drives::Drive;
 use crate::engine::{EngineError, Probe};
 use crate::fl;
@@ -30,9 +31,6 @@ pub enum Kind {
     Remote,
     Rest,
 }
-
-/// Default SSH port.
-const SSH_PORT: u16 = 22;
 
 /// The machine's name, used for default folder names so two computers
 /// backing up to the same drive do not collide.

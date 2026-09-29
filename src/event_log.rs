@@ -15,15 +15,12 @@ use serde::{Deserialize, Serialize};
 use crate::app::APP_ID;
 use crate::app::config::CONFIG_VERSION;
 use crate::app::{errors, format};
+use crate::constants::EVENT_LOG_CAPACITY;
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind};
 use crate::fl;
 use crate::run_state::Stage;
 use crate::{debug_log, error_log};
-
-/// Entries kept per backup. The oldest are dropped as new ones arrive, so a
-/// backup that has run for years does not grow its log without bound.
-pub const CAPACITY: usize = 200;
 
 /// What happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,14 +163,14 @@ fn merge_sorted(logs: Vec<(String, Vec<Event>)>) -> Vec<(String, Event)> {
 }
 
 /// Add `event` to `log`, dropping the oldest entry once it holds more than
-/// [`CAPACITY`]. Separate from [`record`] so the trimming can be tested
+/// [`EVENT_LOG_CAPACITY`]. Separate from [`record`] so the trimming can be tested
 /// without touching the real config store: like [`crate::run_state`], this
 /// module's own tests never call `store()`, which would read and write the
 /// machine's actual state directory.
 fn push(log: &mut Vec<Event>, event: Event) {
     log.push(event);
-    if log.len() > CAPACITY {
-        let excess = log.len() - CAPACITY;
+    if log.len() > EVENT_LOG_CAPACITY {
+        let excess = log.len() - EVENT_LOG_CAPACITY;
         log.drain(0..excess);
     }
 }
@@ -318,13 +315,13 @@ mod tests {
     #[test]
     fn the_oldest_entries_are_dropped_past_capacity() {
         let mut log = Vec::new();
-        for time in 0..(CAPACITY as i64 + 5) {
+        for time in 0..(EVENT_LOG_CAPACITY as i64 + 5) {
             push(&mut log, event(time, EventKind::BackedUp));
         }
 
-        assert_eq!(log.len(), CAPACITY);
+        assert_eq!(log.len(), EVENT_LOG_CAPACITY);
         assert_eq!(log.first().unwrap().time, 5, "the first 5 were dropped");
-        assert_eq!(log.last().unwrap().time, CAPACITY as i64 + 4);
+        assert_eq!(log.last().unwrap().time, EVENT_LOG_CAPACITY as i64 + 4);
     }
 
     #[test]

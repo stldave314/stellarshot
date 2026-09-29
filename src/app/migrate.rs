@@ -9,6 +9,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::app::config::CONFIG_VERSION;
 use crate::profile::{Profile, profiles_from_v1};
 
 /// The upstream application ID, before this app's own settings existed
@@ -59,7 +60,7 @@ pub fn migrate_app_id(config_root: &Path, new_app_id: &str, version: u64) -> io:
 /// setting (even an empty one — the user may have removed them all), or
 /// there were no version 1 repositories.
 pub fn v1_profiles(config_root: &Path, app_id: &str) -> Option<Vec<Profile>> {
-    if version_dir(config_root, app_id, 2)
+    if version_dir(config_root, app_id, CONFIG_VERSION)
         .join("profiles")
         .exists()
     {
@@ -133,7 +134,7 @@ mod tests {
         assert_eq!(profiles[0].name, "home");
 
         // Once version 2 has its own list, version 1 is never read again.
-        let v2 = version_dir(tmp.path(), NEW, 2);
+        let v2 = version_dir(tmp.path(), NEW, CONFIG_VERSION);
         std::fs::create_dir_all(&v2).unwrap();
         std::fs::write(v2.join("profiles"), "[]").unwrap();
         assert!(

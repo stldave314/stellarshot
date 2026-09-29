@@ -25,13 +25,9 @@ use fuser::{
 };
 
 use super::browse::{Browser, EntryKind, MountEntry};
+use crate::constants::MOUNT_ATTR_TTL as TTL;
 use crate::debug::MOUNT;
 use crate::debug_log;
-
-/// A snapshot never changes once taken, so there is nothing a short TTL
-/// would ever need to catch — a stat or a directory listing is good until
-/// the filesystem is unmounted.
-const TTL: Duration = Duration::from_secs(365 * 24 * 3600);
 
 /// A mounted snapshot, unmounted (and its background thread stopped) when
 /// dropped.

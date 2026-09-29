@@ -17,7 +17,7 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::constants::{DRAIN_AFTER_EXIT, HOOK_TIMEOUT};
+use crate::constants::{DRAIN_AFTER_EXIT, HOOK_TIMEOUT, PROCESS_POLL_INTERVAL};
 use crate::profile::{Hook, HookTiming};
 
 /// What happened running one hook.
@@ -152,7 +152,7 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
                     let _ = child.wait();
                     break Err(format!("timed out after {}s", timeout.as_secs()));
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(PROCESS_POLL_INTERVAL);
             }
             Err(err) => break Err(format!("hook: {err}")),
         }

@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::constants::SSH_DEFAULT_PORT;
 use crate::profile::{Retention, Schedule};
 
 /// Where the Flatpak build keeps its settings, relative to `$HOME`.
@@ -359,7 +360,7 @@ fn sftp(uri: &str, folder: &str) -> Option<Place> {
         .map_or(("", authority), |(user, host)| (user, host));
     let (host, port) = match host_port.rsplit_once(':') {
         Some((host, port)) => (host, port.parse().ok()?),
-        None => (host_port, 22),
+        None => (host_port, SSH_DEFAULT_PORT),
     };
     let path = [path.trim_matches('/'), folder.trim_matches('/')]
         .iter()

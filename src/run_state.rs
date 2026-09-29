@@ -13,16 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::APP_ID;
 use crate::app::config::CONFIG_VERSION;
+use crate::constants::OVERDUE_FACTOR;
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind};
 use crate::profile::Profile;
 use crate::{debug_log, error_log};
-
-/// How much later than its own schedule a backup may run before it is shown
-/// as overdue: enough slack for the timer's own jitter, not so much that a
-/// truly stuck schedule (an unplugged drive, a laptop closed for days) goes
-/// unnoticed.
-const OVERDUE_FACTOR: i64 = 2;
 
 /// A backup's state, for the sidebar icon and its legend. See [`status`] for
 /// how the fields it is drawn from combine into one of these.

@@ -32,6 +32,10 @@ use sha2::Digest;
 use subtle::ConstantTimeEq;
 
 use crate::app::config::{NetworkScope, StellarshotConfig};
+use crate::constants::{
+    WEB_ATTEMPTS_MEMORY_SECS, WEB_GLOBAL_BUDGET_MAX, WEB_GLOBAL_BUDGET_WINDOW_SECS,
+    WEB_LOCKOUT_LEVEL_SECS, WEB_LOCKOUT_MAX_ATTEMPTS, WEB_MAX_TRACKED_ADDRESSES,
+};
 use crate::debug::WEB;
 use crate::engine::Secret;
 use crate::{debug_log, error_log};
@@ -667,35 +671,9 @@ async fn authenticate(
     response
 }
 
-/// How many failed attempts an address gets before it is locked out, and for
-/// how long: 5, 15 and 60 minutes, then capped at 24 hours, one step further
-/// each time the address returns and fails again after its previous lockout
-/// (or accumulation window) has fully passed. A first-time mistake is cheap;
-/// a repeat offender's guesses get expensive fast.
-const MAX_ATTEMPTS: u32 = 5;
-const LOCKOUT_LEVEL_SECS: [i64; 4] = [5 * 60, 15 * 60, 60 * 60, 24 * 60 * 60];
-
 fn lockout_duration(level: u32) -> i64 {
-    LOCKOUT_LEVEL_SECS[(level as usize).min(LOCKOUT_LEVEL_SECS.len() - 1)]
+    WEB_LOCKOUT_LEVEL_SECS[(level as usize).min(WEB_LOCKOUT_LEVEL_SECS.len() - 1)]
 }
-
-/// A burst of failures across many addresses at once is a campaign, not one
-/// address's problem: past this many failures from anyone, in this window,
-/// password auth is paused for everyone (an API token, unaffected by guessing
-/// a password, keeps working) until the window passes.
-const GLOBAL_BUDGET_MAX: u32 = 50;
-const GLOBAL_BUDGET_WINDOW_SECS: i64 = 10 * 60;
-
-/// How long an address's escalation level is remembered after its most
-/// recent failure, even once its own lockout has long since passed: long
-/// enough that returning the next day still escalates, bounded so the map
-/// backing it does not grow forever.
-const ATTEMPTS_MEMORY_SECS: i64 = 7 * 86_400;
-
-/// [`Throttle`]'s own map is capped at this many addresses; past it, the
-/// least-recently-active one is dropped to make room for a new one, rather
-/// than growing without bound.
-const MAX_TRACKED_ADDRESSES: usize = 10_000;
 
 fn now_secs() -> i64 {
     jiff::Timestamp::now().as_second()
@@ -714,7 +692,7 @@ struct Attempts {
 /// number of seconds left before it does not — never `0`, so a client is
 /// never told to retry immediately and get the exact same answer again.
 fn lockout_remaining(attempts: Attempts, now: i64) -> Option<i64> {
-    if attempts.count < MAX_ATTEMPTS {
+    if attempts.count < WEB_LOCKOUT_MAX_ATTEMPTS {
         return None;
     }
     let remaining = lockout_duration(attempts.level) - (now - attempts.first_failure);
@@ -748,7 +726,7 @@ fn next_attempts(existing: Option<Attempts>, now: i64) -> Attempts {
 }
 
 fn prune_expired(attempts: &mut HashMap<IpAddr, Attempts>, now: i64) {
-    attempts.retain(|_, a| now - a.first_failure < ATTEMPTS_MEMORY_SECS);
+    attempts.retain(|_, a| now - a.first_failure < WEB_ATTEMPTS_MEMORY_SECS);
 }
 
 /// One request's reserved attempt, from [`Throttle::try_begin`]: the failure
@@ -764,7 +742,7 @@ impl Reservation<'_> {
     }
 }
 
-/// How many failures, across every address, in [`GLOBAL_BUDGET_WINDOW_SECS`].
+/// How many failures, across every address, in [`WEB_GLOBAL_BUDGET_WINDOW_SECS`].
 #[derive(Debug, Clone, Copy)]
 struct GlobalBudget {
     count: u32,
@@ -773,7 +751,7 @@ struct GlobalBudget {
 
 /// Failed attempts against one daemon, by address, plus the budget shared
 /// across all of them. A wrong guess is expensive only in how many of them
-/// an address gets, not in making each one slower: after [`MAX_ATTEMPTS`]
+/// an address gets, not in making each one slower: after [`WEB_LOCKOUT_MAX_ATTEMPTS`]
 /// within its current window, every further request from that address is
 /// rejected — including one with the *correct* credentials — until the
 /// window passes, rather than only the wrong ones. Only a request that
@@ -811,7 +789,7 @@ impl Throttle {
             return Err(remaining);
         }
         prune_expired(&mut attempts, now);
-        if attempts.len() >= MAX_TRACKED_ADDRESSES
+        if attempts.len() >= WEB_MAX_TRACKED_ADDRESSES
             && !attempts.contains_key(&addr)
             && let Some(oldest) = attempts
                 .iter()
@@ -821,10 +799,10 @@ impl Throttle {
             attempts.remove(&oldest);
         }
         let updated = next_attempts(attempts.get(&addr).copied(), now);
-        if updated.count == MAX_ATTEMPTS {
+        if updated.count == WEB_LOCKOUT_MAX_ATTEMPTS {
             error_log!(
                 WEB,
-                "{addr} locked out for {}s after {MAX_ATTEMPTS} failed attempts (level {})",
+                "{addr} locked out for {}s after {WEB_LOCKOUT_MAX_ATTEMPTS} failed attempts (level {})",
                 lockout_duration(updated.level),
                 updated.level
             );
@@ -850,18 +828,18 @@ impl Throttle {
     fn note_global_failure(&self) {
         let mut budget = self.global.lock().unwrap_or_else(PoisonError::into_inner);
         let now = now_secs();
-        if now - budget.window_start >= GLOBAL_BUDGET_WINDOW_SECS {
+        if now - budget.window_start >= WEB_GLOBAL_BUDGET_WINDOW_SECS {
             *budget = GlobalBudget {
                 count: 0,
                 window_start: now,
             };
         }
         budget.count += 1;
-        if budget.count == GLOBAL_BUDGET_MAX + 1 {
+        if budget.count == WEB_GLOBAL_BUDGET_MAX + 1 {
             error_log!(
                 WEB,
-                "password authentication paused for {}m: more than {GLOBAL_BUDGET_MAX} failures across all addresses",
-                GLOBAL_BUDGET_WINDOW_SECS / 60
+                "password authentication paused for {}m: more than {WEB_GLOBAL_BUDGET_MAX} failures across all addresses",
+                WEB_GLOBAL_BUDGET_WINDOW_SECS / 60
             );
         }
     }
@@ -870,8 +848,8 @@ impl Throttle {
     /// (not token auth) should be refused regardless of the password itself.
     fn password_paused(&self) -> bool {
         let budget = self.global.lock().unwrap_or_else(PoisonError::into_inner);
-        now_secs() - budget.window_start < GLOBAL_BUDGET_WINDOW_SECS
-            && budget.count > GLOBAL_BUDGET_MAX
+        now_secs() - budget.window_start < WEB_GLOBAL_BUDGET_WINDOW_SECS
+            && budget.count > WEB_GLOBAL_BUDGET_MAX
     }
 }
 
@@ -1237,7 +1215,7 @@ mod tests {
     #[test]
     fn fewer_than_the_maximum_failures_never_locks_out() {
         let attempts = Attempts {
-            count: MAX_ATTEMPTS - 1,
+            count: WEB_LOCKOUT_MAX_ATTEMPTS - 1,
             first_failure: 1000,
             level: 0,
         };
@@ -1247,11 +1225,11 @@ mod tests {
     #[test]
     fn the_maximum_failures_locks_out_until_the_window_passes() {
         let attempts = Attempts {
-            count: MAX_ATTEMPTS,
+            count: WEB_LOCKOUT_MAX_ATTEMPTS,
             first_failure: 1000,
             level: 0,
         };
-        let lockout = LOCKOUT_LEVEL_SECS[0];
+        let lockout = WEB_LOCKOUT_LEVEL_SECS[0];
         assert_eq!(lockout_remaining(attempts, 1000), Some(lockout));
         assert_eq!(
             lockout_remaining(attempts, 1000 + lockout - 1),
@@ -1280,9 +1258,9 @@ mod tests {
         );
         assert_eq!(second.level, 0, "the level does not move either");
 
-        let after_window = next_attempts(Some(second), 1000 + LOCKOUT_LEVEL_SECS[0]);
+        let after_window = next_attempts(Some(second), 1000 + WEB_LOCKOUT_LEVEL_SECS[0]);
         assert_eq!(after_window.count, 1, "a fresh window starts over");
-        assert_eq!(after_window.first_failure, 1000 + LOCKOUT_LEVEL_SECS[0]);
+        assert_eq!(after_window.first_failure, 1000 + WEB_LOCKOUT_LEVEL_SECS[0]);
         assert_eq!(
             after_window.level, 1,
             "returning after the window passed escalates the level"
@@ -1293,13 +1271,13 @@ mod tests {
     fn the_escalation_level_is_capped_at_the_longest_lockout() {
         let mut attempts = next_attempts(None, 0);
         let mut now = 0;
-        for _ in 0..LOCKOUT_LEVEL_SECS.len() + 5 {
+        for _ in 0..WEB_LOCKOUT_LEVEL_SECS.len() + 5 {
             now += lockout_duration(attempts.level);
             attempts = next_attempts(Some(attempts), now);
         }
         assert_eq!(
             lockout_duration(attempts.level),
-            *LOCKOUT_LEVEL_SECS.last().unwrap()
+            *WEB_LOCKOUT_LEVEL_SECS.last().unwrap()
         );
     }
 
@@ -1436,8 +1414,8 @@ mod tests {
             (reserved, results.len() - reserved)
         });
         assert!(
-            reserved <= MAX_ATTEMPTS as usize,
-            "at most {MAX_ATTEMPTS} concurrent attempts should be reserved, got {reserved}"
+            reserved <= WEB_LOCKOUT_MAX_ATTEMPTS as usize,
+            "at most {WEB_LOCKOUT_MAX_ATTEMPTS} concurrent attempts should be reserved, got {reserved}"
         );
         assert_eq!(reserved + refused, 64);
     }
@@ -1447,7 +1425,7 @@ mod tests {
         let addr = spawn(Vec::new(), password_auth("secret")).await;
         let wrong = Some("Basic aWdub3JlZDp3cm9uZw==");
 
-        for attempt in 1..=MAX_ATTEMPTS {
+        for attempt in 1..=WEB_LOCKOUT_MAX_ATTEMPTS {
             let response = get(addr, "/api/v1/health", wrong).await;
             assert!(
                 response.starts_with("HTTP/1.1 401"),
@@ -1473,7 +1451,7 @@ mod tests {
     #[tokio::test]
     async fn an_address_that_never_fails_is_never_throttled() {
         let addr = spawn(Vec::new(), password_auth("secret")).await;
-        for _ in 0..MAX_ATTEMPTS + 5 {
+        for _ in 0..WEB_LOCKOUT_MAX_ATTEMPTS + 5 {
             let response = get(addr, "/api/v1/health", Some("Basic aWdub3JlZDpzZWNyZXQ=")).await;
             assert!(
                 response.starts_with("HTTP/1.1 200"),
@@ -1490,13 +1468,13 @@ mod tests {
 
         // Fewer than the threshold, then a real success: this must not
         // leave a partial count around to add to next time.
-        for _ in 0..MAX_ATTEMPTS - 1 {
+        for _ in 0..WEB_LOCKOUT_MAX_ATTEMPTS - 1 {
             get(addr, "/api/v1/health", wrong).await;
         }
         let response = get(addr, "/api/v1/health", right).await;
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
 
-        for attempt in 1..=MAX_ATTEMPTS - 1 {
+        for attempt in 1..=WEB_LOCKOUT_MAX_ATTEMPTS - 1 {
             let response = get(addr, "/api/v1/health", wrong).await;
             assert!(
                 response.starts_with("HTTP/1.1 401"),

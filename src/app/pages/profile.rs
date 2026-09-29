@@ -14,7 +14,7 @@ use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::errors;
 use crate::app::format::{self, Ago};
 use crate::app::wizard::retention_label;
-use crate::constants::STALL_NOTICE;
+use crate::constants::{PROFILE_RECENT_ROWS as RECENT, STALL_NOTICE};
 use crate::engine::{
     EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SizeEstimate,
     SnapshotSummary, Statistics,
@@ -24,9 +24,6 @@ use crate::fl;
 use crate::profile::{Profile, Schedule};
 use crate::run_state::{RunState, Stage};
 use crate::runner::Event;
-
-/// How many snapshots the page shows before "Show all".
-const RECENT: usize = 5;
 
 /// The unlock card's password field, shared with `app.rs` so an effect
 /// there can focus the same field this page's own view sets it on.

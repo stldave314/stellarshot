@@ -8,14 +8,10 @@ use cosmic::{Element, theme, widget};
 
 use crate::app::Message;
 use crate::app::format;
+use crate::constants::HISTORY_LIMIT as LIMIT;
 use crate::event_log::{self, Event, Source};
 use crate::fl;
 use crate::profile::Profile;
-
-/// Most entries shown at once, newest first: a machine that has backed up
-/// for years across several destinations could otherwise mean rendering
-/// thousands of rows for one screen.
-pub const LIMIT: usize = 500;
 
 pub fn view<'a>(entries: &'a [(String, Event)], profiles: &'a [Profile]) -> Element<'a, Message> {
     let spacing = theme::active().cosmic().spacing;

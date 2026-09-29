@@ -2864,6 +2864,72 @@ new `src/app/mod.rs` is under about 700 lines.
 
 ### ARC-3. Centralize tuning values
 
+**Status: Done for the genuinely arbitrary "how long/how many" values;
+left definitional constants where they were, on purpose.** Moved 15
+values into `constants.rs`, across 9 files: `event_log.rs`'s entry cap,
+`run_state.rs`'s overdue factor, `mount.rs`'s attribute TTL, the 50ms
+process-poll interval duplicated in `hooks.rs` and `rclone.rs`
+(consolidated into one `PROCESS_POLL_INTERVAL`, not moved twice), a
+scheduled unit's `Nice` level and `RandomizedDelaySec` (now
+`{SCHEDULED_UNIT_NICE}`/`{SCHEDULED_UNIT_RANDOMIZED_DELAY}` interpolated
+into the unit text — `RandomizedDelaySec` now emits plain seconds, which
+systemd accepts identically to `10min`, rather than reconstructing that
+suffix from a `Duration`), `app.rs`'s clock tick, `applet.rs`'s two
+refresh rates, all six of `web.rs`'s lockout/throttle values (the plan
+only named "the lockout values" generically; moved `MAX_ATTEMPTS`,
+`LOCKOUT_LEVEL_SECS`, `GLOBAL_BUDGET_MAX`, `GLOBAL_BUDGET_WINDOW_SECS`,
+`ATTEMPTS_MEMORY_SECS` and `MAX_TRACKED_ADDRESSES` together, since they
+are all the same kind of value), the three "how many rows before
+capping" values (`restore.rs`'s `RESULT_LIMIT`, `profile.rs`'s
+`RECENT` — genuinely shared between its snapshot list and its history
+list, not two separate fives that happened to match — and
+`history.rs`'s own `LIMIT`), and the SSH default port (`place.rs`'s
+already-named `SSH_PORT`, and a bare `22` in `dejadup.rs` that had never
+been named at all). `migrate.rs`'s two bare `2` literals now use the
+`CONFIG_VERSION` constant that already existed in `app/config.rs` rather
+than repeating the version number by hand — a literal `1` nearby stayed
+untouched, since it means "the version *before* this one," not "the
+current version," and would be actively wrong reading as `CONFIG_VERSION`.
+
+Left in place, each for its own reason rather than moved on principle:
+
+- `profile.rs`'s compression levels (`-3`/`19`) and Smart retention
+  counts (`7`/`4`/`12`) are not loose tuning knobs a reviewer would
+  scan `constants.rs` looking for — they *are* the definition of what
+  `Compression::Fast`/`Best` and `Retention::Smart` mean, each already
+  carrying its own precise doc comment right next to it. Moving them
+  would trade that locality for indirection with nothing gained.
+- `profile.rs`'s function-local `HOUR` (inside `Schedule::period`) is
+  private, single-use, and self-explanatory; there is no `DAY` constant
+  anywhere to unify it with (the plan's own "plus an `86_400` literal in
+  `constants.rs:160`" no longer describes anything at that line).
+- `schedule.rs`'s `IOSchedulingClass=idle` is a fixed policy choice
+  ("run in the background"), not a number anyone would tune — closer to
+  the "format and protocol facts... can stay where they are" carve-out
+  this row's own text already allows.
+- The applet ID duplication (`applet.rs`'s `ID` constant hand-repeating
+  `APP_ID` plus `.Applet"`, instead of deriving it) turns out not to
+  have a clean fix: Rust's `concat!` needs literal tokens, not a `const`
+  reference, so `concat!(crate::app::APP_ID, ".Applet")` does not
+  compile — unifying this for real would mean turning `Applet::APP_ID`
+  (a `cosmic::Application` trait constant, needed as `&'static str`)
+  into something built from const-evaluable byte-slice concatenation
+  with no macro help, for one string that is easy enough to grep for if
+  it ever needs to change. `install.sh:32`'s own `$APP_ID.Applet`
+  already *does* derive from its own local shell variable — not a
+  duplication at all, though it and the Rust-side `APP_ID` are still
+  two separate literals kept in sync by hand across the language
+  boundary, which is a different, larger problem (the same class of
+  "needs a build-time generator" gap already left open in I18N-3), not
+  a quick fix here.
+
+Verified against a real build, not just the edit: `cargo clippy
+--all-targets --all-features` and `cargo fmt --all -- --check` both
+clean across all 16 touched files on the first pass, and a full `cargo
+test --all-features --lib` (468 tests, plus the 21 pre-existing,
+documented, environment-only socket failures — see WEB-2's own
+VALIDATION.md note) passed with no new failures.
+
 **Low · S · Verified**
 
 These values live outside `src/constants.rs`:

@@ -6,7 +6,6 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Duration;
 use std::{env, process};
 
 use cosmic::app::{Core, Task};
@@ -22,7 +21,7 @@ use crate::app::key_bind::key_binds;
 use crate::app::pages::profile::{self, ProfileState};
 use crate::app::pages::restore::{self, RestorePage};
 use crate::app::wizard::{Mode, Wizard, place};
-use crate::constants::{WINDOW_HEIGHT, WINDOW_WIDTH};
+use crate::constants::{RESTORE_RESULT_LIMIT, WINDOW_CLOCK_TICK, WINDOW_HEIGHT, WINDOW_WIDTH};
 use crate::debug::{CONFIG, ENGINE, UI};
 use crate::engine::{self, EngineError, Secret};
 use crate::event_log;
@@ -51,9 +50,6 @@ pub mod wizard;
 
 /// The application ID: desktop entry, icon, settings and keyring items.
 pub const APP_ID: &str = "io.github.stldave314.Stellarshot";
-
-/// How often relative times ("2 hours ago") are refreshed.
-const CLOCK_TICK: Duration = Duration::from_secs(30);
 
 /// The "type the name to confirm" field in the "Delete everything" dialog,
 /// focused as soon as the dialog opens rather than left for a mouse click or
@@ -1471,7 +1467,7 @@ impl App {
                 }
                 restore::Effect::Search { snapshot, query } => Task::perform(
                     tasks::blocking(move || {
-                        browsing(browser)?.search(&snapshot, &query, restore::RESULT_LIMIT)
+                        browsing(browser)?.search(&snapshot, &query, RESTORE_RESULT_LIMIT)
                     }),
                     move |result| to_page(restore::Message::Found(result)),
                 ),
@@ -1486,7 +1482,7 @@ impl App {
                 }
                 restore::Effect::Missing { scope, since } => Task::perform(
                     tasks::blocking(move || {
-                        browsing(browser)?.missing(&scope, since, restore::RESULT_LIMIT)
+                        browsing(browser)?.missing(&scope, since, RESTORE_RESULT_LIMIT)
                     }),
                     move |result| to_page(restore::Message::MissingFound(result)),
                 ),
@@ -1496,7 +1492,7 @@ impl App {
                 ),
                 restore::Effect::GlobalSearch { query } => Task::perform(
                     tasks::blocking(move || {
-                        browsing(browser)?.search_all(&query, restore::RESULT_LIMIT)
+                        browsing(browser)?.search_all(&query, RESTORE_RESULT_LIMIT)
                     }),
                     move |result| to_page(restore::Message::GlobalFound(result)),
                 ),
@@ -2933,7 +2929,7 @@ impl Application for App {
                 cosmic_theme::ThemeMode::version(),
             )
             .map(|_| Message::SystemThemeModeChange),
-            cosmic::iced::time::every(CLOCK_TICK).map(|_| Message::Tick),
+            cosmic::iced::time::every(WINDOW_CLOCK_TICK).map(|_| Message::Tick),
             // Running times count up only while something is running.
             if self.waiting() {
                 cosmic::iced::time::every(crate::constants::WAITING_TICK)

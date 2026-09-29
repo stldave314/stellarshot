@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use super::error::{EngineError, ErrorKind};
 use super::location::REPOSITORY_ENTRIES;
 use super::repo::Probe;
-use crate::constants::{PROBE_TIMEOUT, RCLONE_LOOK_FLAGS};
+use crate::constants::{PROBE_TIMEOUT, PROCESS_POLL_INTERVAL, RCLONE_LOOK_FLAGS};
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -156,7 +156,7 @@ fn rclone_within(config: &Path, args: &[&str], limit: Duration) -> Result<Output
                 limit.as_secs().to_string(),
             ));
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
     };
     Ok(Output {
         status,

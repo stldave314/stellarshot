@@ -13,7 +13,6 @@
 
 use std::any::TypeId;
 use std::process::Command;
-use std::time::Duration;
 
 use cosmic::Element;
 use cosmic::app::{Core, Task};
@@ -24,6 +23,7 @@ use cosmic::surface::action::{app_popup, destroy_popup};
 use cosmic::widget::{self, list_column, settings};
 
 use crate::app::config::{CONFIG_VERSION, StellarshotConfig};
+use crate::constants::{APPLET_IDLE_REFRESH as IDLE_REFRESH, APPLET_REFRESH as REFRESH};
 use crate::debug::UI;
 use crate::error_log;
 use crate::fl;
@@ -31,13 +31,6 @@ use crate::run_state;
 use crate::status::{self, Status};
 
 const ID: &str = "io.github.stldave314.Stellarshot.Applet";
-/// How often the applet re-reads every backup's status while its popup is
-/// actually open and someone might be looking at it.
-const REFRESH: Duration = Duration::from_secs(3);
-/// How often it does the same while the popup is closed: a lock probe and a
-/// config read per backup are each cheap on their own, but there is no
-/// reason to spend them at all when nothing could be showing the result.
-const IDLE_REFRESH: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 pub struct Applet {

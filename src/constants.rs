@@ -187,3 +187,95 @@ pub const WEB_PRIVATE_RANGES: &[&str] = &[
     "fe80::/10",
     "::1/128",
 ];
+
+/// Entries kept in a backup's own event log. The oldest are dropped as new
+/// ones arrive, so a backup that has run for years does not grow its log
+/// without bound.
+pub const EVENT_LOG_CAPACITY: usize = 200;
+
+/// How much later than its own schedule a backup may run before it is shown
+/// as overdue: enough slack for the timer's own jitter, not so much that a
+/// truly stuck schedule (an unplugged drive, a laptop closed for days) goes
+/// unnoticed.
+pub const OVERDUE_FACTOR: i64 = 2;
+
+/// A mounted snapshot never changes once taken, so there is nothing a
+/// short TTL would ever need to catch — a stat or a directory listing is
+/// good until the filesystem is unmounted.
+pub const MOUNT_ATTR_TTL: std::time::Duration = std::time::Duration::from_secs(365 * 24 * 3600);
+
+/// How often a blocking wait loop (a hook's or rclone's own child process
+/// exiting) re-checks rather than blocking on it directly: frequent enough
+/// that a short-lived command is not kept waiting noticeably, cheap enough
+/// not to matter for a long-running one.
+pub const PROCESS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// A scheduled backup's own systemd timer runs `Nice`d this far below
+/// normal priority: background work should not compete with whatever the
+/// person at the keyboard is doing.
+pub const SCHEDULED_UNIT_NICE: i32 = 10;
+
+/// How far a scheduled backup's own start can be randomly delayed, so
+/// several backups due at the same wall-clock moment (every timer set to
+/// "daily", say) do not all start at once.
+pub const SCHEDULED_UNIT_RANDOMIZED_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(10 * 60);
+
+/// How often relative times ("2 hours ago") are refreshed.
+pub const WINDOW_CLOCK_TICK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How often the panel applet re-reads every backup's status while its
+/// popup is actually open and someone might be looking at it.
+pub const APPLET_REFRESH: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// How often the applet does the same while its popup is closed: a lock
+/// probe and a config read per backup are each cheap on their own, but
+/// there is no reason to spend them at all when nothing could be showing
+/// the result.
+pub const APPLET_IDLE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How many failed web interface login attempts an address gets before it
+/// is locked out, and for how long: 5, 15 and 60 minutes, then capped at
+/// 24 hours, one step further each time the address returns and fails
+/// again after its previous lockout (or accumulation window) has fully
+/// passed. A first-time mistake is cheap; a repeat offender's guesses get
+/// expensive fast.
+pub const WEB_LOCKOUT_MAX_ATTEMPTS: u32 = 5;
+pub const WEB_LOCKOUT_LEVEL_SECS: [i64; 4] = [5 * 60, 15 * 60, 60 * 60, 24 * 60 * 60];
+
+/// A burst of failures across many addresses at once is a campaign, not
+/// one address's problem: past this many failures from anyone, in this
+/// window, password auth is paused for everyone (an API token, unaffected
+/// by guessing a password, keeps working) until the window passes.
+pub const WEB_GLOBAL_BUDGET_MAX: u32 = 50;
+pub const WEB_GLOBAL_BUDGET_WINDOW_SECS: i64 = 10 * 60;
+
+/// How long a web interface address's escalation level is remembered
+/// after its most recent failure, even once its own lockout has long since
+/// passed: long enough that returning the next day still escalates,
+/// bounded so the map backing it does not grow forever.
+pub const WEB_ATTEMPTS_MEMORY_SECS: i64 = 7 * 86_400;
+
+/// The web interface's own throttle map is capped at this many addresses;
+/// past it, the least-recently-active one is dropped to make room for a
+/// new one, rather than growing without bound.
+pub const WEB_MAX_TRACKED_ADDRESSES: usize = 10_000;
+
+/// How many rows a list on the restore page shows before capping with
+/// "Show more": search results, a folder's entries, a diff's groups, a
+/// missing-files list. A folder or diff with far more than this costs this
+/// many widgets per frame, not the folder's or diff's own real size.
+pub const RESTORE_RESULT_LIMIT: usize = 500;
+
+/// How many rows a backup's own page shows at once before "Show all": its
+/// most recent snapshots, and separately, its most recent history entries.
+pub const PROFILE_RECENT_ROWS: usize = 5;
+
+/// Most History page entries shown at once, newest first: a machine that
+/// has backed up for years across several destinations could otherwise
+/// mean rendering thousands of rows for one screen.
+pub const HISTORY_LIMIT: usize = 500;
+
+/// The default port a bare SSH destination (no `:port` given) is assumed
+/// to listen on.
+pub const SSH_DEFAULT_PORT: u16 = 22;

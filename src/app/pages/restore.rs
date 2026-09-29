@@ -17,6 +17,7 @@ use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
+use crate::constants::RESTORE_RESULT_LIMIT as RESULT_LIMIT;
 use crate::engine::mount::Mount;
 use crate::engine::{
     Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, GlobalMatch,
@@ -28,8 +29,6 @@ use crate::runner::Event;
 
 /// How far back "Deleted files" looks by default, in days.
 const DELETED_WINDOW_DAYS: i64 = 30;
-/// Most search results, deleted files and differences shown at once.
-pub const RESULT_LIMIT: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {

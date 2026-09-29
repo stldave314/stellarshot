@@ -3690,8 +3690,7 @@ reimplementing the probe it tests.
 
 ### TST-5. Coverage gaps
 
-**Status: 2 of 8 done** (the web header-parsing and TLS items are the
-peer session's own territory tonight).
+**Status: 4 of 8 done.**
 
 - **`Target::Original` restores:** already covered — this list item was
   stale; `src/engine/tests.rs` already exercises it in seven places.
@@ -3707,10 +3706,21 @@ peer session's own territory tonight).
   own refusal. Confirmed that reliance is justified: rustic_core refuses
   with the same `ErrorKind::Internal` the existing deletion-refusal test
   already expects.
+- **The WEB-7 TLS `curl` checks:** done as part of WEB-7 itself
+  (`a_real_handshake_capped_below_tls_1_2_never_completes`,
+  `plain_http_gets_no_response_on_the_tls_only_port`).
+- **Web header-parsing edge cases:** done. 7 new tests against
+  `basic_password`/`split_scheme`/`is_authenticated`: a decoded credential
+  with no `:` separator, invalid base64, base64 that decodes to bytes no
+  UTF-8 string could hold, a bare scheme with nothing following it,
+  `bearer`/`basic` in lowercase (both already worked via
+  `eq_ignore_ascii_case`; now pinned by a test), an empty `Bearer` value,
+  and two `Authorization` headers on one request (`HeaderMap::get`
+  already only ever returns the first — locked in explicitly, since a
+  client or proxy duplicating the header must never let a second,
+  different credential silently take over).
 - File-vs-directory and symlink conflicts on restore, an `archive_folder`
   failure partway through: not started.
-- Web header-parsing edge cases and the WEB-7 TLS `curl` checks: the peer
-  session's own files (`web.rs`/`web/routes.rs`/`web_tls.rs`).
 
 **Medium · M**
 

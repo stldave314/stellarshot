@@ -1309,6 +1309,78 @@ mod tests {
     }
 
     #[test]
+    fn basic_without_a_colon_is_rejected() {
+        // "aliceandsecret" in base64: a well-formed credential must have
+        // exactly one `:` separating the username from the password.
+        let encoded = base64::engine::general_purpose::STANDARD.encode("aliceandsecret");
+        assert_eq!(basic_password(&format!("Basic {encoded}")), None);
+    }
+
+    #[test]
+    fn basic_with_invalid_base64_is_rejected() {
+        assert_eq!(basic_password("Basic not-valid-base64!!"), None);
+    }
+
+    #[test]
+    fn basic_with_non_utf8_decoded_bytes_is_rejected() {
+        // Valid base64 that decodes to bytes no UTF-8 string could ever
+        // contain (a lone continuation byte), not merely invalid base64.
+        let encoded = base64::engine::general_purpose::STANDARD.encode([0x80, 0x3a, 0x80]);
+        assert_eq!(basic_password(&format!("Basic {encoded}")), None);
+    }
+
+    #[test]
+    fn a_scheme_with_no_following_value_is_not_split() {
+        assert_eq!(split_scheme("Basic"), None);
+    }
+
+    #[test]
+    fn scheme_matching_ignores_case_for_both_methods() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, basic_header("ignored", "secret"));
+        assert_eq!(
+            is_authenticated(&password_auth("secret"), &headers),
+            Some(event_log::WebAuthMethod::Password)
+        );
+
+        let token = crate::web_token::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("bearer {}", token.raw).parse().unwrap(),
+        );
+        assert_eq!(
+            is_authenticated(&token_auth(&token.hash), &headers),
+            Some(event_log::WebAuthMethod::Token)
+        );
+    }
+
+    #[test]
+    fn an_empty_bearer_value_does_not_authenticate() {
+        let token = crate::web_token::generate();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer ".parse().unwrap());
+        assert_eq!(is_authenticated(&token_auth(&token.hash), &headers), None);
+    }
+
+    #[test]
+    fn only_the_first_of_two_authorization_headers_is_ever_consulted() {
+        // `HeaderMap::get` (used throughout this module) always returns the
+        // first value for a repeated header name — locking that behavior in
+        // explicitly, since a client or proxy that somehow duplicates the
+        // header must not let a second, different credential silently take
+        // over.
+        let mut headers = HeaderMap::new();
+        headers.append(header::AUTHORIZATION, basic_header("ignored", "secret"));
+        headers.append(header::AUTHORIZATION, basic_header("ignored", "wrong"));
+        assert_eq!(
+            is_authenticated(&password_auth("secret"), &headers),
+            Some(event_log::WebAuthMethod::Password),
+            "the first header's credential must be the one used"
+        );
+    }
+
+    #[test]
     fn constant_time_eq_still_compares_correctly() {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"different-length"));

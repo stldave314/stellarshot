@@ -397,6 +397,19 @@ Also confirmed by hand, running the real compiled `stellarshot-web` against this
 
 Not covered by an automated test (the same gap `crate::schedule`'s own `apply`/`remove` have): the actual `systemctl` calls in `start`/`stop`/`restart`, and the D-Bus status query in `status` — these shell out to, or talk to, the real system service manager, which a unit test does not stand up a fake instance of. Verified by hand instead, against this machine's real `systemctl --user` and a real `stellarshot-web` process, using the unit file exactly as `service_text` generates it (byte-for-byte, matching `the_service_runs_the_daemon_and_restarts_on_failure`'s own assertions): installing and starting it left a real process actually listening on `127.0.0.1:8737`, `systemctl --user show` reporting `ActiveState=active`/`LoadState=loaded` (the exact values `status`'s own D-Bus query maps to `Status::Active`), and a real `curl` over TLS answering `401` with no credentials, using this machine's own real Stellarshot settings (`scope: Localhost`, a real remembered password) — not a throwaway config. Stopping it (`start`'s and `stop`'s exact `systemctl` sequence) left nothing listening and removed the unit file entirely. A unit deliberately pointed at a nonexistent executable came up `ActiveState=failed`, matching `Status::Failed`; correcting the path and running the same sequence `restart` runs (`start`, then an explicit `systemctl restart`) brought it back to `active` and answering real requests again — proving Settings' Restart button genuinely recovers a failed daemon, not merely that the button exists. Everything installed for this was removed afterward; nothing was left running or configured beyond what was there before.
 
+SEC-6: `web_executable()` used to trust the `stellarshot-web` path purely
+by construction — swapping the file name on `schedule::executable()`'s
+own already-vetted path, which only ever checked `stellarshot` itself,
+never the sibling file the swap produces. Now re-checks the swapped path
+with `schedule::trusted_executable` (made `pub(crate)` for this) before
+handing it to `service_text`, the same refusal a scheduled backup's own
+unit already gets for a binary reachable from a world-writable directory.
+No new test: this is a second call site for a function `schedule::tests`
+(11 tests, including `a_binary_under_a_world_writable_directory_is_not_trusted`
+and `a_real_system_binary_is_trusted`) already proves directly; both that
+module and `web_daemon::tests` (5 tests) still pass with the new call in
+place.
+
 ### The REST API's routes (`src/web/routes.rs`)
 
 `GET /api/v1/backups`, `GET /api/v1/backups/{id}/snapshots`, `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse`, and `POST /api/v1/backups/{id}/run` — every one a thin wrapper over the same `status`/`engine`/`Browser`/`runner` calls the desktop window already uses, so the goal here is proving the *wrapping* (routing, request extraction, JSON shape, error-to-status mapping), not re-proving engine logic `src/engine/tests.rs` already covers extensively.

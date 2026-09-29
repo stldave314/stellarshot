@@ -388,12 +388,29 @@ still written to its new location.
 
 ### SEC-6. Timers and the web service can point at a binary in a world-writable directory
 
-**Status: Done for scheduled units (`schedule.rs`); the web daemon's own
-unit is the peer session's file, not checked here.** `trusted_executable`
-walks every ancestor directory, refusing group/other write access unless
-sticky-and-root-owned, and requires the file itself be owned by root or the
-current user. Verified with a real `/usr/bin/true` (trusted) and a
-world-writable tempdir (refused) — see `schedule::tests`.
+**Status: Done.** `trusted_executable` walks every ancestor directory,
+refusing group/other write access unless sticky-and-root-owned, and
+requires the file itself be owned by root or the current user. Verified
+with a real `/usr/bin/true` (trusted) and a world-writable tempdir
+(refused) — see `schedule::tests`.
+
+`web_daemon.rs`'s own unit, earlier left as "the peer session's file, not
+checked here," was re-examined once that was no longer true (this
+session had since edited `web_tls.rs` itself for WEB-7, with no
+conflict) rather than left stale. `web_executable()` builds the daemon's
+path by swapping the file name on the *already-trusted* main
+executable's path (`schedule::executable()?.with_file_name(…)`), which
+only ever checked `stellarshot`'s own file entry, not the
+`stellarshot-web` sibling — a directory safe enough for one file does
+not guarantee every file in it shares the same ownership. Made
+`trusted_executable` `pub(crate)` and re-checked the swapped path with
+it directly, returning the same kind of refusal `schedule::executable()`
+already does (and which already reaches the user through the existing
+`error-details` wrapping, so no new locale key was needed). No new
+dedicated test: this reuses `trusted_executable` exactly as already
+proven by `schedule::tests`, the same way `schedule::executable()`
+itself has no test of its own beyond that. All of `schedule::` (11
+tests) and `web_daemon::` (5 tests) still pass.
 
 **Low · S · Verified**
 

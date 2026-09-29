@@ -41,8 +41,26 @@ fn exec_quote(path: &Path) -> Option<String> {
 /// (resolved the same way [`crate::schedule::executable`] resolves it, a
 /// package upgrade's "(deleted)" suffix stripped the same way), with its file
 /// name swapped for the daemon's — they are always installed side by side.
+///
+/// `schedule::executable()?` already refuses an untrustworthy *directory*
+/// (SEC-6: a portable tarball run from `/tmp`, whose unit would then point
+/// at a path any local user could recreate after a reboot wipes it), but
+/// only ever checked `stellarshot`'s own file entry there, not this sibling
+/// one — re-checked here rather than assumed inherited, since a directory
+/// safe enough for one file does not guarantee every file in it shares the
+/// same ownership.
 fn web_executable() -> Result<PathBuf, String> {
-    Ok(crate::schedule::executable()?.with_file_name("stellarshot-web"))
+    let path = crate::schedule::executable()?.with_file_name("stellarshot-web");
+    if crate::schedule::trusted_executable(&path) {
+        Ok(path)
+    } else {
+        Err(format!(
+            "{} is not in a trustworthy location for the web interface's own \
+             unit to run (it, or a folder above it, could be replaced by \
+             another user). Install Stellarshot before turning it on.",
+            path.display()
+        ))
+    }
 }
 
 fn unit_dir() -> Option<PathBuf> {

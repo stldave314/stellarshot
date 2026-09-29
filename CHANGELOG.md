@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **The web interface's own systemd unit now refuses to point at a
+  binary in an untrustworthy location**, closing the one place this
+  protection did not already reach: a scheduled backup's own unit
+  already refused a binary run from somewhere like `/tmp`, where any
+  local user could recreate the same path after a reboot and have it
+  run as someone else.
+
 ### Added
 
 - **An "Estimate Size" button next to "Back Up Now"** shows how much a

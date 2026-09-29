@@ -167,7 +167,7 @@ pub fn executable() -> Result<PathBuf, String> {
 /// user already placed there, though not from placing a brand new one at a
 /// path nobody has used yet. `path` itself must always be owned by root or
 /// the current user, sticky parent or not.
-fn trusted_executable(path: &Path) -> bool {
+pub(crate) fn trusted_executable(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     fn safe_from_others(metadata: &std::fs::Metadata) -> bool {

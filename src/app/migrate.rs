@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 
 use crate::profile::{Profile, profiles_from_v1};
 
-/// The application ID this fork was created from.
+/// The upstream application ID, before this app's own settings existed
+/// under its own.
 pub const OLD_APP_ID: &str = "com.github.cosmic-utils.Stellarshot";
 
 /// The directory `cosmic-config` resolves its per-user settings under.

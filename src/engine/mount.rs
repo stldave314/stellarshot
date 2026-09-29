@@ -73,9 +73,10 @@ pub fn mount(
     let mut config = fuser::Config::default();
     // Deliberately no `DefaultPermissions`: whoever mounted this already
     // authenticated with the repository's own password, and every entry
-    // is reported owned by root (see `attr`) since the original owner is
-    // rarely who is looking at it now — enforcing the original mode would
-    // only lock the mounting user out of their own `0600` files.
+    // is reported owned by the mounting user (see `attr`) since the
+    // original owner is rarely who is looking at it now — enforcing the
+    // original mode would only lock the mounting user out of their own
+    // `0600` files.
     config.mount_options = vec![
         MountOption::RO,
         MountOption::FSName("stellarshot".to_owned()),

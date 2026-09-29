@@ -3177,19 +3177,42 @@ enforces it through the existing `-D warnings`.
 
 ### ARC-10. Comment and documentation drift in code
 
-**Low · S · Verified**
+**Status: Done.** Checked all 5 against the current code rather than
+assuming the plan's own list was still accurate — three had already
+stopped being drift, as side effects of the fixes their own row points
+at:
 
-- `mount.rs:74` says entries are "reported owned by root"; they report the
-  mounting user.
-- `runner.rs:350` claims `drop(input)` protects the password; it doesn't
-  (see [SEC-8](#sec-8-secrets-are-not-zeroized)).
-- `config.rs:128-130` claims token regeneration is immediate; it isn't
-  (see [WEB-1](#web-1-credential-and-profile-changes-never-reach-the-running-daemon)).
-- `applet.rs:32-35` says polling happens only while the popup is open; it
-  doesn't (see [UI-7](#ui-7-the-applet-polls-every-3-seconds-on-its-ui-thread-forever)).
-- `app/migrate.rs:14` says "this fork" in a code comment. Project content
-  shouldn't reference the repository's fork status outside the About page and
-  package metadata.
+- `config.rs`'s token-regeneration comment already says the daemon
+  restarts right away and names `App::restart_web_daemon_if_active` —
+  corrected when WEB-1's "minimum" fix landed, before tonight.
+- `applet.rs`'s polling comment already accurately describes "while the
+  popup is open" vs. a slower idle rate — corrected when UI-7 landed.
+- `runner.rs:424`'s comment, read against the actual code right above
+  it, is no longer wrong either: `input` really is
+  `zeroize::Zeroizing<Vec<u8>>` now (SEC-8), so "wipes this buffer when
+  it drops" is true, not aspirational.
+
+Two were still genuinely stale and fixed now:
+
+- `mount.rs`'s comment said entries "are reported owned by root"; the
+  code passes `self.uid`/`self.gid` (the real mounting user's own,
+  confirmed by reading `SnapshotFs::new`) into every `attr()` call, not
+  root — the comment was describing a `DefaultPermissions` bug fixed
+  earlier in this project's own history without the comment next to it
+  being updated to match. Corrected to say "the mounting user."
+- `app/migrate.rs`'s `OLD_APP_ID` doc comment said "the application ID
+  this fork was created from" — the module's own doc comment two lines
+  above it already says "the upstream application ID" without
+  mentioning fork status at all; brought the constant's comment in line
+  with that, and with the standing instruction that this kind of
+  reference belongs on an About page or in package metadata, not
+  scattered through code comments. Grepped `src/` for every other
+  `fork` mention afterward to confirm this was the only one — the
+  remaining single mention, in the metainfo's own `<description>`, is
+  exactly the kind of user-facing "about this app" context that
+  instruction already carves out.
+
+**Low · S · Verified**
 
 ---
 

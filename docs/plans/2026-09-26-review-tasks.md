@@ -3084,6 +3084,39 @@ nothing. Re-checked every other row against the current `Cargo.toml` and
 
 ### ARC-9. Add a `[lints]` table and `clippy.toml`
 
+**Status: Not done — measured the real scope with the actual table
+before adding it, rather than trusting the plan's own counts, and it is
+not S-sized.** CI already runs every build with `RUSTFLAGS: -D warnings`
+(`.github/workflows/ci.yml`), so this table cannot land as "recorded
+policy for new code, burn down the rest later": the moment it exists,
+CI enforces it against everything already in the tree, warn-level lints
+included. Tried it for real: appended the plan's own proposed table to
+`Cargo.toml` (uncommitted) and ran `cargo clippy --all-targets
+--all-features --message-format=json` to get exact counts instead of
+the eyeballed ones a plain `cargo clippy` run gives. Found **6 hard
+errors** (`unsafe_code = "deny"` against real, necessary `unsafe`
+blocks — `libc::getuid`/`fcntl` calls and one `OsStr` encoding call the
+plan's own problem statement said `src/` had none of) and **242
+warnings** across roughly 38 distinct lints — `cast_possible_wrap` (36),
+`doc_markdown` (21), `assigning_clones` (19), `indexing_slicing` (18),
+`too_many_lines` (16) and `cast_possible_truncation` (11) account for
+over half of it. The plan's own six bullet points (68 items combined)
+undercount today's actual codebase by roughly 4x, almost certainly
+because a great deal of code has landed since that count was taken.
+Reverted (`git checkout -- Cargo.toml`), confirmed `cargo clippy` is
+clean again at baseline.
+
+This is real M-or-larger burn-down work — six `unsafe` blocks each need
+their own justified `#[expect(unsafe_code, reason = "...")]` (`deny`
+with no exceptions is not viable; these calls are load-bearing), and
+242 warnings across ~38 lints is not a single sitting's work to fix
+correctly, especially this late in an unattended session where a rushed
+"fix" to an unfamiliar cast or clone is exactly the kind of change that
+introduces a subtle behavior regression rather than removing one.
+Better picked up as its own dedicated, paced effort — "one module per
+PR," as the plan's own fix text already says — starting from these real
+numbers instead of the stale ones.
+
 **Medium · S (table) + M (burn-down)**
 
 **Problem.** No lint policy is recorded in the repo. Default clippy is clean,

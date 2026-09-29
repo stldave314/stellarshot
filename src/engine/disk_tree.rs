@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use super::error::{EngineError, ErrorKind};
+use super::error::EngineError;
 
 /// One entry directly inside a folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,8 +43,7 @@ pub fn list_with_sizes(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(DiskEntry),
 ) -> Result<Option<Vec<DiskEntry>>, EngineError> {
-    let read_dir = fs::read_dir(dir)
-        .map_err(|err| EngineError::new(ErrorKind::Io, format!("{}: {err}", dir.display())))?;
+    let read_dir = fs::read_dir(dir).map_err(|err| EngineError::io(dir, err))?;
     let mut entries = Vec::new();
     for item in read_dir {
         if cancel.load(Ordering::Relaxed) {
@@ -112,6 +111,7 @@ fn dir_size(dir: &Path, cancel: &AtomicBool) -> Result<Option<u64>, EngineError>
 
 #[cfg(test)]
 mod tests {
+    use super::super::error::ErrorKind;
     use super::*;
     use std::sync::atomic::AtomicBool;
     use tempfile::TempDir;

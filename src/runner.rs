@@ -46,6 +46,19 @@ pub enum Operation {
 }
 
 impl Operation {
+    /// Every variant, once — [`Self::from_arg`] searches it rather than
+    /// repeating the list a second time, which a new variant could add to
+    /// one list and forget in the other.
+    const ALL: [Self; 7] = [
+        Self::Backup,
+        Self::Restore,
+        Self::Check,
+        Self::DeleteSnapshots,
+        Self::SetPinned,
+        Self::Maintain,
+        Self::ChangePassword,
+    ];
+
     pub fn as_arg(self) -> &'static str {
         match self {
             Self::Backup => "backup",
@@ -59,17 +72,7 @@ impl Operation {
     }
 
     fn from_arg(arg: &str) -> Option<Self> {
-        [
-            Self::Backup,
-            Self::Restore,
-            Self::Check,
-            Self::DeleteSnapshots,
-            Self::SetPinned,
-            Self::Maintain,
-            Self::ChangePassword,
-        ]
-        .into_iter()
-        .find(|op| op.as_arg() == arg)
+        Self::ALL.into_iter().find(|op| op.as_arg() == arg)
     }
 }
 
@@ -449,5 +452,26 @@ pub fn main(args: &[String]) -> ExitCode {
             output.emit(&Event::Error { error });
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_operation_round_trips_through_its_own_arg() {
+        for operation in Operation::ALL {
+            assert_eq!(
+                Operation::from_arg(operation.as_arg()),
+                Some(operation),
+                "{operation:?} must parse back from its own `as_arg()`"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognized_arg_is_not_an_operation() {
+        assert_eq!(Operation::from_arg("not-a-real-operation"), None);
     }
 }

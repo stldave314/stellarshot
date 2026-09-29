@@ -106,6 +106,15 @@ impl EngineError {
         Self::new(ErrorKind::NotARepository, path.display().to_string())
     }
 
+    /// An I/O error that has a specific path to blame, kept in the
+    /// message: `std::io::Error`'s own `Display` usually does not name one
+    /// ("No such file or directory (os error 2)"), so a plain `?` through
+    /// `From<std::io::Error>` loses exactly the detail that would tell
+    /// whoever reads the error which file actually failed.
+    pub fn io(path: &std::path::Path, err: std::io::Error) -> Self {
+        Self::new(ErrorKind::Io, format!("{}: {err}", path.display()))
+    }
+
     /// The path this error is about, for errors that carry one.
     pub fn path(&self) -> Option<PathBuf> {
         matches!(

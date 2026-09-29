@@ -3081,7 +3081,35 @@ returns nothing.
 
 ### ARC-6. Typed errors instead of `Result<_, String>`
 
-**Low · M · Verified**
+**Low · M · Partial**
+
+**Status: two small, low-risk pieces done; the larger redesign is not.**
+Done: `EngineError::io(path, err)` now exists in `engine/error.rs` and is
+used by the two sites that already built the identical
+`format!("{}: {err}", path.display())` string by hand
+(`BackupRequest::pattern_file_lines` in `backup.rs`,
+`list_with_sizes` in `disk_tree.rs`), so both keep the path in the
+error while sharing one implementation instead of two copies of the
+same format string. `Operation::from_arg`/`as_arg` in `runner.rs` no
+longer repeat the variant list by hand; a `const ALL: [Self; 7]`
+enumerates them once and `from_arg` searches it, with a test
+(`every_operation_round_trips_through_its_own_arg`) pinning that every
+variant survives the round trip and `an_unrecognized_arg_is_not_an_operation`
+pinning the negative case.
+
+Not done, deliberately left out of scope for now: the `thiserror` enums
+(`ScheduleError`, `StateError`, `KeyringError`, `HookError`) to replace
+`schedule.rs`/`web_daemon.rs`/`run_state`/`keyring`/`settings_export`/
+`hooks`'s `Result<_, String>` return types; the identical
+`format!("{}: {err}", path.display())` pattern still exists un-deduplicated
+at roughly 5 more sites in `schedule.rs` and `web_daemon.rs`, since those
+functions return `Result<_, String>` rather than `EngineError` and adopting
+`EngineError::io` there is really part of the enum work, not separable from
+it; replacing `runner::Job`'s `Option`-grab-bag fields with an enum per
+operation; and deduplicating `Outcome` against `Event::Done`. Each of these
+touches call sites across several files and changes public-ish return types,
+which is a larger, riskier change than fit in the same pass as the two
+pieces above.
 
 **Files:** `schedule.rs`, `web_daemon.rs`, `run_state::save/update`,
 `keyring`, `settings_export`, `hooks`; `app.rs:888-889` wraps them as

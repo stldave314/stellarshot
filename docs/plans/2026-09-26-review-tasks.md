@@ -3014,11 +3014,58 @@ log path into `debug.rs` ([SEC-5](#sec-5-shared-tmp-fallbacks-for-the-runtime-di
 
 ### ARC-8. Dependency hygiene
 
-**Status: partially done (batch 1 scope only).** Removed the unused
-`paste` direct dependency; `cargo tree -i paste` now prints nothing. The
-`axum-server`/`rcgen` version pins, the `base64`/`rand` duplicates,
-`tower-http`, and pinning `libcosmic` by `rev` are all still open, tracked
-for their own later batches (rand/tower-http tie into WEB-2/WEB-6/WEB-7).
+**Status: as done as this dependency tree currently allows.** Removed
+the unused `paste` direct dependency; `cargo tree -i paste` still prints
+nothing. Re-checked every other row against the current `Cargo.toml` and
+`Cargo.lock` rather than trusting the plan's own age:
+
+- **`axum-server`/`rcgen` patch-version pins.** Already fixed, as a side
+  effect of WEB-2/WEB-7's own work: `axum-server = { version = "0.8", … }`
+  and `rcgen = { version = "0.14", … }`, both with their own justification
+  comments, not `"0.8.0"`/`"0.14.10"`.
+- **`tower-http` as a direct dependency.** Already added, as a side
+  effect of WEB-2/WEB-6: `tower-http = { version = "0.6", features =
+  ["timeout", "limit", "set-header"] }`.
+- **The `base64` duplicate (0.22 and 0.23).** Traced with `cargo tree -i
+  base64@0.22.1`: it comes from `usvg`/`resvg`, several layers inside
+  `libcosmic`'s own icon-rendering dependencies — nothing in Stellarshot's
+  own manifest chooses it or could realign it without `libcosmic` itself
+  updating. Left as a genuine transitive duplicate, not a Stellarshot
+  hygiene gap.
+- **The `rand` duplicate (0.8/0.9/0.10) and dropping the direct
+  dependency for `getrandom::fill`.** The plan's own premise no longer
+  holds: `cargo tree -i rand@0.10.3` now shows `rustic_backend` and
+  `rustic_core` depending on the same `0.10` line Stellarshot's own
+  `web_token.rs` uses — not a version only Stellarshot's own code
+  happens to need. Dropping the direct dependency would remove one
+  manifest line, but the identical version stays in the tree regardless
+  (pulled in by rustic either way), so it would not actually reduce
+  duplication, the thing this row exists to fix. `rand@0.9` is pulled in
+  separately by `ashpd` (via `libcosmic`) and `num-bigint-dig` (via
+  `oo7`) — also outside Stellarshot's control. Left as is.
+- **Pinning `libcosmic` by `rev`.** Attempted, and verified against a
+  real build rather than declared done from the edit alone — a plain
+  `cargo check` (no `--locked`) after adding `rev = "03d7dcb8…"` to
+  `[dependencies.libcosmic]` compiled `iced_core`, `iced_futures` and
+  `cosmic-config` **twice**: once under the old unqualified
+  `pop-os/libcosmic#03d7dcb8` source and once under the newly
+  rev-qualified one. Cargo unifies a git dependency across the whole
+  tree only when every consumer names it identically (same rev/branch/
+  tag, or none); `cosmic-panel-config` (from the separate
+  `pop-os/cosmic-panel` repo, pulled in for the panel applet) depends on
+  `cosmic-config` from `pop-os/libcosmic` through its own, still-
+  unqualified reference — confirmed with `cargo tree -i iced_core`
+  showing exactly that path. Pinning only Stellarshot's own reference
+  therefore does not add reproducibility beyond what `Cargo.lock` +
+  `--locked` (already enforced everywhere, [CI-3](#ci-3-reproducible-and-locked-builds))
+  already provides, and it does cost real build time and binary size by
+  duplicating the entire workspace. Reverted (`git checkout -- Cargo.toml
+  Cargo.lock`), confirmed back to a clean `cargo check --locked` with no
+  lockfile changes, and left unpinned. Unifying this for real would need
+  `cosmic-panel-config` itself to pin the same rev, which is not this
+  project's crate to change, or a `[patch]` section forcing the
+  unification — a real, separate piece of work with its own risk, not a
+  one-line addition.
 
 **Medium · S · Verified**
 

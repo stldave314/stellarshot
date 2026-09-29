@@ -817,6 +817,13 @@ runtime, and a mangled `{ $placeholder }` misbehaves only in that language.
   orphaned.
 - Every message has the same placeholders in every locale.
 - No locale repeats a key.
+- Every message that interpolates `$count` or `$files` (this project's own
+  convention for a pluralizable quantity) has a Fluent plural selector, in
+  every locale — added for I18N-2, and immediately useful for more than
+  its own motivating examples: writing it before fixing anything found
+  `browse-scanning`, `compare-folder` and `compare-folder-root` with the
+  identical bug the plan's named examples did not mention, in all 5
+  locales, not just one.
 - **Cannot pass vacuously:** it fails if the English file is missing or has
   suspiciously few messages, rather than comparing nothing.
 

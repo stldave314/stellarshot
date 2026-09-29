@@ -2665,6 +2665,31 @@ token shows both paragraphs.
 
 ### I18N-2. Plurals, joins, and reused keys
 
+**Status: Done.** Pluralized every message the plan named
+(`wizard-estimate`, `event-cleaned-up`, `show-all-snapshots`) in all 5
+locales, then extended `tests/i18n.rs` with
+`a_count_or_files_placeholder_is_always_pluralized` *before* declaring
+this finished, per its own verify step — which immediately found three
+more messages with exactly the same bug the plan's own examples did not
+mention (`browse-scanning`, `compare-folder`, `compare-folder-root`),
+plus a fourth (`web-password-length`) with a related but distinct issue:
+its noun's number agrees with `$minimum` (the required length), not
+`$count` (how many characters typed so far), so it now selects on
+`$minimum` instead of adding a selector on the wrong argument. Fixed all
+of these, in all 5 locales, not just the ones the plan named — the test
+would not have passed otherwise. `profile.rs`'s `format!("{} · {}", ...)`
+join of `schedule_summary`/`retention_label` became a proper Fluent
+message (`schedule-retention-summary`) with named arguments, so word
+order is a translator's choice per locale rather than fixed by Rust code.
+The TLS certificate/key Choose and Reset buttons now use their own
+`web-tls-choose`/`web-tls-reset` keys instead of reusing the cache
+directory row's `settings-cache-dir-choose`/`-reset`. Number and date
+formatting's deliberate non-localization is now documented in both
+CONTRIBUTING.md (so a well-meant partial fix isn't sent as a patch) and
+ROADMAP.md's "To investigate" (so the actual open question — which
+formatting crate, and whether the source is the system locale or
+Stellarshot's own language setting — has somewhere to live).
+
 **Low · S · Verified**
 
 - **Plurals.** `wizard-estimate` ("{ $files } files"), `event-cleaned-up`

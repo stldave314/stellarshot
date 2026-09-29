@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A count of exactly one no longer reads like "1 files" or "1 changed"
+  in six places** across every language ("N files" in the size estimate,
+  "N found so far" while browsing, "N changed" in Compare, a password's
+  character count, and forgetting N snapshots) — each now uses its
+  language's own singular form for a count of one.
 - **Adding or removing a backup while the web interface is running now
   shows up there right away**, instead of only after the next manual
   restart — the same immediate treatment a changed password, token or

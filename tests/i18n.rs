@@ -238,6 +238,66 @@ fn no_locale_has_a_fluent_syntax_error() {
     }
 }
 
+/// Message key -> its full raw source text (the identifier line through
+/// every continuation line), for the one check below that needs to look
+/// for Fluent's `->` select-expression marker rather than just placeholder
+/// names — `parse` above deliberately throws the body text away once it
+/// has the placeholder set out of it.
+fn parse_bodies(path: &Path) -> BTreeMap<String, String> {
+    let source = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()));
+
+    let mut bodies: BTreeMap<String, String> = BTreeMap::new();
+    let mut current: Option<String> = None;
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+
+        let is_new_message = !line.starts_with(char::is_whitespace)
+            && line
+                .split_once('=')
+                .is_some_and(|(key, _)| is_identifier(key.trim()));
+        if is_new_message {
+            let (key, _) = line.split_once('=').expect("checked above");
+            current = Some(key.trim().to_string());
+        }
+
+        if let Some(key) = current.as_ref() {
+            let body = bodies.entry(key.clone()).or_default();
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+
+    bodies
+}
+
+#[test]
+fn a_count_or_files_placeholder_is_always_pluralized() {
+    // "1 files": a message that interpolates `$count` or `$files` — this
+    // project's own convention for a pluralizable quantity, not every
+    // numeric placeholder — without a `[one] … *[other] …` selector reads
+    // wrong for exactly the value most likely to occur.
+    for locale in locales() {
+        let bodies = parse_bodies(&locale_file(&locale));
+        for (key, body) in &bodies {
+            let pluralizable = extract_placeholders(body)
+                .iter()
+                .any(|name| name == "count" || name == "files");
+            if pluralizable {
+                assert!(
+                    body.contains("->"),
+                    "`{key}` in `{locale}` interpolates $count or $files with no \
+                     plural selector, so it always reads like \"1 files\": {body:?}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn no_locale_repeats_a_key() {
     // `parse` asserts on duplicates; this makes the intent explicit and covers

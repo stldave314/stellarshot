@@ -734,6 +734,15 @@ Questions to answer before anything is built.
   the original authors and translators contributed, or their consent. The
   rustic crates are MIT or Apache-2.0 and libcosmic is MPL-2.0, so the
   dependencies do not force the choice
+- **Locale-aware number and date formatting.** `format.rs` always writes a
+  `.` as the decimal separator and dates as `YYYY-MM-DD`, regardless of
+  locale — a deliberate, uniform choice for now (see CONTRIBUTING.md),
+  not an oversight to fix one string at a time. Whether to adopt it at
+  all needs picking a formatting crate (locale data is not free: it is
+  either bundled, adding to the binary's size, or read from the system,
+  adding a dependency on it being present and current) and deciding
+  whether the source is the system's locale or Stellarshot's own
+  language setting, which are not always the same thing
 
 ## Decided against
 

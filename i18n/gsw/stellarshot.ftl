@@ -38,7 +38,10 @@ remember-password-description = Wird i dim Schlüsselbund gspeicheret. Planti Si
 recent-snapshots = Letschti Momentuufnahme
 no-snapshots-yet = No kei Momentuufnahme. Druck „Jetzt sichere“ für di erscht.
 snapshot-row = { $id } · { $size } · { $added } neu, dedupliziert
-show-all-snapshots = All { $count } Momentuufnahme zeige
+show-all-snapshots = All { $count ->
+    [one] { $count } Momentuufnahme
+   *[other] { $count } Momentuufnahme
+} zeige
 manage = Verwalte
 edit-backup = Was gsicheret wird
 edit-backup-description = Ii- und usgschlosseni Ordner ändere.
@@ -79,7 +82,10 @@ wizard-add-folders = Ordner hinzuefüege …
 wizard-browse-hint = Duresueche, zum gseh was Platz bruucht, und uslah was nöd bruucht wird.
 browse-open = Duresueche …
 browse-close = Schliesse
-browse-scanning = Wird gscannt … bis jetzt { $count } gfunde
+browse-scanning = Wird gscannt … bis jetzt { $count ->
+    [one] { $count } gfunde
+   *[other] { $count } gfunde
+}
 browse-mark-partial = Teilwiis iigschlosse
 browse-mark-included = Iigschlosse
 browse-mark-excluded = Usgschlosse
@@ -93,7 +99,10 @@ wizard-pattern-placeholder = Passendi Näme uuslah, z. B. *.tmp oder node_module
 wizard-one-file-system = Uf em gliiche Laufwerk bliibe
 wizard-one-file-system-description = Keine andere Laufwerk oder Netzwerk-Ordner folge, wo i dene Ordner iighänkt sind.
 wizard-estimate-label = Gschätzti Grössi vo de Sicherig
-wizard-estimate = { $size } · { $files } Dateie
+wizard-estimate = { $size } · { $files ->
+    [one] { $files } Datei
+   *[other] { $files } Dateie
+}
 wizard-estimate-counting = Wird zellt …
 wizard-estimate-note = Di erscht Sicherig isch nach Kompression und Deduplizierig meischtens chliiner. Spöteri Sicherige speichered nur Änderige.
 wizard-where-intro = Wähl, wo d Sicherig uufbewahrt wird: en läre Ordner, am beschte uf emne andere Laufwerk.
@@ -269,8 +278,14 @@ compare-button = Vergliiche
 compare-intro = Wähl zwei Momentuufnahme, zum gseh, was sich gänderet hät.
 compare-none = Zwüsche dene Momentuufnahme hät sich nüt gänderet.
 compare-summary = { $added } dezue · { $removed } weg · { $changed } gänderet
-compare-folder = { $folder } ({ $count } gänderet)
-compare-folder-root = { $count } da gänderet
+compare-folder = { $folder } ({ $count ->
+    [one] { $count } gänderet
+   *[other] { $count } gänderet
+})
+compare-folder-root = { $count ->
+    [one] { $count } da gänderet
+   *[other] { $count } da gänderet
+}
 restore-sheet-title = { $count ->
     [one] 1 Element widerherstelle
    *[other] { $count } Element widerherstelle
@@ -337,6 +352,7 @@ error-password-not-saved = S Passwort hät nöd im Schlüsselbund gspeicheret ch
 error-delete-unsupported = Stellarshot cha d Date vo däm Ziel nöd sälber lösche. Entfern si dert sälber, oder bruuch «Entferne», zum si da z vergässe, ohni öppis z lösche.
 change = Ändere …
 schedule-row = Wänn si lauft
+schedule-retention-summary = { $schedule } · { $retention }
 hooks-row = Hooks
 hooks-row-none = Kei Hooks igrichtet
 hooks-row-count = { $count ->
@@ -508,7 +524,10 @@ event-failed = { $stage } fehlgschlage: { $reason }
 event-skipped = Übersprunge: { $reason }
 event-checked-sound = Prüefig bestande
 event-checked-damaged = Prüefig hät Schäde gfunde
-event-cleaned-up = { $count } Momentuufnahme vergässe, { $size } freigeh
+event-cleaned-up = { $count ->
+    [one] { $count } Momentuufnahme
+   *[other] { $count } Momentuufnahme
+} vergässe, { $size } freigeh
 event-restored = { $count ->
     [one] 1 Datei widerhergstellt ({ $size })
    *[other] { $count } Dateie widerhergstellt ({ $size })
@@ -618,7 +637,10 @@ web-password-set = Passwort festlege
 web-password-placeholder = Neus Passwort
 web-password-saved-body = D Weboberflächi bruucht das bim nächschte Start.
 web-password-failed = S Passwort vo de Weboberflächi hät nid chöne gspeicheret wärde.
-web-password-length = { $count } vo { $minimum } Zeiche
+web-password-length = { $count } vo { $minimum ->
+    [one] { $minimum } Zeiche
+   *[other] { $minimum } Zeiche
+}
 web-auth-token = API-Token
 web-auth-token-description = Es erzeugts Token für d programmgstürti Nutzig vo de API vo de Weboberflächi.
 web-token-generate = Token
@@ -644,6 +666,8 @@ web-tls-description = D Weboberflächi wird immer über HTTPS erreicht. Standard
 web-tls-cert = Zertifikat
 web-tls-key = Privater Schlüssel
 web-tls-default = Selbschtsigniert (automatisch erzeugt)
+web-tls-choose = Uswähle …
+web-tls-reset = Standard bruuche
 web-tls-cert-title = Zertifikatsdatei uswähle
 web-tls-key-title = Datei mit private Schlüssel uswähle
 web-daemon-title = Dienscht

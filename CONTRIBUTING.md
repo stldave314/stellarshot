@@ -55,6 +55,14 @@ and placeholder mismatches. It is not advisory: CI runs it.
 commit.** Fluent falls back silently, so a key added only to `en` shows up as
 stray English elsewhere rather than as a build error.
 
+**Numbers and dates are not localized.** `format.rs` always writes a `.` as
+the decimal separator and dates as `YYYY-MM-DD`, regardless of locale. This
+is a deliberate choice, not an oversight — please don't send a patch that
+"fixes" it for one language only, which would leave every other locale
+inconsistent with it. Locale-aware formatting is tracked as a real
+question in ROADMAP.md, not something to pick up piecemeal one string at
+a time.
+
 ## Code
 
 A few conventions this codebase holds to. Each one exists because the

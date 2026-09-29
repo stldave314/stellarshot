@@ -38,7 +38,10 @@ remember-password-description = Stored in your keyring. Scheduled backups will n
 recent-snapshots = Recent snapshots
 no-snapshots-yet = No snapshots yet. Press Back Up Now to take the first one.
 snapshot-row = { $id } · { $size } · { $added } new, deduplicated
-show-all-snapshots = Show all { $count } snapshots
+show-all-snapshots = Show all { $count ->
+    [one] { $count } snapshot
+   *[other] { $count } snapshots
+}
 manage = Manage
 edit-backup = What to back up
 edit-backup-description = Change the included and excluded folders.
@@ -79,7 +82,10 @@ wizard-add-folders = Add Folders…
 wizard-browse-hint = Browse to see what's taking up space, and exclude what you don't need.
 browse-open = Browse…
 browse-close = Close
-browse-scanning = Scanning… { $count } found so far
+browse-scanning = Scanning… { $count ->
+    [one] { $count } found so far
+   *[other] { $count } found so far
+}
 browse-mark-partial = Partly included
 browse-mark-included = Included
 browse-mark-excluded = Excluded
@@ -99,7 +105,10 @@ wizard-git-ignore-description = Leave out whatever each project's own .gitignore
 wizard-skip-if-unchanged = Skip empty backups
 wizard-skip-if-unchanged-description = Do not record a new snapshot when nothing has changed since the last one.
 wizard-estimate-label = Estimated backup size
-wizard-estimate = { $size } · { $files } files
+wizard-estimate = { $size } · { $files ->
+    [one] { $files } file
+   *[other] { $files } files
+}
 wizard-estimate-counting = Counting…
 wizard-estimate-note = The first backup is usually smaller after compression and deduplication. Later backups only store what changed.
 wizard-where-intro = Choose where the backup is kept: an empty folder, ideally on another drive.
@@ -279,8 +288,14 @@ compare-button = Compare
 compare-intro = Choose two snapshots to see what changed between them.
 compare-none = Nothing changed between these snapshots.
 compare-summary = { $added } added · { $removed } removed · { $changed } changed
-compare-folder = { $folder } ({ $count } changed)
-compare-folder-root = { $count } changed here
+compare-folder = { $folder } ({ $count ->
+    [one] { $count } changed
+   *[other] { $count } changed
+})
+compare-folder-root = { $count ->
+    [one] { $count } changed
+   *[other] { $count } changed
+} here
 restore-sheet-title = { $count ->
     [one] Restore 1 item
    *[other] Restore { $count } items
@@ -353,6 +368,7 @@ error-password-not-saved = The password could not be saved to your keyring: { $d
 error-delete-unsupported = Stellarshot cannot delete this destination's own data by itself. Remove it there yourself, or use Remove to forget it here without deleting anything.
 change = Change…
 schedule-row = When it runs
+schedule-retention-summary = { $schedule } · { $retention }
 hooks-row = Hooks
 hooks-row-none = No hooks set up
 hooks-row-count = { $count ->
@@ -524,7 +540,10 @@ event-failed = { $stage } failed: { $reason }
 event-skipped = Skipped: { $reason }
 event-checked-sound = Check passed
 event-checked-damaged = Check found damage
-event-cleaned-up = Forgot { $count } snapshots, freed { $size }
+event-cleaned-up = Forgot { $count ->
+    [one] { $count } snapshot
+   *[other] { $count } snapshots
+}, freed { $size }
 event-restored = { $count ->
     [one] Restored 1 file ({ $size })
    *[other] Restored { $count } files ({ $size })
@@ -596,7 +615,10 @@ web-password-set = Set the password
 web-password-placeholder = New password
 web-password-saved-body = The web interface will use this the next time it starts.
 web-password-failed = The web interface password could not be saved.
-web-password-length = { $count } of { $minimum } characters
+web-password-length = { $count } of { $minimum ->
+    [one] { $minimum } character
+   *[other] { $minimum } characters
+}
 web-auth-token = API token
 web-auth-token-description = A generated token for scripted use of the web interface's API.
 web-token-generate = Token
@@ -622,6 +644,8 @@ web-tls-description = The web interface is always reached over HTTPS. By default
 web-tls-cert = Certificate
 web-tls-key = Private key
 web-tls-default = Self-signed (generated automatically)
+web-tls-choose = Choose…
+web-tls-reset = Use the default
 web-tls-cert-title = Choose a certificate file
 web-tls-key-title = Choose a private key file
 web-daemon-title = Daemon

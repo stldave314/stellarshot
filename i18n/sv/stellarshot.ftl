@@ -38,7 +38,10 @@ remember-password-description = Sparas i din nyckelring. Schemalagda säkerhetsk
 recent-snapshots = Senaste ögonblicksbilderna
 no-snapshots-yet = Inga ögonblicksbilder än. Tryck på Säkerhetskopiera nu för att ta den första.
 snapshot-row = { $id } · { $size } · { $added } nytt, deduplicerat
-show-all-snapshots = Visa alla { $count } ögonblicksbilder
+show-all-snapshots = Visa alla { $count ->
+    [one] { $count } ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+}
 manage = Hantera
 edit-backup = Vad som säkerhetskopieras
 edit-backup-description = Ändra de inkluderade och exkluderade mapparna.
@@ -79,7 +82,10 @@ wizard-add-folders = Lägg till mappar…
 wizard-browse-hint = Bläddra för att se vad som tar upp plats, och undanta det du inte behöver.
 browse-open = Bläddra…
 browse-close = Stäng
-browse-scanning = Skannar… { $count } hittade hittills
+browse-scanning = Skannar… { $count ->
+    [one] { $count } hittad hittills
+   *[other] { $count } hittade hittills
+}
 browse-mark-partial = Delvis inkluderad
 browse-mark-included = Inkluderad
 browse-mark-excluded = Exkluderad
@@ -93,7 +99,10 @@ wizard-pattern-placeholder = Utelämna namn som matchar, t.ex. *.tmp eller node_
 wizard-one-file-system = Stanna på samma enhet
 wizard-one-file-system-description = Följ inte in i andra enheter eller nätverksresurser som är monterade i de här mapparna.
 wizard-estimate-label = Uppskattad storlek
-wizard-estimate = { $size } · { $files } filer
+wizard-estimate = { $size } · { $files ->
+    [one] { $files } fil
+   *[other] { $files } filer
+}
 wizard-estimate-counting = Räknar…
 wizard-estimate-note = Den första säkerhetskopian blir oftast mindre efter komprimering och deduplicering. Senare säkerhetskopior sparar bara det som ändrats.
 wizard-where-intro = Välj var säkerhetskopian ska förvaras: en tom mapp, helst på en annan enhet.
@@ -269,8 +278,14 @@ compare-button = Jämför
 compare-intro = Välj två ögonblicksbilder för att se vad som ändrats.
 compare-none = Inget ändrades mellan de här ögonblicksbilderna.
 compare-summary = { $added } tillagda · { $removed } borttagna · { $changed } ändrade
-compare-folder = { $folder } ({ $count } ändrade)
-compare-folder-root = { $count } ändrade här
+compare-folder = { $folder } ({ $count ->
+    [one] { $count } ändrad
+   *[other] { $count } ändrade
+})
+compare-folder-root = { $count ->
+    [one] { $count } ändrad
+   *[other] { $count } ändrade
+} här
 restore-sheet-title = { $count ->
     [one] Återställ 1 objekt
    *[other] Återställ { $count } objekt
@@ -337,6 +352,7 @@ error-password-not-saved = Lösenordet kunde inte sparas i nyckelringen: { $deta
 error-delete-unsupported = Stellarshot kan inte radera det här målets egna data på egen hand. Ta bort dem där själv, eller använd Ta bort för att glömma det här utan att radera något.
 change = Ändra…
 schedule-row = När den körs
+schedule-retention-summary = { $schedule } · { $retention }
 hooks-row = Krokar
 hooks-row-none = Inga krokar inställda
 hooks-row-count = { $count ->
@@ -508,7 +524,10 @@ event-failed = { $stage } misslyckades: { $reason }
 event-skipped = Hoppades över: { $reason }
 event-checked-sound = Kontrollen godkändes
 event-checked-damaged = Kontrollen hittade skador
-event-cleaned-up = Glömde { $count } ögonblicksbilder, frigjorde { $size }
+event-cleaned-up = Glömde { $count ->
+    [one] { $count } ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+}, frigjorde { $size }
 event-restored = { $count ->
     [one] Återställde 1 fil ({ $size })
    *[other] Återställde { $count } filer ({ $size })
@@ -618,7 +637,10 @@ web-password-set = Ange lösenordet
 web-password-placeholder = Nytt lösenord
 web-password-saved-body = Webbgränssnittet använder det nästa gång det startar.
 web-password-failed = Webbgränssnittets lösenord kunde inte sparas.
-web-password-length = { $count } av { $minimum } tecken
+web-password-length = { $count } av { $minimum ->
+    [one] { $minimum } tecken
+   *[other] { $minimum } tecken
+}
 web-auth-token = API-token
 web-auth-token-description = En genererad token för skriptad användning av webbgränssnittets API.
 web-token-generate = Token
@@ -644,6 +666,8 @@ web-tls-description = Webbgränssnittet nås alltid via HTTPS. Som standard skap
 web-tls-cert = Certifikat
 web-tls-key = Privat nyckel
 web-tls-default = Självsignerat (skapas automatiskt)
+web-tls-choose = Välj…
+web-tls-reset = Använd standard
 web-tls-cert-title = Välj en certifikatfil
 web-tls-key-title = Välj en privat nyckelfil
 web-daemon-title = Bakgrundstjänst

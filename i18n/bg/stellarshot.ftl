@@ -38,7 +38,10 @@ remember-password-description = Пази се в ключодържателя в
 recent-snapshots = Последни моментни състояния
 no-snapshots-yet = Все още няма моментни състояния. Натиснете „Резервно копие сега“ за първото.
 snapshot-row = { $id } · { $size } · { $added } нови, дедублицирани
-show-all-snapshots = Показване на всички { $count } моментни състояния
+show-all-snapshots = Показване на всички { $count ->
+    [one] { $count } моментно състояние
+   *[other] { $count } моментни състояния
+}
 manage = Управление
 edit-backup = Какво се копира
 edit-backup-description = Промяна на включените и изключените папки.
@@ -79,7 +82,10 @@ wizard-add-folders = Добавяне на папки…
 wizard-browse-hint = Разгледайте, за да видите какво заема място, и изключете това, което не ви трябва.
 browse-open = Преглед…
 browse-close = Затваряне
-browse-scanning = Сканиране… досега открити { $count }
+browse-scanning = Сканиране… досега { $count ->
+    [one] открит { $count }
+   *[other] открити { $count }
+}
 browse-mark-partial = Частично включена
 browse-mark-included = Включена
 browse-mark-excluded = Изключена
@@ -93,7 +99,10 @@ wizard-pattern-placeholder = Пропускане на съвпадащи име
 wizard-one-file-system = Оставане на същото устройство
 wizard-one-file-system-description = Без преминаване в други устройства или мрежови ресурси, монтирани в тези папки.
 wizard-estimate-label = Приблизителен размер
-wizard-estimate = { $size } · { $files } файла
+wizard-estimate = { $size } · { $files ->
+    [one] { $files } файл
+   *[other] { $files } файла
+}
 wizard-estimate-counting = Преброяване…
 wizard-estimate-note = Първото копие обикновено е по-малко след компресия и премахване на дубликати. Следващите записват само промените.
 wizard-where-intro = Изберете къде да се пази копието: празна папка, за предпочитане на друго устройство.
@@ -269,8 +278,14 @@ compare-button = Сравняване
 compare-intro = Изберете две моментни състояния, за да видите промените.
 compare-none = Нищо не се е променило между тези състояния.
 compare-summary = { $added } добавени · { $removed } премахнати · { $changed } променени
-compare-folder = { $folder } ({ $count } променени)
-compare-folder-root = { $count } променени тук
+compare-folder = { $folder } ({ $count ->
+    [one] { $count } променен
+   *[other] { $count } променени
+})
+compare-folder-root = { $count ->
+    [one] { $count } променен
+   *[other] { $count } променени
+} тук
 restore-sheet-title = { $count ->
     [one] Възстановяване на 1 елемент
    *[other] Възстановяване на { $count } елемента
@@ -337,6 +352,7 @@ error-password-not-saved = Паролата не можа да бъде запа
 error-delete-unsupported = Stellarshot не може да изтрие данните на тази дестинация сам. Премахнете ги там сами или използвайте „Премахване“, за да ги забравите тук, без да изтривате нищо.
 change = Промяна…
 schedule-row = Кога се изпълнява
+schedule-retention-summary = { $schedule } · { $retention }
 hooks-row = Куки
 hooks-row-none = Няма настроени куки
 hooks-row-count = { $count ->
@@ -508,7 +524,10 @@ event-failed = { $stage } неуспешно: { $reason }
 event-skipped = Пропуснато: { $reason }
 event-checked-sound = Проверката премина успешно
 event-checked-damaged = Проверката откри повреда
-event-cleaned-up = Забравени { $count } моментни състояния, освободени { $size }
+event-cleaned-up = Забравени { $count ->
+    [one] { $count } моментно състояние
+   *[other] { $count } моментни състояния
+}, освободени { $size }
 event-restored = { $count ->
     [one] Възстановен е 1 файл ({ $size })
    *[other] Възстановени са { $count } файла ({ $size })
@@ -618,7 +637,10 @@ web-password-set = Задаване на паролата
 web-password-placeholder = Нова парола
 web-password-saved-body = Уеб интерфейсът ще я използва при следващото стартиране.
 web-password-failed = Паролата на уеб интерфейса не можа да бъде запазена.
-web-password-length = { $count } от { $minimum } знака
+web-password-length = { $count } от { $minimum ->
+    [one] { $minimum } знак
+   *[other] { $minimum } знака
+}
 web-auth-token = API токен
 web-auth-token-description = Генериран токен за програмно използване на API-то на уеб интерфейса.
 web-token-generate = Токен
@@ -644,6 +666,8 @@ web-tls-description = Уеб интерфейсът винаги се достъ
 web-tls-cert = Сертификат
 web-tls-key = Частен ключ
 web-tls-default = Самоподписан (генериран автоматично)
+web-tls-choose = Избор…
+web-tls-reset = Използване по подразбиране
 web-tls-cert-title = Избор на файл със сертификат
 web-tls-key-title = Избор на файл с частен ключ
 web-daemon-title = Демон

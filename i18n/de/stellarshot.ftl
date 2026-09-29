@@ -38,7 +38,10 @@ remember-password-description = Wird in deinem Schlüsselbund gespeichert. Gepla
 recent-snapshots = Letzte Momentaufnahmen
 no-snapshots-yet = Noch keine Momentaufnahmen. Drücke „Jetzt sichern“ für die erste.
 snapshot-row = { $id } · { $size } · { $added } neu, dedupliziert
-show-all-snapshots = Alle { $count } Momentaufnahmen anzeigen
+show-all-snapshots = Alle { $count ->
+    [one] { $count } Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} anzeigen
 manage = Verwalten
 edit-backup = Was gesichert wird
 edit-backup-description = Ein- und ausgeschlossene Ordner ändern.
@@ -79,7 +82,10 @@ wizard-add-folders = Ordner hinzufügen …
 wizard-browse-hint = Durchsuchen, um zu sehen, was Platz beansprucht, und ausschließen, was nicht gebraucht wird.
 browse-open = Durchsuchen …
 browse-close = Schließen
-browse-scanning = Wird gescannt … bisher { $count } gefunden
+browse-scanning = Wird gescannt … bisher { $count ->
+    [one] { $count } gefunden
+   *[other] { $count } gefunden
+}
 browse-mark-partial = Teilweise eingeschlossen
 browse-mark-included = Eingeschlossen
 browse-mark-excluded = Ausgeschlossen
@@ -93,7 +99,10 @@ wizard-pattern-placeholder = Passende Namen auslassen, z. B. *.tmp oder node_mod
 wizard-one-file-system = Auf demselben Laufwerk bleiben
 wizard-one-file-system-description = Keinen anderen Laufwerken oder Netzwerkfreigaben folgen, die in diesen Ordnern eingehängt sind.
 wizard-estimate-label = Geschätzte Größe der Sicherung
-wizard-estimate = { $size } · { $files } Dateien
+wizard-estimate = { $size } · { $files ->
+    [one] { $files } Datei
+   *[other] { $files } Dateien
+}
 wizard-estimate-counting = Wird gezählt …
 wizard-estimate-note = Die erste Sicherung ist nach Kompression und Deduplizierung meist kleiner. Spätere Sicherungen speichern nur Änderungen.
 wizard-where-intro = Wähle, wo die Sicherung aufbewahrt wird: ein leerer Ordner, am besten auf einem anderen Laufwerk.
@@ -269,8 +278,14 @@ compare-button = Vergleichen
 compare-intro = Wähle zwei Momentaufnahmen, um zu sehen, was sich geändert hat.
 compare-none = Zwischen diesen Momentaufnahmen hat sich nichts geändert.
 compare-summary = { $added } hinzugefügt · { $removed } entfernt · { $changed } geändert
-compare-folder = { $folder } ({ $count } geändert)
-compare-folder-root = { $count } hier geändert
+compare-folder = { $folder } ({ $count ->
+    [one] { $count } geändert
+   *[other] { $count } geändert
+})
+compare-folder-root = { $count ->
+    [one] { $count } hier geändert
+   *[other] { $count } hier geändert
+}
 restore-sheet-title = { $count ->
     [one] 1 Element wiederherstellen
    *[other] { $count } Elemente wiederherstellen
@@ -337,6 +352,7 @@ error-password-not-saved = Das Passwort konnte nicht im Schlüsselbund gespeiche
 error-delete-unsupported = Stellarshot kann die Daten dieses Ziels nicht selbst löschen. Entferne sie dort selbst, oder verwende „Entfernen“, um sie hier zu vergessen, ohne etwas zu löschen.
 change = Ändern …
 schedule-row = Wann sie läuft
+schedule-retention-summary = { $schedule } · { $retention }
 hooks-row = Hooks
 hooks-row-none = Keine Hooks eingerichtet
 hooks-row-count = { $count ->
@@ -508,7 +524,10 @@ event-failed = { $stage } fehlgeschlagen: { $reason }
 event-skipped = Übersprungen: { $reason }
 event-checked-sound = Prüfung bestanden
 event-checked-damaged = Prüfung hat Schäden gefunden
-event-cleaned-up = { $count } Momentaufnahmen vergessen, { $size } freigegeben
+event-cleaned-up = { $count ->
+    [one] { $count } Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} vergessen, { $size } freigegeben
 event-restored = { $count ->
     [one] 1 Datei wiederhergestellt ({ $size })
    *[other] { $count } Dateien wiederhergestellt ({ $size })
@@ -618,7 +637,10 @@ web-password-set = Passwort festlegen
 web-password-placeholder = Neues Passwort
 web-password-saved-body = Die Weboberfläche verwendet es beim nächsten Start.
 web-password-failed = Das Passwort der Weboberfläche konnte nicht gespeichert werden.
-web-password-length = { $count } von { $minimum } Zeichen
+web-password-length = { $count } von { $minimum ->
+    [one] { $minimum } Zeichen
+   *[other] { $minimum } Zeichen
+}
 web-auth-token = API-Token
 web-auth-token-description = Ein erzeugtes Token für die programmgesteuerte Nutzung der API der Weboberfläche.
 web-token-generate = Token
@@ -644,6 +666,8 @@ web-tls-description = Die Weboberfläche wird immer über HTTPS erreicht. Standa
 web-tls-cert = Zertifikat
 web-tls-key = Privater Schlüssel
 web-tls-default = Selbstsigniert (automatisch erzeugt)
+web-tls-choose = Auswählen …
+web-tls-reset = Standard verwenden
 web-tls-cert-title = Zertifikatsdatei auswählen
 web-tls-key-title = Datei mit privatem Schlüssel auswählen
 web-daemon-title = Dienst

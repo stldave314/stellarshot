@@ -714,13 +714,16 @@ impl App {
             web_allowed = web_allowed.add(add_row);
         }
 
+        // Its own keys (`web-tls-choose`/`-reset`), not the cache directory
+        // row's: the two are unrelated, and reusing one generic key for
+        // both denies a translator the context to word them differently.
         let choose_or_reset = |chosen: bool, choose: Message, reset: Message| {
             widget::row::with_capacity(2)
                 .spacing(spacing.space_xs)
-                .push(widget::button::standard(fl!("settings-cache-dir-choose")).on_press(choose))
-                .push_maybe(chosen.then(|| {
-                    widget::button::standard(fl!("settings-cache-dir-reset")).on_press(reset)
-                }))
+                .push(widget::button::standard(fl!("web-tls-choose")).on_press(choose))
+                .push_maybe(
+                    chosen.then(|| widget::button::standard(fl!("web-tls-reset")).on_press(reset)),
+                )
         };
         let web_tls = widget::settings::section()
             .title(fl!("web-tls-title"))

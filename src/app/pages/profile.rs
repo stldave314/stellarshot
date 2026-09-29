@@ -768,10 +768,10 @@ impl ProfileState {
                 .title(fl!("manage"))
                 .add(
                     widget::settings::item::builder(fl!("schedule-row"))
-                        .description(format!(
-                            "{} · {}",
-                            schedule_summary(profile.schedule),
-                            retention_label(profile.retention)
+                        .description(fl!(
+                            "schedule-retention-summary",
+                            schedule = schedule_summary(profile.schedule),
+                            retention = retention_label(profile.retention)
                         ))
                         .control(
                             widget::button::standard(fl!("change")).on_press(Message::EditSchedule),

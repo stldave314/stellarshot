@@ -3690,7 +3690,7 @@ reimplementing the probe it tests.
 
 ### TST-5. Coverage gaps
 
-**Status: 5 of 8 done — the extra one found a real bug, not just a
+**Status: Done, all 8 — one of them found a real bug, not just a
 coverage gap.** Writing the file-vs-directory test this row asked for
 surfaced a genuine correctness bug rather than merely missing coverage:
 `restore_one`'s shaping loop treated `on_disk.symlink_metadata()` failing
@@ -3749,7 +3749,19 @@ directory conflict (already handled correctly by the pre-existing
   different credential silently take over).
 - **File-vs-directory and symlink conflicts on restore:** done — see the
   status note above.
-- An `archive_folder` failure partway through: not started.
+- **An `archive_folder` failure partway through:** done. New
+  `corrupt_every_file` test helper overwrites every pack file under a real
+  repository's `data/` directory after a real backup, leaving `index/` and
+  the config untouched, so opening and listing the snapshot still succeed
+  but reading an actual file's content fails the same way a damaged remote
+  or bit-rotted disk would. `archive_folder_leaves_nothing_behind_when_a_blob_read_fails_partway_through`
+  proves `write_atomically`'s all-or-nothing guarantee holds for a failure
+  that happens after real bytes were already written to the temp file, not
+  only for the upfront rejections `archive_folder_refuses_a_file` and
+  `dump_file_refuses_a_folder` already covered (both fail before
+  `write_atomically` writes anything at all): the destination file does
+  not exist afterward, and no stray temp file is left in its folder
+  either.
 
 **Medium · M**
 

@@ -484,6 +484,7 @@ Three more changes from watching the app actually get used, none of them logic a
 | `dump_file_writes_exactly_that_files_bytes` | A file downloaded from a snapshot matches its backed-up content byte for byte, via rustic's own `dump` |
 | `dump_file_refuses_a_folder`, `archive_folder_refuses_a_file` | Downloading a folder as a file, or a file as a folder, is refused before anything is written, rather than producing an empty or wrong file |
 | `archive_folder_produces_a_tar_gz_with_the_same_tree` | A folder downloaded as a `.tar.gz`, extracted with a real `tar`/`gzip` reader, matches the original tree exactly — names, content and Unix permissions, proven against a tree with nested folders, unicode names, a `0600` file and a symlink |
+| `archive_folder_leaves_nothing_behind_when_a_blob_read_fails_partway_through` (TST-5) | A failure well after writing has started — not merely an upfront rejection — still leaves nothing behind: neither the destination `.tar.gz` nor a stray temp file in its folder. A new `corrupt_every_file` helper overwrites every pack under a real repository's `data/` directory after a real backup (leaving `index/` and the config alone), so opening and listing still succeed but reading a file's actual content fails the way a damaged remote or bit-rotted disk would |
 
 `Browser` moved from a size-optimized index (`IndexedIdsStatus`) to a fully-loaded one (`IndexedFullStatus`, via `to_indexed()` rather than `to_indexed_ids()`) so `dump` is available to call at all; every other browse operation (list, search, versions, diff, missing) keeps working unchanged, since `IndexedFullStatus` is a superset. Not covered by an automated test: the "Download…" buttons themselves in `src/app/pages/restore.rs`, or the save-file dialog they open — UI wiring, not new logic, following the same pattern already proven for **Open Copy** and **Restore This Version…**.
 
@@ -506,8 +507,10 @@ project) and move it into place only once the write actually finishes;
 still passes, though that specific assertion was already true before this
 change too (the folder-vs-file check runs before any file is touched
 either way) — the atomicity this adds instead covers a failure *partway
-through* a real write, which no existing test forces (would need a way to
-make the backend fail mid-archive; not built). A directory entry with no
+through* a real write, later proven directly by
+`archive_folder_leaves_nothing_behind_when_a_blob_read_fails_partway_through`
+(TST-5), corrupting the backend's own pack data to force exactly that.
+A directory entry with no
 recorded mode now defaults to `0o755`, not `0o644` — not independently
 tested, since a real local backup's directories always have a real mode
 already; a backend that omits it is the untested case this exists for.

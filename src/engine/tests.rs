@@ -1182,6 +1182,51 @@ fn archive_folder_refuses_a_file() {
     assert!(!destination.exists(), "nothing is written on failure");
 }
 
+/// Overwrites every file directly under `dir` with garbage: used to make a
+/// repository's own pack data unreadable without touching its index or
+/// config, the same failure mode a damaged remote or a bit-rotted disk
+/// would cause partway through reading a blob that opened and indexed
+/// just fine.
+fn corrupt_every_file(dir: &Path) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if fs::metadata(&path).unwrap().is_dir() {
+            corrupt_every_file(&path);
+        } else {
+            fs::write(&path, b"corrupted").unwrap();
+        }
+    }
+}
+
+/// TST-5: `write_atomically`'s all-or-nothing guarantee must hold even for
+/// a failure that happens well after writing has started, not only for an
+/// upfront rejection like `archive_folder_refuses_a_file` above.
+#[test]
+fn archive_folder_leaves_nothing_behind_when_a_blob_read_fails_partway_through() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("nested")).unwrap();
+    fs::write(fixture.source.join("nested/a.txt"), b"first file").unwrap();
+    fs::write(fixture.source.join("nested/b.txt"), b"second file").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    corrupt_every_file(&fixture.repo.local_path().unwrap().join("data"));
+
+    let destination = fixture.work.join("nested.tar.gz");
+    let err = browser(&fixture)
+        .archive_folder("latest", &fixture.source.join("nested"), &destination)
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Internal, "{err:?}");
+    assert!(
+        !destination.exists(),
+        "nothing is written when a blob fails to read partway through archiving"
+    );
+    assert_eq!(
+        fs::read_dir(&fixture.work).unwrap().count(),
+        0,
+        "no stray temp file is left behind in the destination's own folder either"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Mounting a snapshot through FUSE
 // ---------------------------------------------------------------------------

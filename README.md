@@ -1,24 +1,45 @@
 # Stellarshot
 
-A backup application for the [COSMIC](https://system76.com/cosmic) desktop,
-built on [rustic](https://rustic.cli.rs/).
+**A backup app for the [COSMIC](https://system76.com/cosmic) desktop that you
+actually set up once and trust.**
 
-Most people know they should back up and don't, because the tools ask too much.
-The command-line tools are excellent and expect you to remember flags, write
-cron jobs and read restore output. The friendly desktop tools let you keep
-exactly one backup and make getting a single file back harder than it should be.
+Most people know they should back up, and don't — the good tools ask too
+much, and the friendly ones make you settle for one backup and a restore
+process that's harder than it should be. Stellarshot is built on
+[rustic](https://rustic.cli.rs/) to fix both: several independent, scheduled
+backups anywhere you want them, and a restore you can browse, search and
+preview before anything gets written.
 
-Stellarshot is heading towards a COSMIC-native backup app you set up once and
-trust: several independent backups (your home folder to a USB drive, your
-photos to Google Drive), each on its own schedule, and a restore process that
-lets you browse any snapshot, see every version of a file, find what you
-deleted, and preview a restore before anything is written.
+- **Set it up once, with a live size estimate.** A four-step wizard shows
+  exactly what you're backing up — what's included, what's excluded, and the
+  total — before you commit to anything.
+- **Back up anywhere.** A folder, a USB drive, an SSH server, Google Drive, or
+  any of rclone's other destinations, all side by side with their own
+  schedules and settings.
+- **It runs itself.** Hourly, daily or weekly through systemd, whether or not
+  the window is open. Skips a slot on battery or an untrusted network if you
+  ask it to, and catches up the next time you're back.
+- **Get files back with confidence.** Browse any snapshot, see every version
+  of a file, search your whole history at once, compare two snapshots, or
+  preview a restore before anything is written.
+- **No lock-in, ever.** Every backup is a standard restic repository. If
+  Stellarshot disappeared tomorrow, the `restic` and `rustic` command-line
+  tools could still read every snapshot you ever made.
+- **Already using Déjà Dup?** Stellarshot imports it directly — folders,
+  exclusions and full history included.
+- **Speaks your language.** English, Bulgarian, German, Swedish and Swiss
+  German, following the desktop's own language setting.
 
-Every backup is a standard **restic repository**. If this app disappeared
-tomorrow, the `restic` and `rustic` command-line tools could still read every
-snapshot you ever made.
+<p align="center">
+  <img src="docs/screenshots/profile.png" alt="A backup and its snapshots, with Back Up Now" width="100%">
+</p>
 
-![A backup and its snapshots, with Back Up Now](docs/screenshots/profile.png)
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/wizard.png" alt="Setting up a backup, with a live size estimate" width="100%"></td>
+<td width="50%"><img src="docs/screenshots/restore.png" alt="Browsing a snapshot to restore files" width="100%"></td>
+</tr>
+</table>
 
 > **Status: early, and not yet something to trust with your only copy.** You
 > can set up backups of folders to a USB drive, another folder, an SSH server
@@ -32,102 +53,9 @@ snapshot you ever made.
 
 ---
 
-## What it does today
-
-- **Several backups, each with its own settings.** "Home to the USB drive" and
-  "Projects to the NAS folder" live side by side in the sidebar, each with its
-  own folders, exclusions, destination and password.
-- **A setup wizard.** Four steps: what to back up, where to keep it, when it
-  runs, and the password. It starts from your home folder with the usual clutter
-  (`~/.cache`, the Trash, `~/Downloads`) already left out.
-- **A size estimate you can trust.** The wizard shows how much will be backed up
-  while you choose, with excluded folders **subtracted** from the folders they
-  sit in, and the sum written out: *45 GB included − 12 GB excluded = 33 GB*.
-  It is worked out from the very same file list the backup reads, so it
-  matches what the backup processes, to the byte. Each included folder shows
-  its own size, and each exclusion shows how much it takes out.
-- **"Back Up Now" on the main screen**, with a progress card and **Cancel**.
-  The card counts its running time, shows how much has reached cloud storage,
-  and says what it is waiting for when the figures stand still. Backups run
-  in their own process: the window never freezes, **Cancel** stops the backup
-  and the rclone connection under it at once, a canceled or interrupted
-  backup never leaves a half-written snapshot, and closing the window lets a
-  running backup finish.
-- **"Estimate Size" next to "Back Up Now"** shows how much an existing
-  backup would cover right now, without opening it or asking for its
-  password: the same folder walk the setup wizard's own live estimate uses.
-- **Passwords remembered in your keyring**, if you want (it is on by default).
-  They go to the desktop's Secret Service (GNOME Keyring, KWallet) and nowhere
-  else. Without it, the page asks once per session.
-- **Status at a glance.** "Last backup 2 hours ago", where the backup is, how
-  many snapshots it holds, and the most recent snapshots with their size and
-  how much new data each added, deduplicated. **Pin** a snapshot ("before the
-  upgrade") so cleaning up never removes it, however old it gets.
-- **A History page** lists every backup's activity in one place: backups,
-  checks, clean-ups, restores, snapshot deletions, pin changes, password
-  changes, and mounts, newest first.
-- **Two different ways to let go of a backup.** *Remove from Stellarshot*
-  forgets it and leaves the data alone. *Delete backup and all data* deletes
-  it, and only after you type the backup's name.
-- **Deleting never touches anything else.** Only the entries the repository
-  format creates are removed; other files in the same folder stay, symlinks are
-  not followed, and nothing is deleted while another backup is writing.
-- **Back up wherever suits you.** A folder, a **USB drive** (recognized by
-  its ID, so it still works when it is mounted somewhere new), an **SSH
-  server**, **Google Drive** (you sign in from Stellarshot), or any of **your
-  own rclone remotes**: OneDrive, Dropbox, S3 and everything else rclone
-  supports.
-- **Imports Déjà Dup backups.** If you have used Déjà Dup, Stellarshot offers to
-  bring its backup across, folders, exclusions and full history included, as
-  long as it is in the restic format Déjà Dup uses for new backups. You type
-  the password; Stellarshot never reads Déjà Dup's.
-- **Opens existing backups.** Point it at a repository made by an earlier
-  Stellarshot, by `restic` or by `rustic`, give the password, and it carries on
-  with the same folders the last snapshot covered.
-- **Getting files back without the command line.** Browse any snapshot as a
-  folder tree, search it, and see every version of a file, with identical
-  versions marked. **Search everywhere** finds a file by name across every
-  snapshot at once, not just the one open, and jumps straight to it.
-  **Deleted files** lists what your backups still have that is no longer on
-  disk, and **Compare** shows what changed between two snapshots, grouped by
-  folder. **Mount as Folder…** opens a whole snapshot read-only, browsable
-  and openable with any application, without restoring or downloading
-  anything. **Download…** saves a file, an older version of one, or a whole
-  folder as a `.tar.gz`, straight from the snapshot, without restoring
-  anything.
-- **A restore that shows you what it will do first.** Put files back where
-  they were or in another folder. When a file is already there, choose **Keep
-  both** (the default: your file is not touched and the restored copy gets a
-  dated name), **Overwrite** or **Skip**. A dry run counts what will be
-  restored, replaced, kept alongside or left alone before anything is written.
-- **Backups that run on their own.** Hourly, daily or weekly, through a
-  systemd timer, whether or not Stellarshot is open. A backup missed while the
-  computer was off runs as soon as you are back. If one fails, a notification
-  says so and a click opens the backup; an unplugged drive is simply tried
-  again at the next slot.
-- **Old snapshots cleaned up for you.** Keep a smart history (the newest
-  snapshot of each of the last 7 days, 4 weeks and 12 months that have one;
-  [exactly how](#how-smart-decides-what-to-keep)) or everything from the last
-  3 months, 6 months or year. Space no snapshot needs is freed
-  automatically where that is safe, and the repository is checked for damage
-  every 30 days.
-- **Incremental and deduplicated.** Unchanged files are not stored again, and
-  identical data is stored once however many files contain it.
-- **Your language.** English, Bulgarian, German, Swedish and Swiss German,
-  following the desktop's language.
-
-## What is coming
-
-A web interface and REST API — off by default (see [Settings](#settings)),
-it can start an existing backup and report on every backup's status; there
-is no web page to browse or restore from yet, and signing in with this
-computer's own password (PAM) is not wired up. See
-[docs/web-interface.md](docs/web-interface.md) for what it can do today.
-Also: a clearer picture of every backup, finer control over what is backed
-up, more storage options and alerts beyond the desktop, on the way to 1.0.
-The detail is in [ROADMAP.md](ROADMAP.md).
-
----
+Everything below is technical reference material: installing, day-to-day
+use, settings, troubleshooting, and how it's built. Click a summary line to
+expand it.
 
 ## Requirements
 
@@ -197,17 +125,27 @@ Every build it makes passes `--features release-build`, so an installed or
 packaged binary can never carry developer debug logging. Set `CARGO_JOBS=4` to
 limit parallel compile jobs on a small machine.
 
+## What is coming
+
+A web interface and REST API — off by default (see [Settings](#settings)),
+it can start an existing backup and report on every backup's status; there
+is no web page to browse or restore from yet, and signing in with this
+computer's own password (PAM) is not wired up. See
+[docs/web-interface.md](docs/web-interface.md) for what it can do today.
+Also: a clearer picture of every backup, finer control over what is backed
+up, more storage options and alerts beyond the desktop, on the way to 1.0.
+The detail is in [ROADMAP.md](ROADMAP.md).
+
 ---
 
 ## Using it
 
-### Setting up a backup
+<details>
+<summary><strong>Setting up a backup</strong></summary>
 
 On first launch, press **Create a Backup…** (or **File → New Backup…**,
 <kbd>Ctrl</kbd>+<kbd>N</kbd>, or **New Backup** from the launcher's
 right-click menu).
-
-![Setting up a backup, with a live size estimate](docs/screenshots/wizard.png)
 
 1. **What.** Your home folder is included, with `~/.cache`, the Trash and
    `~/Downloads` left out. **Add Folders…** under *Include* or *Exclude* adds
@@ -291,13 +229,19 @@ If the backup folder is inside one of the folders you back up — `~` backed up
 to `~/Backups/home` — Stellarshot leaves the backup folder out automatically,
 so a backup never copies itself.
 
-### Opening an existing backup
+</details>
+
+<details>
+<summary><a id="opening-an-existing-backup"></a><strong>Opening an existing backup</strong></summary>
 
 **Open an existing backup** on the first screen asks where it is (any of the
 places above) and its password. The folders to back up are taken from the most
 recent snapshot, so the backup carries on as it was.
 
-### Importing from Déjà Dup
+</details>
+
+<details>
+<summary><strong>Importing from Déjà Dup</strong></summary>
 
 When Déjà Dup's settings are found (the Flatpak or the native install), the
 first screen shows **Import from Déjà Dup**; it is also in the **File** menu.
@@ -319,7 +263,10 @@ recognized and refused, and stays readable in Déjà Dup. Déjà Dup's own
 settings are never changed; if its automatic backups are on, turn them off in
 Déjà Dup so the two apps do not both back up the same folders.
 
-### Backing up
+</details>
+
+<details>
+<summary><strong>Backing up</strong></summary>
 
 Select the backup in the sidebar and press **Back Up Now**
 (<kbd>Ctrl</kbd>+<kbd>B</kbd>). A progress card shows the phase, how much has
@@ -346,13 +293,14 @@ backup or asking for its password. It only walks the folders on disk, so it
 does not know how much of that is already stored or how long an actual
 backup would take.
 
-### Getting files back
+</details>
+
+<details>
+<summary><strong>Getting files back</strong></summary>
 
 On a backup's page, press **Restore…** (or choose **Restore Files** from the
 launcher's right-click menu, which opens the selected backup's restore page as
 soon as it is unlocked).
-
-![Browsing a snapshot to restore files](docs/screenshots/restore.png)
 
 | Tab | What it is for |
 | --- | --- |
@@ -392,7 +340,10 @@ snapshot are left alone.
 runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out),
 makes it read-only, and opens it with its usual application.
 
-### Automatic backups
+</details>
+
+<details>
+<summary><strong>Automatic backups</strong></summary>
 
 A scheduled backup runs `stellarshot --scheduled <id>` from a systemd user
 timer (or, for **When its drive is connected**, a systemd path unit watching
@@ -421,7 +372,10 @@ then frees space if that is turned on.
 Only one thing writes to a backup at a time: if you press **Back Up Now**
 while a scheduled backup is running, you are told it is busy.
 
-### The panel applet
+</details>
+
+<details>
+<summary><strong>The panel applet</strong></summary>
 
 Add **Stellarshot** from COSMIC Settings' panel applet list for a status icon:
 plain when everything is fine, a sync icon while a backup (scheduled or
@@ -439,7 +393,10 @@ nothing is left watching it or showing its progress. Quitting the applet
 itself never affects a backup, which the window (or a scheduled run) runs
 independently of it.
 
-### Hooks
+</details>
+
+<details>
+<summary><strong>Hooks</strong></summary>
 
 A backup can run a command or program at four points:
 
@@ -461,7 +418,10 @@ failure, so a stuck one cannot hang a backup forever.
 An **After** hook's own failure is recorded in the log but does not undo an
 already-finished backup or turn its success into a reported failure.
 
-### How "Smart" decides what to keep
+</details>
+
+<details>
+<summary><a id="how-smart-decides-what-to-keep"></a><strong>How "Smart" decides what to keep</strong></summary>
 
 A backup is only as trustworthy as the rules that delete from it, so here
 they are in full. After each automatic backup, and on **Clean Up Now**,
@@ -501,14 +461,17 @@ The rules are rustic's own `keep-daily 7`, `keep-weekly 4` and
 --keep-monthly 12 --dry-run` shows exactly what the next clean-up would
 forget. `src/engine/maintenance.rs` has tests for each rule above.
 
-### Changing a backup
+</details>
+
+<details>
+<summary><strong>Changing a backup</strong></summary>
 
 The **Manage** section at the bottom of each backup's page:
 
 | Action | What happens |
 | --- | --- |
 | **When it runs → Change…** | Automatic backups on or off, how often, what to keep, and whether to free space |
-| **Hooks → Change…** | Commands or programs run before and after a backup — see [Hooks](#hooks) below |
+| **Hooks → Change…** | Commands or programs run before and after a backup |
 | **Check for damage → Check Now** | Verifies every snapshot, folder and index entry. It shows when it last ran |
 | **Free up space → Clean Up Now** | Forgets snapshots **Keep** no longer needs and deletes data nothing uses. It cannot be stopped once started |
 | **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
@@ -520,7 +483,10 @@ The **Manage** section at the bottom of each backup's page:
 Individual snapshots are deleted with the bin icon on their row; the pin icon
 next to it keeps one however old it gets, until unpinned.
 
-### Keyboard shortcuts
+</details>
+
+<details>
+<summary><strong>Keyboard shortcuts</strong></summary>
 
 | Shortcut | Action |
 | --- | --- |
@@ -529,11 +495,14 @@ next to it keeps one however old it gets, until unpinned.
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Ctrl</kbd>+<kbd>I</kbd> | About |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | New window — a genuinely separate one, not just refocusing this one |
-| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel; see [The panel applet](#the-panel-applet)) |
+| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel) |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit for real, rather than minimizing to the panel. Asks first if a backup is running — it keeps going in its own process either way, but nothing is left watching it |
 | <kbd>F1</kbd> | Help |
 
-### Command line
+</details>
+
+<details>
+<summary><strong>Command line</strong></summary>
 
 | Command | Effect |
 | --- | --- |
@@ -546,7 +515,10 @@ next to it keeps one however old it gets, until unpinned.
 | `stellarshot-web` | The web interface's daemon: reads the Web interface setting and, unless it is Off, binds and serves the REST API over HTTPS. Managed as a systemd user service, started and stopped from Settings; not normally run by hand |
 | `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
 
-### Reading your backups without Stellarshot
+</details>
+
+<details>
+<summary><strong>Reading your backups without Stellarshot</strong></summary>
 
 Every backup is a standard restic repository:
 
@@ -576,6 +548,8 @@ more detail. Cleaning up is always safe from inside Stellarshot itself
 (**Clean Up Now**, or the automatic clean-up after a scheduled backup): both
 run rustic's own `forget`/`prune`, never restic's.
 
+</details>
+
 ---
 
 ## Settings
@@ -592,28 +566,129 @@ page. Everything is stored through `cosmic-config` in
 `~/.config/cosmic/io.github.stldave314.Stellarshot/`. Passwords are never
 stored there, only in the keyring when you ask.
 
+<details>
+<summary><strong>Everything it does today, in detail</strong></summary>
+
+- **Several backups, each with its own settings.** "Home to the USB drive" and
+  "Projects to the NAS folder" live side by side in the sidebar, each with its
+  own folders, exclusions, destination and password.
+- **A setup wizard.** Four steps: what to back up, where to keep it, when it
+  runs, and the password. It starts from your home folder with the usual clutter
+  (`~/.cache`, the Trash, `~/Downloads`) already left out.
+- **A size estimate you can trust.** The wizard shows how much will be backed up
+  while you choose, with excluded folders **subtracted** from the folders they
+  sit in, and the sum written out: *45 GB included − 12 GB excluded = 33 GB*.
+  It is worked out from the very same file list the backup reads, so it
+  matches what the backup processes, to the byte. Each included folder shows
+  its own size, and each exclusion shows how much it takes out.
+- **"Back Up Now" on the main screen**, with a progress card and **Cancel**.
+  The card counts its running time, shows how much has reached cloud storage,
+  and says what it is waiting for when the figures stand still. Backups run
+  in their own process: the window never freezes, **Cancel** stops the backup
+  and the rclone connection under it at once, a canceled or interrupted
+  backup never leaves a half-written snapshot, and closing the window lets a
+  running backup finish.
+- **"Estimate Size" next to "Back Up Now"** shows how much an existing
+  backup would cover right now, without opening it or asking for its
+  password: the same folder walk the setup wizard's own live estimate uses.
+- **Passwords remembered in your keyring**, if you want (it is on by default).
+  They go to the desktop's Secret Service (GNOME Keyring, KWallet) and nowhere
+  else. Without it, the page asks once per session.
+- **Status at a glance.** "Last backup 2 hours ago", where the backup is, how
+  many snapshots it holds, and the most recent snapshots with their size and
+  how much new data each added, deduplicated. **Pin** a snapshot ("before the
+  upgrade") so cleaning up never removes it, however old it gets.
+- **A History page** lists every backup's activity in one place: backups,
+  checks, clean-ups, restores, snapshot deletions, pin changes, password
+  changes, and mounts, newest first.
+- **Two different ways to let go of a backup.** *Remove from Stellarshot*
+  forgets it and leaves the data alone. *Delete backup and all data* deletes
+  it, and only after you type the backup's name.
+- **Deleting never touches anything else.** Only the entries the repository
+  format creates are removed; other files in the same folder stay, symlinks are
+  not followed, and nothing is deleted while another backup is writing.
+- **Back up wherever suits you.** A folder, a **USB drive** (recognized by
+  its ID, so it still works when it is mounted somewhere new), an **SSH
+  server**, **Google Drive** (you sign in from Stellarshot), or any of **your
+  own rclone remotes**: OneDrive, Dropbox, S3 and everything else rclone
+  supports.
+- **Imports Déjà Dup backups.** If you have used Déjà Dup, Stellarshot offers to
+  bring its backup across, folders, exclusions and full history included, as
+  long as it is in the restic format Déjà Dup uses for new backups. You type
+  the password; Stellarshot never reads Déjà Dup's.
+- **Opens existing backups.** Point it at a repository made by an earlier
+  Stellarshot, by `restic` or by `rustic`, give the password, and it carries on
+  with the same folders the last snapshot covered.
+- **Getting files back without the command line.** Browse any snapshot as a
+  folder tree, search it, and see every version of a file, with identical
+  versions marked. **Search everywhere** finds a file by name across every
+  snapshot at once, not just the one open, and jumps straight to it.
+  **Deleted files** lists what your backups still have that is no longer on
+  disk, and **Compare** shows what changed between two snapshots, grouped by
+  folder. **Mount as Folder…** opens a whole snapshot read-only, browsable
+  and openable with any application, without restoring or downloading
+  anything. **Download…** saves a file, an older version of one, or a whole
+  folder as a `.tar.gz`, straight from the snapshot, without restoring
+  anything.
+- **A restore that shows you what it will do first.** Put files back where
+  they were or in another folder. When a file is already there, choose **Keep
+  both** (the default: your file is not touched and the restored copy gets a
+  dated name), **Overwrite** or **Skip**. A dry run counts what will be
+  restored, replaced, kept alongside or left alone before anything is written.
+- **Backups that run on their own.** Hourly, daily or weekly, through a
+  systemd timer, whether or not Stellarshot is open. A backup missed while the
+  computer was off runs as soon as you are back. If one fails, a notification
+  says so and a click opens the backup; an unplugged drive is simply tried
+  again at the next slot.
+- **Old snapshots cleaned up for you.** Keep a smart history (the newest
+  snapshot of each of the last 7 days, 4 weeks and 12 months that have one;
+  [exactly how](#how-smart-decides-what-to-keep)) or everything from the last
+  3 months, 6 months or year. Space no snapshot needs is freed
+  automatically where that is safe, and the repository is checked for damage
+  every 30 days.
+- **Incremental and deduplicated.** Unchanged files are not stored again, and
+  identical data is stored once however many files contain it.
+- **Your language.** English, Bulgarian, German, Swedish and Swiss German,
+  following the desktop's language.
+
+</details>
+
 ---
 
 ## Troubleshooting
 
-**"… already contains other files" when choosing where to keep a backup.**
+<details>
+<summary>"… already contains other files" when choosing where to keep a backup.</summary>
+
 Working as intended. Choose an empty folder, create a new one in the folder
 chooser, or use **Open an existing backup** for a folder that already holds
 one.
 
-**My backups from an earlier Stellarshot show "Choose what to back up".**
+</details>
+
+<details>
+<summary>My backups from an earlier Stellarshot show "Choose what to back up".</summary>
+
 Earlier versions kept a list of repositories with no idea what was in them.
 Each one is now a backup with no folders chosen yet. Press **Choose
 Folders…** to pick them; the repository and its snapshots are unchanged.
 
-**An earlier Stellarshot created a backup in my home folder.**
+</details>
+
+<details>
+<summary>An earlier Stellarshot created a backup in my home folder.</summary>
+
 Earlier versions accepted any folder. If you picked your home folder, it
 contains `config`, `keys`, `data`, `index` and `snapshots` entries that belong
 to the repository. It shows up in the sidebar; select it and use **Delete
 backup and all data**, which removes only those entries and nothing else in
 your home folder.
 
-**My backups disappeared after updating.**
+</details>
+
+<details>
+<summary>My backups disappeared after updating.</summary>
+
 Settings are copied once from the upstream application ID
 (`com.github.cosmic-utils.Stellarshot`) on first launch, and never over newer
 settings. If you had already started this version before the copy could run,
@@ -624,7 +699,11 @@ cp -r ~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1 \
       ~/.config/cosmic/io.github.stldave314.Stellarshot/
 ```
 
-**Automatic backups do not run.**
+</details>
+
+<details>
+<summary>Automatic backups do not run.</summary>
+
 Check the timer: `systemctl --user list-timers 'stellarshot-*'` should list one
 per scheduled backup, with the next run. If it is missing, open Stellarshot:
 it sets up the timers for every scheduled backup each time it starts. The
@@ -632,93 +711,157 @@ last run's output is in `journalctl --user -u 'stellarshot-backup-*'`. Timers
 run only while you are logged in; a slot missed while logged out runs at the
 next login.
 
-**"Scheduled backups need the password remembered."**
+</details>
+
+<details>
+<summary>"Scheduled backups need the password remembered."</summary>
+
 Open the backup, and enter its password with **Remember password** on. The
 next automatic backup will run.
 
-**The password is asked for every time.**
+</details>
+
+<details>
+<summary>The password is asked for every time.</summary>
+
 **Remember password** was off, or the keyring could not be reached. Check that
 a Secret Service is running (`busctl --user list | grep org.freedesktop.secrets`)
 and that your login keyring is unlocked. Stellarshot waits up to a minute for
 the keyring, for example while you answer an unlock prompt, and then carries on
 without it.
 
-**"Backing up here needs rclone."**
+</details>
+
+<details>
+<summary>"Backing up here needs rclone."</summary>
+
 SSH servers, Google Drive and other cloud storage go through rclone. Install
 it (`sudo apt install rclone` on Debian, Ubuntu and Pop!\_OS) and go back to
 the step.
 
-**Checking a cloud location says there was no answer.**
+</details>
+
+<details>
+<summary>Checking a cloud location says there was no answer.</summary>
+
 The check waits up to a minute. Google Drive in particular slows down apps
 that make many requests, and rclone then waits and retries. Wait a moment and
 press **Next** again. If it keeps happening, check that `rclone lsf
 <remote>:` works in a terminal with Stellarshot's configuration
 (`--config ~/.config/stellarshot/rclone.conf`).
 
-**A cloud backup is slower than I expected.**
-The first backup uploads everything, and cloud storage limits how fast one
-app may send requests (see *Known limitations*). Stellarshot uploads four
-pieces at once and sends Google Drive each piece in one go. Later backups
-only send what changed.
+</details>
 
-**Clean Up Now freed no space on Google Drive.**
+<details>
+<summary>A cloud backup is slower than I expected.</summary>
+
+The first backup uploads everything, and cloud storage limits how fast one
+app may send requests (see [Known limitations](#known-limitations)).
+Stellarshot uploads four pieces at once and sends Google Drive each piece in
+one go. Later backups only send what changed.
+
+</details>
+
+<details>
+<summary>Clean Up Now freed no space on Google Drive.</summary>
+
 Data Stellarshot deletes from Google Drive is deleted permanently, not moved
 to Drive's trash, so the space is freed straight away. Two exceptions: data
 no snapshot needs is only deleted by a clean-up a day or more after it was
-first found unused (see *Known limitations*), and clean-ups by earlier
-versions moved data to the trash, which you can empty in Google Drive.
+first found unused (see [Known limitations](#known-limitations)), and
+clean-ups by earlier versions moved data to the trash, which you can empty in
+Google Drive.
 
-**An SSH server is refused with a host key error.**
+</details>
+
+<details>
+<summary>An SSH server is refused with a host key error.</summary>
+
 Stellarshot checks the server's key against `~/.ssh/known_hosts` and refuses
 servers it does not know, so a changed or spoofed key is never trusted
 silently. Connect once with `ssh user@server` and accept the key, then press
 **Next** again.
 
-**Google sign-in does not finish.**
+</details>
+
+<details>
+<summary>Google sign-in does not finish.</summary>
+
 Sign-in happens in your browser and hands the result back to Stellarshot on
 this computer. If the browser shows an error or you close it, the step says so
 and you can try again. The sign-in is kept only in
 `~/.config/stellarshot/rclone.conf`, which only you can read.
 
-**"… cannot be reached" for a USB drive.**
+</details>
+
+<details>
+<summary>"… cannot be reached" for a USB drive.</summary>
+
 The drive is not plugged in (or not mounted). Plug it in; Stellarshot finds it
 wherever it is mounted.
 
-**"Another backup is already using this repository."**
+</details>
+
+<details>
+<summary>"Another backup is already using this repository."</summary>
+
 Only one process may write to a backup at a time. Wait for the other one to
 finish. If none is running, nothing is holding the lock either: it is released
 automatically when a process ends, even when it crashes.
 
-**Restore… is grayed out.**
+</details>
+
+<details>
+<summary>Restore… is grayed out.</summary>
+
 The backup needs to be unlocked (the password entered or remembered), hold at
 least one snapshot, and not be in the middle of a backup.
 
-**"Nothing is missing" in Deleted files, but I deleted something.**
+</details>
+
+<details>
+<summary>"Nothing is missing" in Deleted files, but I deleted something.</summary>
+
 It only looks under the folder shown at the top of the tab, and only in
 backups from the last 30 days. Press **Change Folder…** to look somewhere else,
 or find the file under **Browse** in an older snapshot.
 
-**"The password is incorrect."**
+</details>
+
+<details>
+<summary>"The password is incorrect."</summary>
+
 The password is the one set when the backup was created. There is no way to
 recover or reset it.
 
-**Cancel does not seem to stop a backup.**
+</details>
+
+<details>
+<summary>Cancel does not seem to stop a backup.</summary>
+
 Cancel stops the backup's process and everything it started, including the
 `rclone` that carries SSH and cloud backups. If a backup keeps going after
 **Cancel**, it was probably started by the timer rather than by the window:
 the window can only stop what it started. Stop a timer's run with
 `systemctl --user stop 'stellarshot-backup-*'`.
 
-**Something else is wrong.**
+</details>
+
+<details>
+<summary>Something else is wrong.</summary>
+
 Turn on developer logging: set `DEVELOPER_LOGGING` to `true` in
 `src/debug.rs`, rebuild *without* `--features release-build`, reproduce the
 problem, and read `/tmp/stellarshot-debug.log`. Lines are tagged by category
 (`ENGINE`, `UI`, `CONFIG`) so you can `grep` a run. Genuine errors are always
 written to stderr too.
 
----
+</details>
 
 ## Known limitations
+
+<details>
+<summary><strong>Things Stellarshot doesn't do yet, or can't</strong></summary>
 
 - **OneDrive has no sign-in button of its own yet.** Set it up once with
   `rclone config` and choose it under **One of your rclone remotes**.
@@ -750,9 +893,14 @@ written to stderr too.
   locale has the same keys and placeholders as English, but not that the
   wording is right. Corrections are welcome.
 
+</details>
+
 ---
 
 ## How it works
+
+<details>
+<summary><strong>Architecture overview, for contributors</strong></summary>
 
 ```
   ┌────────────────────────────────────┐        job on stdin (JSON,
@@ -833,6 +981,8 @@ running as you can read.
 | `web_tls` | The daemon's TLS certificate: a self-signed one generated once and reused, or one of the user's own |
 | `web_daemon` | Installing, starting, stopping and reading the status of `stellarshot-web` as a systemd user service |
 | `web_token` | Generating and verifying the web interface's API token; only its hash is ever stored |
+
+</details>
 
 ---
 

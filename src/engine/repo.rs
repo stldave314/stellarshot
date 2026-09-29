@@ -237,33 +237,11 @@ impl Location {
                 if !super::rclone::available() {
                     return Err(EngineError::new(ErrorKind::RcloneMissing, "rclone"));
                 }
-                // rustic starts `rclone serve restic` itself; this is how it
-                // is told to use Stellarshot's configuration and nothing else,
-                // and how rclone is tuned for backups (see `RCLONE_SERVE_FLAGS`).
-                // rustic re-splits this whole string with `shell_words`, not a
-                // real shell, but that still means a value containing a quote
-                // can end its own argument and start a new one — quoted with
-                // `shell_words::quote` rather than a hand-written `'...'`, so
-                // whatever `bandwidth_limit` contains can never do that.
-                let mut command = format!(
-                    "rclone serve restic --addr localhost:0 --config {} {}",
-                    shell_words::quote(&config.display().to_string()),
-                    RCLONE_SERVE_FLAGS.join(" ")
-                );
-                if !bandwidth_limit.is_empty() {
-                    command.push_str(&format!(
-                        " --bwlimit {}",
-                        shell_words::quote(bandwidth_limit)
-                    ));
-                }
-                // Defense in depth against a remote name outside the shape
-                // `Destination::location` already enforces (see SEC-1): a
-                // trailing `--` means anything rustic_backend or rustic_core
-                // appends after this string, however it got here, can never
-                // be parsed as an rclone flag.
-                command.push_str(" --");
                 let mut options = BTreeMap::new();
-                options.insert("rclone-command".to_owned(), command);
+                options.insert(
+                    "rclone-command".to_owned(),
+                    rclone_command(config, bandwidth_limit),
+                );
                 Ok(BackendOptions::default()
                     .repository(format!("rclone:{}", super::rclone::target(remote, path)))
                     .options(options))
@@ -289,6 +267,36 @@ impl Location {
             ))
         }
     }
+}
+
+/// The `rclone serve restic` command line rustic runs for an `Rclone`
+/// location, built as its own pure function so it can be tested without
+/// rclone actually being installed — `backend_options`'s own `available()`
+/// check, which does need it, guards the only call site.
+///
+/// rustic re-splits this whole string with `shell_words`, not a real shell,
+/// but that still means a value containing a quote can end its own argument
+/// and start a new one — quoted with `shell_words::quote` rather than a
+/// hand-written `'...'`, so whatever `bandwidth_limit` contains can never
+/// do that.
+fn rclone_command(config: &Path, bandwidth_limit: &str) -> String {
+    let mut command = format!(
+        "rclone serve restic --addr localhost:0 --config {} {}",
+        shell_words::quote(&config.display().to_string()),
+        RCLONE_SERVE_FLAGS.join(" ")
+    );
+    if !bandwidth_limit.is_empty() {
+        command.push_str(&format!(
+            " --bwlimit {}",
+            shell_words::quote(bandwidth_limit)
+        ));
+    }
+    // Defense in depth against a remote name outside the shape
+    // `Destination::location` already enforces (see SEC-1): a trailing `--`
+    // means anything rustic_backend or rustic_core appends after this
+    // string, however it got here, can never be parsed as an rclone flag.
+    command.push_str(" --");
+    command
 }
 
 /// `path`, canonicalized, or `path` itself if that fails — a destination
@@ -579,10 +587,6 @@ mod tests {
         assert_eq!(restored.expose(), "hunter2");
     }
 
-    fn rclone_location(bandwidth_limit: &str) -> Location {
-        Location::rclone(":local", "/tmp/somewhere").with_bandwidth_limit(bandwidth_limit)
-    }
-
     /// The value of `--bwlimit` in the built command, split the same way
     /// rustic itself re-splits the whole string (`shell_words`, not a real
     /// shell) rather than a substring check, so a test cannot pass just
@@ -596,23 +600,13 @@ mod tests {
 
     #[test]
     fn a_bandwidth_limit_is_passed_to_rclone() {
-        assert!(
-            super::super::rclone::available(),
-            "rclone must be installed for this test"
-        );
-        let options = rclone_location("1M").backend_options().unwrap();
-        let command = options.options.get("rclone-command").unwrap();
-        assert_eq!(bwlimit_argument(command).as_deref(), Some("1M"));
+        let command = rclone_command(Path::new("/tmp/rclone.conf"), "1M");
+        assert_eq!(bwlimit_argument(&command).as_deref(), Some("1M"));
     }
 
     #[test]
     fn no_bandwidth_limit_adds_no_flag() {
-        assert!(
-            super::super::rclone::available(),
-            "rclone must be installed for this test"
-        );
-        let options = rclone_location("").backend_options().unwrap();
-        let command = options.options.get("rclone-command").unwrap();
+        let command = rclone_command(Path::new("/tmp/rclone.conf"), "");
         assert!(
             !command.contains("--bwlimit"),
             "an empty limit must not add the flag: {command}"
@@ -621,20 +615,15 @@ mod tests {
 
     #[test]
     fn a_bandwidth_limit_cannot_inject_a_second_rclone_argument() {
-        assert!(
-            super::super::rclone::available(),
-            "rclone must be installed for this test"
-        );
         let hostile = "1M' --password-command 'evil";
-        let options = rclone_location(hostile).backend_options().unwrap();
-        let command = options.options.get("rclone-command").unwrap();
+        let command = rclone_command(Path::new("/tmp/rclone.conf"), hostile);
         assert_eq!(
-            bwlimit_argument(command).as_deref(),
+            bwlimit_argument(&command).as_deref(),
             Some(hostile),
             "the whole hostile value must survive as one argument, not split into several"
         );
         assert!(
-            !shell_words::split(command)
+            !shell_words::split(&command)
                 .unwrap()
                 .contains(&"--password-command".to_owned()),
             "quoting must stop it from ever becoming its own argument: {command}"
@@ -643,14 +632,9 @@ mod tests {
 
     #[test]
     fn the_built_command_ends_with_a_bare_double_dash() {
-        assert!(
-            super::super::rclone::available(),
-            "rclone must be installed for this test"
-        );
         for bandwidth_limit in ["", "1M"] {
-            let options = rclone_location(bandwidth_limit).backend_options().unwrap();
-            let command = options.options.get("rclone-command").unwrap();
-            let args = shell_words::split(command).unwrap();
+            let command = rclone_command(Path::new("/tmp/rclone.conf"), bandwidth_limit);
+            let args = shell_words::split(&command).unwrap();
             assert_eq!(
                 args.last().map(String::as_str),
                 Some("--"),

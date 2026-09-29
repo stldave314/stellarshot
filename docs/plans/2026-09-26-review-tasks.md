@@ -3589,7 +3589,7 @@ Pin the install (`cargo install --locked rustic_server@<x.y.z>`, with
 
 ### TST-4. Flaky and weak tests
 
-**Status: 2 of 4 done.** `uploads.rs`'s `packs_upload_side_by_side` no
+**Status: 3 of 4 done.** `uploads.rs`'s `packs_upload_side_by_side` no
 longer asserts an elapsed-time bound (flaky on a busy runner, and
 demonstrably so tonight); `most_busy == 4` alone already proves genuine
 concurrency, since sequential uploads could never reach it regardless of
@@ -3597,10 +3597,16 @@ speed. `an_after_success_hook_does_not_run_after_a_failed_backup` (in
 `tests/runner.rs`) now also asserts an `AfterFailure` hook's own marker
 *does* exist, so the test can no longer pass for the wrong reason (After
 hooks entirely broken looks identical to "correctly skipped" without it —
-both leave the original marker absent). Not done: splitting a pure
-`rclone_command()` out of `repo.rs` (`available()` needs a real rclone;
-not blocking in this sandbox, where it's installed, so lower priority),
-and `lock.rs`'s `is_running` test reimplementing the probe it tests.
+both leave the original marker absent). Split a pure `rclone_command(config,
+bandwidth_limit) -> String` out of `backend_options`'s `Rclone` arm, which
+still keeps the `available()` check (opening the repository genuinely needs
+rclone installed) but no longer builds the command string itself; the 4
+tests that only ever checked the string (`a_bandwidth_limit_is_passed_to_rclone`
+and 3 others) now call it directly and dropped their `assert!(available(),
+"rclone must be installed for this test")` guard, which failed the whole
+test on a machine without rclone for a check that has nothing to do with
+rclone actually running. Not done: `lock.rs`'s `is_running` test
+reimplementing the probe it tests.
 
 **Low · S · Verified**
 

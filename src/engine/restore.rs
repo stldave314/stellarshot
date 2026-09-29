@@ -152,6 +152,26 @@ fn looks_identical(path: &Path, node: &Node) -> bool {
     meta.len() == node.meta.size && modified == node.meta.mtime
 }
 
+/// Whether some ancestor of `path`, between it and `base`, exists as
+/// something other than a directory — the only way `path.symlink_metadata()`
+/// can fail even though `path` conceptually sits inside `base`, which the
+/// failure alone does not distinguish from `path` simply not existing yet
+/// (the common, harmless case: nothing here yet, safe to create). `base` is
+/// assumed to already be a real directory.
+fn ancestor_is_not_a_directory(base: &Path, path: &Path) -> bool {
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if let Ok(meta) = dir.symlink_metadata() {
+            return !meta.is_dir();
+        }
+        if dir == base {
+            break;
+        }
+        current = dir.parent();
+    }
+    false
+}
+
 impl Repo {
     /// Work out what restoring `request` would do, without writing anything.
     pub fn preview_restore(self, request: &RestoreRequest) -> Result<RestorePreview, EngineError> {
@@ -315,6 +335,34 @@ fn restore_one(
         } else {
             destination.join(&relative)
         };
+        // A directory item conflicts with something already at its own
+        // path that is not itself a directory (a file or symlink in the
+        // way). A non-directory item whose own path cannot even be looked
+        // up because some ancestor between it and `destination` is not a
+        // directory — not merely absent — is the same shape of problem
+        // discovered one level lower: `on_disk.symlink_metadata()` failing
+        // does not by itself distinguish "genuinely does not exist yet"
+        // (safe) from "cannot exist because something is in the way
+        // higher up" (a real conflict). Neither can be renamed aside for
+        // Keep Both the way an ordinary file conflict is: every item here
+        // is shaped independently against the same, fixed `destination`,
+        // with no way to carry a rename down to a directory's own
+        // descendants, or to rename a path that does not itself exist.
+        // Both are treated the same as Skip instead — left untouched —
+        // rather than attempt a rename that cannot actually work.
+        let type_blocked = if item.is_dir() {
+            on_disk.symlink_metadata().is_ok_and(|meta| !meta.is_dir())
+        } else {
+            on_disk.symlink_metadata().is_err()
+                && ancestor_is_not_a_directory(&destination, &on_disk)
+        };
+        if type_blocked {
+            conflicts += 1;
+            if request.policy == ConflictPolicy::Overwrite {
+                shaped.push((relative, item));
+            }
+            continue;
+        }
         if item.is_dir() || relative.as_os_str().is_empty() || on_disk.symlink_metadata().is_err() {
             shaped.push((relative, item));
             continue;

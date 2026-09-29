@@ -1607,6 +1607,129 @@ fn skip_restores_only_what_is_missing() {
     assert_eq!(done.conflicts, 1, "the edited file was skipped");
 }
 
+/// Builds a fixture where the snapshot has a directory ("nested", holding
+/// one file) at a path that, at the destination, is already occupied by a
+/// plain file — the file-vs-directory type conflict TST-5 in the review
+/// plan asked to cover. Returns the fixture and the destination folder;
+/// `target.join("nested")` is the blocking file.
+fn fixture_with_a_directory_blocked_by_an_existing_file() -> (Fixture, PathBuf) {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("nested")).unwrap();
+    fs::write(fixture.source.join("nested/inner.txt"), b"content").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("nested"), b"in the way").unwrap();
+    (fixture, target)
+}
+
+/// Before this fix, a snapshot directory whose own path was blocked by an
+/// existing file (or, as here, a file whose *parent* path was blocked by
+/// one) was never recognized as a conflict at all: `on_disk.symlink_metadata()`
+/// failing was always read as "does not exist yet, safe to create," which
+/// does not distinguish that from "cannot exist because something is in
+/// the way higher up." The restore silently reported zero conflicts and
+/// handed rustic an unrestorable path.
+#[test]
+fn a_file_vs_directory_conflict_is_reported_not_silently_ignored() {
+    let (fixture, target) = fixture_with_a_directory_blocked_by_an_existing_file();
+
+    let preview = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("nested")],
+                Target::Folder(target),
+                ConflictPolicy::Overwrite,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap();
+
+    assert_eq!(preview.conflicts, 1);
+}
+
+#[test]
+fn skip_leaves_a_file_blocking_a_directory_completely_untouched() {
+    let (fixture, target) = fixture_with_a_directory_blocked_by_an_existing_file();
+
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("nested")],
+                Target::Folder(target.clone()),
+                ConflictPolicy::Skip,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap();
+
+    assert_eq!(fs::read(target.join("nested")).unwrap(), b"in the way");
+}
+
+/// Keep Both cannot rename a conflicting directory aside the way it does a
+/// file: every item is shaped independently against the same, fixed
+/// destination, with no way to carry a rename down to a directory's own
+/// descendants. Rather than attempt a rename that cannot actually work,
+/// this case is treated the same as Skip.
+#[test]
+fn keep_both_also_leaves_a_file_blocking_a_directory_untouched() {
+    let (fixture, target) = fixture_with_a_directory_blocked_by_an_existing_file();
+
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("nested")],
+                Target::Folder(target.clone()),
+                ConflictPolicy::KeepBoth,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap();
+
+    assert_eq!(fs::read(target.join("nested")).unwrap(), b"in the way");
+}
+
+/// A symlink conflicting in type with something already at its own path —
+/// unlike the directory case above, already handled correctly by
+/// `looks_identical` (a symlink is compared like a file: `meta.is_file()`
+/// or `meta.file_type().is_symlink()` fails to match, so it is never
+/// mistaken for "identical, nothing to do"), just never proven by a test
+/// until now (TST-5 in the review plan).
+#[test]
+fn a_symlink_vs_existing_directory_conflict_is_reported() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("nested")).unwrap();
+    fs::write(fixture.source.join("nested/target.txt"), b"target").unwrap();
+    symlink("target.txt", fixture.source.join("nested/link")).unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+    fs::create_dir_all(target.join("nested/link")).unwrap();
+
+    let preview = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("nested")],
+                Target::Folder(target.clone()),
+                ConflictPolicy::Skip,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap();
+
+    assert_eq!(
+        preview.conflicts, 1,
+        "the symlink's own name is blocked by an existing directory"
+    );
+    assert!(
+        target.join("nested/link").is_dir(),
+        "Skip must leave the existing directory alone"
+    );
+}
+
 #[test]
 fn overwrite_replaces_changed_files() {
     let fixture = fixture();

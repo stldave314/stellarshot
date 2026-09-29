@@ -3690,7 +3690,35 @@ reimplementing the probe it tests.
 
 ### TST-5. Coverage gaps
 
-**Status: 4 of 8 done.**
+**Status: 5 of 8 done — the extra one found a real bug, not just a
+coverage gap.** Writing the file-vs-directory test this row asked for
+surfaced a genuine correctness bug rather than merely missing coverage:
+`restore_one`'s shaping loop treated `on_disk.symlink_metadata()` failing
+as "does not exist yet, safe to create" unconditionally, which does not
+distinguish that from "cannot exist because something is in the way
+higher up" — a snapshot directory (or a file whose own *parent* path
+component was a plain file, not a directory) silently reported zero
+conflicts regardless of the chosen `ConflictPolicy`, and handed rustic a
+path it could not actually restore into. Confirmed with a scratch test
+before writing any fix, exactly reproducing the plan's own scenario, and
+printing the real result rather than guessing at it. Fixed with a new
+`ancestor_is_not_a_directory(base, path)` check, used for both a
+conflicting directory item and a non-directory item whose ancestor is
+blocked: both now count as a real conflict and respect `Skip`
+(`ConflictPolicy::Overwrite` still hands the item to rustic — whatever it
+does with it, that is now at least accurately reported, not the change
+this row is about). `ConflictPolicy::KeepBoth` cannot rename a
+conflicting directory aside the way a file conflict does — every item is
+shaped independently against the same, fixed destination, with no way to
+carry a rename down to that directory's own descendants — so it is
+treated the same as `Skip` here (left untouched) rather than attempt a
+rename that could not actually keep the directory and its contents
+together. 4 new `engine::tests::` cases prove: the conflict is now
+counted (was silently 0), `Skip` and `KeepBoth` both leave the blocking
+file's content completely untouched, and a plain symlink-vs-existing-
+directory conflict (already handled correctly by the pre-existing
+`looks_identical`, just never proven by a test) is reported too. Full
+`engine::tests::` module (82 tests, up from 73) passed.
 
 - **`Target::Original` restores:** already covered — this list item was
   stale; `src/engine/tests.rs` already exercises it in seven places.
@@ -3719,8 +3747,9 @@ reimplementing the probe it tests.
   already only ever returns the first — locked in explicitly, since a
   client or proxy duplicating the header must never let a second,
   different credential silently take over).
-- File-vs-directory and symlink conflicts on restore, an `archive_folder`
-  failure partway through: not started.
+- **File-vs-directory and symlink conflicts on restore:** done — see the
+  status note above.
+- An `archive_folder` failure partway through: not started.
 
 **Medium · M**
 

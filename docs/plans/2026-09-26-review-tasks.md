@@ -3638,6 +3638,17 @@ about the real bug from a run known to be contaminated by that. Still
 open: get a real CI run of these (`--ignored`) with a healthy local run
 alongside it to compare, and read the now-more-complete captured log.
 
+Reproduced the same "did not start listening in time" panic again
+2026-09-29, all 3 tests, `free -h` showing ~9.4 GiB of swap in use at the
+time — same resource-pressure pattern, still not the CI-only `Connect`
+error. Notable this time: `rustic-server`'s own log shows it printed
+"Listening on" within milliseconds of being spawned each attempt, yet the
+probe's 10-second TCP-connect-and-read loop still timed out — consistent
+with the *test process itself* being starved of scheduling time under
+swap pressure rather than the server being genuinely slow to bind. Still
+not a conclusion about the real bug; a machine under this much pressure
+cannot be trusted to say anything about it either way.
+
 **Medium · M · Verified**
 
 All tests in `tests/rest_server.rs` are `#[ignore]`, so the REST backend (the
@@ -4081,7 +4092,7 @@ without `\b` when checking.
 
 ### DOC-2. Docs that contradict the code
 
-**Status: Every item checked and resolved except the screenshots.**
+**Status: Done, including the screenshots.**
 `SECURITY.md:37` was corrected as part of SEC-3. README's shortcuts table
 already has F1; the backend log path README references is the *developer
 debug* log (`/tmp/stellarshot-debug.log`), which SEC-5 deliberately did
@@ -4098,10 +4109,26 @@ either credential lists every backup, snapshot and file *name* (not
 contents — confirmed there is still no download route in `routes::router`)
 and can start a backup, running its owner's own hooks; a token is singled
 out as the one most likely to leak by accident (a script, a committed
-file). **Not done:** regenerating `docs/screenshots/`, which needs a live
-COSMIC session and this session's own AT-SPI/interactive-UI limitations
-apply — not attempted rather than risk an unreliable result, or disturbing
-Dave's actual desktop session in the middle of the night to drive it.
+file). Regenerated `docs/screenshots/` with `scripts/screenshots.sh`,
+which needed two real bugs in the script fixed first, both found because
+the run actually failed rather than by reading the script: (1) the demo
+launch had no isolation from libcosmic's `run_single_instance`, which
+checks the session D-Bus (keyed only by `APP_ID`, not by the script's own
+isolated `XDG_CONFIG_HOME`) — with a real Stellarshot already running on
+the desktop, the demo launch was silently handed off to it instead of
+starting its own process, and the script's `xdotool search --sync` then
+hung indefinitely waiting for a window that belonged to a process that no
+longer existed; fixed with `COSMIC_SINGLE_INSTANCE=false` (libcosmic's own
+documented override) plus a `timeout` and an explicit failure message so
+this can't silently hang again. (2) the demo profile's `schedule: Daily`
+tripped a real, correct security check — a debug binary under
+`target/debug` isn't a trustworthy location for a scheduled systemd unit
+— which surfaced as an error dialog covering the profile and restore
+screenshots; changed the demo profile to `schedule: Manual`, since the
+screenshots were never meant to exercise scheduling. All 5 images
+regenerated and inspected directly (not just checked for existing), no
+leftover demo processes or keyring entries, real Stellarshot instance on
+the desktop confirmed untouched throughout.
 
 **Medium · S · Verified**
 

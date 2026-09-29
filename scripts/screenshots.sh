@@ -92,12 +92,26 @@ run_app() {
     if [[ ${#ONLY[@]} -gt 0 && ! " ${ONLY[*]} " =~ " $name " ]]; then
         return
     fi
+    # COSMIC_SINGLE_INSTANCE=false: without it, run_single_instance() reaches
+    # past every bit of isolation above through the session D-Bus (keyed only
+    # by APP_ID, not by XDG_CONFIG_HOME) and hands this launch to a real,
+    # already-running Stellarshot instead of starting the demo one — the
+    # window this script then waits for never appears, since it belongs to a
+    # process that already exited.
     env -u WAYLAND_DISPLAY HOME="$HOME_DIR" XDG_CONFIG_HOME="$CONFIG" \
         XDG_STATE_HOME="$DEMO/state" XDG_RUNTIME_DIR="$DEMO/runtime" \
-        PATH="$DEMO/bin:$PATH" "$BIN" "$@" >/dev/null 2>&1 &
+        PATH="$DEMO/bin:$PATH" COSMIC_SINGLE_INSTANCE=false \
+        "$BIN" "$@" >/dev/null 2>&1 &
     APP_PID=$!
     local window
-    window=$(xdotool search --sync --onlyvisible --pid "$APP_PID" | head -1)
+    window=$(timeout 15 xdotool search --sync --onlyvisible --pid "$APP_PID" | head -1)
+    if [[ -z "$window" ]]; then
+        echo "FAIL: $name's window never appeared" >&2
+        kill "$APP_PID" 2>/dev/null || true
+        wait "$APP_PID" 2>/dev/null || true
+        APP_PID=""
+        exit 1
+    fi
     # Let the page settle: the keyring lookup, the snapshot list, the size
     # estimate.
     sleep "${SETTLE:-6}"
@@ -127,7 +141,11 @@ cat > "$SETTINGS/profiles" <<RON
         excludes: ["$HOME_DIR/.cache", "$HOME_DIR/Downloads"],
         exclude_patterns: ["node_modules"],
         one_file_system: true,
-        schedule: Daily,
+        // Manual, not Daily: a debug binary under target/debug isn't a
+        // trustworthy location for a scheduled systemd unit, and opening a
+        // profile that thinks it should be scheduled fails loudly with an
+        // error dialog that covers the whole window.
+        schedule: Manual,
         retention: Smart,
         last_success: None,
     ),

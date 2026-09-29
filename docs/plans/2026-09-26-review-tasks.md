@@ -179,22 +179,58 @@ an export file as untrusted and says nothing from it may run unprompted.
 
 ### SEC-2. Restoring a crafted snapshot can write outside the target
 
-**Status: Core fix done; the full malicious-snapshot integration test is a
-disclosed gap.** `restore_one` now rejects, with the new `ErrorKind::UnsafePath`,
-any item `repo.ls` yields whose relative path contains a component other than
-`Component::Normal` — covering both a `..` walk-up and an absolute path
-(`PathBuf::join` with an absolute right side discards the destination
-outright). `reject_unsafe_relative_path` is unit-tested directly for both
+**Status: The write path (restore) and every other path that reads a
+snapshot's own names are now covered; the full malicious-snapshot
+integration test is still a disclosed gap.** `restore_one` rejects, with
+`ErrorKind::UnsafePath`, any item `repo.ls` yields whose relative path
+contains a component other than `Component::Normal` — covering both a `..`
+walk-up and an absolute path (`PathBuf::join` with an absolute right side
+discards the destination outright). `reject_unsafe_relative_path` (made
+`pub(super)` so `browse` can reuse it) is unit-tested directly for both
 cases plus the empty-path (the restored item itself) and ordinary-path
-non-regression cases. Not done: an end-to-end test that hand-builds a tree
-via `rustic_core`'s low-level (largely private) tree-saving API or ships a
-crafted fixture repository and restores from it — `rustic_core::Node::new`
-is public (`derive_more::Constructor`) but saving a tree as a real blob and
-pointing a snapshot at it needs write access this crate doesn't otherwise
-use directly. The unit tests prove the check's logic is correct; they do not
-prove `NodeStreamer` is the only path a name can reach `restore_one` through.
-Browse, search, versions and mount still show unvalidated names as-is — only
-the write path (restore) is fixed here.
+non-regression cases.
+
+The same check now also guards every place `browse.rs` turns a snapshot's
+own tree data into a path: `list` and `mount_list` (a single node name,
+via new `checked_entry`/`checked_mount_entry` wrappers around the existing
+`entry`/`mount_entry`), `search` (the full `repo.ls`-walked relative path,
+checked for every walked item, not just ones that match the query — a
+malicious name elsewhere in the tree still aborts the whole search rather
+than only failing once it happens to match), `missing` (the same, and the
+one that mattered most: `missing`'s `relative` feeds a *real*
+`path.symlink_metadata()` call against this machine's own filesystem, an
+attacker-influenced path probing local file existence, not merely a
+display string), and `diff_trees` (backing the "what changed between two
+snapshots" comparison — the same single-node-name shape as `list`).
+`checked_entry`/`checked_mount_entry` are unit-tested directly with a
+`rustic_core::Node::new_node`-built node carrying a hostile name (`Node`
+construction needs no repository or backup, unlike a full malicious tree)
+proving `list`'s and `mount_list`'s own wiring actually calls the check,
+not just that the check is correct in isolation.
+
+Checked but left alone: `versions()` never walks untrusted tree names at
+all — it resolves a caller-given path per snapshot via `node_at`, which
+only ever does an exact byte-for-byte match against a component the
+*caller* already supplied, never treating a node's own name as a real path
+to interpret — so despite this row's own name in the plan's fix text, there
+is nothing to fix there. `mount.rs`'s FUSE `readdir` builds its own display
+name with `Path::file_name()` after joining a (now-validated, thanks to
+`mount_list`) entry name, which already cannot expose an embedded
+separator to the kernel raw; not touched further, since its own error
+surface is `Errno`, not `EngineError`. `archive_folder`'s tar entries use
+`repo.ls`'s same walked paths as `restore`/`search`/`missing` but were
+already covered independently: the `tar` crate itself refuses `..` and
+absolute paths when writing an archive (see "what is already right" in
+this plan).
+
+Not done: an end-to-end test that hand-builds a tree via `rustic_core`'s
+low-level (largely private) tree-saving API or ships a crafted fixture
+repository and restores from it — `rustic_core::Node::new_node` is public
+but saving a tree as a real blob and pointing a snapshot at it needs write
+access this crate doesn't otherwise use directly. The unit tests (both the
+existing `restore` ones and the new `browse` ones) prove each check's own
+logic and wiring are correct; they do not prove `NodeStreamer`/`get_tree`
+are the only paths a name can reach these functions through.
 
 **Medium · M · Confirm first**
 

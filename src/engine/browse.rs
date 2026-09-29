@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
+use super::restore::reject_unsafe_relative_path;
 use super::snapshots::SnapshotSummary;
 
 /// What kind of thing an entry is.
@@ -146,6 +147,14 @@ fn entry(path: PathBuf, node: &rustic_core::repofile::Node) -> TreeEntry {
     }
 }
 
+/// [`entry`], rejecting `node` first if its own name (taken straight from
+/// the snapshot's tree data — see [`reject_unsafe_relative_path`]) would
+/// land outside `dir` once joined onto it.
+fn checked_entry(dir: &Path, node: &rustic_core::repofile::Node) -> Result<TreeEntry, EngineError> {
+    reject_unsafe_relative_path(Path::new(&*node.name()))?;
+    Ok(entry(dir.join(node.name()), node))
+}
+
 fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
     MountEntry {
         name: node.name().into_owned(),
@@ -157,6 +166,13 @@ fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
             .is_symlink()
             .then(|| node.node_type.to_link().to_path_buf()),
     }
+}
+
+/// [`mount_entry`], rejecting `node` first the same way [`checked_entry`]
+/// does.
+fn checked_mount_entry(node: &rustic_core::repofile::Node) -> Result<MountEntry, EngineError> {
+    reject_unsafe_relative_path(Path::new(&*node.name()))?;
+    Ok(mount_entry(node))
 }
 
 /// Resolve `path` to its [`Node`] within `snapshot`, comparing each
@@ -324,8 +340,8 @@ impl Browser {
         let mut entries: Vec<TreeEntry> = tree
             .nodes
             .iter()
-            .map(|node| entry(dir.join(node.name()), node))
-            .collect();
+            .map(|node| checked_entry(dir, node))
+            .collect::<Result<_, EngineError>>()?;
         entries.sort_by(|a, b| {
             (b.kind == EntryKind::Directory)
                 .cmp(&(a.kind == EntryKind::Directory))
@@ -355,7 +371,7 @@ impl Browser {
             .subtree
             .ok_or_else(|| not_found(&dir.display().to_string()))?;
         let tree = repo.get_tree(&subtree)?;
-        Ok(tree.nodes.iter().map(mount_entry).collect())
+        tree.nodes.iter().map(checked_mount_entry).collect()
     }
 
     /// Open `path` for reading by byte range, for mounting the snapshot as
@@ -498,6 +514,7 @@ impl Browser {
         let mut found = Vec::new();
         for item in repo.ls(&root, &LsOptions::default())? {
             let (path, node) = item?;
+            reject_unsafe_relative_path(&path)?;
             if node
                 .name()
                 .to_string_lossy()
@@ -621,6 +638,7 @@ impl Browser {
             }
             for item in repo.ls(&node, &LsOptions::default())? {
                 let (relative, node) = item?;
+                reject_unsafe_relative_path(&relative)?;
                 let path = scope.join(relative);
                 if !node.is_file() || !seen.insert(path.clone()) {
                     continue;
@@ -671,6 +689,7 @@ fn diff_trees(
     let names: std::collections::BTreeSet<&std::ffi::OsString> =
         old.keys().chain(new.keys()).collect();
     for name in names {
+        reject_unsafe_relative_path(Path::new(name))?;
         let path = prefix.join(name);
         match (old.get(name), new.get(name)) {
             (Some(before), None) => out.push(DiffEntry {
@@ -751,5 +770,41 @@ mod tests {
         let error = index_of(ids.into_iter(), "zzzz").unwrap_err();
 
         assert_eq!(error.kind, ErrorKind::NotFound);
+    }
+
+    /// `Node::new_node` needs no repository or backup at all, so this
+    /// proves `list`'s (and `diff_trees`', same shape) own wiring actually
+    /// rejects a hostile name straight from a snapshot's tree data, not
+    /// just that `reject_unsafe_relative_path` itself is correct in
+    /// isolation (already proven in `restore`'s own tests) — see SEC-2 in
+    /// the review plan. An end-to-end test through a real malicious
+    /// snapshot is still the same disclosed gap `restore`'s own tests
+    /// describe: writing one needs `rustic_core`'s largely private
+    /// tree-saving API.
+    #[test]
+    fn a_maliciously_named_node_is_rejected_when_listed() {
+        let node = Node::new_node(OsStr::new("../escape"), NodeType::File, Default::default());
+
+        let error = checked_entry(Path::new("/some/dir"), &node).unwrap_err();
+
+        assert_eq!(error.kind, ErrorKind::UnsafePath);
+    }
+
+    #[test]
+    fn an_ordinary_node_name_lists_fine() {
+        let node = Node::new_node(OsStr::new("report.pdf"), NodeType::File, Default::default());
+
+        let listed = checked_entry(Path::new("/some/dir"), &node).unwrap();
+
+        assert_eq!(listed.path, Path::new("/some/dir/report.pdf"));
+    }
+
+    #[test]
+    fn a_maliciously_named_node_is_rejected_when_mounted() {
+        let node = Node::new_node(OsStr::new("../escape"), NodeType::File, Default::default());
+
+        let error = checked_mount_entry(&node).unwrap_err();
+
+        assert_eq!(error.kind, ErrorKind::UnsafePath);
     }
 }

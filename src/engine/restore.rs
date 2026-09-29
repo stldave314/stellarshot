@@ -232,18 +232,21 @@ fn utf8_root_and_relative(path: &Path) -> (PathBuf, PathBuf) {
     (root.to_path_buf(), relative)
 }
 
-/// Rejects a snapshot item whose relative path (as `rustic_core`'s
-/// `NodeStreamer` yields it, straight from the tree's own node names) would
-/// land outside `destination` once joined onto it: a `..` component walks
-/// back up, and an absolute path replaces the join outright (`PathBuf::join`
-/// with an absolute right-hand side discards the left side). Neither should
-/// occur — a well-formed snapshot's paths are always relative and
-/// self-contained — but a snapshot's tree is deserialized from repository
-/// data, which for a repository shared with another person or machine
-/// (`keys.rs`) may not be trustworthy. An empty relative path (the node
-/// being restored itself, not one of its descendants) has no components and
+/// Rejects a name or relative path taken directly from a snapshot's own
+/// tree data (a single node name, or, as `rustic_core`'s `NodeStreamer`
+/// yields it, a whole walked relative path) that would land outside its
+/// intended base once joined onto it: a `..` component walks back up, and
+/// an absolute path replaces the join outright (`PathBuf::join` with an
+/// absolute right-hand side discards the left side). Neither should occur
+/// — a well-formed snapshot's paths are always relative and self-contained
+/// — but a snapshot's tree is deserialized from repository data, which for
+/// a repository shared with another person or machine (`keys.rs`) may not
+/// be trustworthy. Used here by [`restore_one`], and by `browse`'s own
+/// listing, search, missing-files and mount code for the same reason
+/// (see SEC-2 in the review plan). An empty path (the node being restored
+/// or looked up itself, not one of its descendants) has no components and
 /// always passes.
-fn reject_unsafe_relative_path(relative: &Path) -> Result<(), EngineError> {
+pub(super) fn reject_unsafe_relative_path(relative: &Path) -> Result<(), EngineError> {
     if relative
         .components()
         .all(|component| matches!(component, Component::Normal(_)))

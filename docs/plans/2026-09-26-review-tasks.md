@@ -880,13 +880,40 @@ and expect a rejection.
 
 ### WEB-5. Security events are not logged in release builds
 
-**Status: Partially done.** `Throttle::try_begin` logs once (`error_log!`)
-the moment an address's lockout starts, and `note_global_failure` logs once
-when the global budget is exceeded — both already rate-limited to one line
-per event by construction, not by a separate check. Not done: the startup
-warning for password auth enabled with nothing loaded from the keyring, the
-fail-closed-and-loud exit when no usable method remains, and adding the
-peer address/auth method to History entries from the web source.
+**Status: Done.** `Throttle::try_begin` logs once (`error_log!`) the moment
+an address's lockout starts, and `note_global_failure` logs once when the
+global budget is exceeded — both already rate-limited to one line per event
+by construction, not by a separate check. Startup now logs `error_log!(WEB,
+…)` when password auth is enabled but nothing was loaded from the keyring,
+and separately when token auth is enabled but no token hash is configured;
+a new `auth_readiness` (pure, unit-tested for all four combinations of
+enabled/loaded) distinguishes that genuine "was supposed to work and
+didn't" case from a deliberate no-auth configuration (neither method
+enabled at all, which already fails closed today and is left alone rather
+than turned into a new startup failure it never asked for) — only the
+former makes `main` return `ExitCode::FAILURE` before ever binding, the
+same as an unloadable TLS certificate already does. Web-triggered runs now
+record the peer address and which auth method let them in: `is_authenticated`
+returns `Option<WebAuthMethod>` instead of `bool`, `authenticate` attaches
+it to the request via an extension, `run_backup` reads it back alongside
+`ConnectInfo` (through a small hand-written `PeerAddr` extractor, since
+axum 0.8 has no built-in `Option`-extractor support for `ConnectInfo` the
+way it does for `Extension`), and `event_log::record_web` stores both on
+the `Event` as a new `web: Option<WebContext>` field — `#[serde(default)]`
+so an entry recorded before this field existed, or one from
+`drain_running_jobs` (a shutdown-time cleanup with no request to
+attribute, which still calls the plain `record`), reads back as `None`
+rather than failing to parse; proven with a deserialization test against a
+hand-written pre-field RON string, the same pattern `Source`'s own
+backward-compat test already established. Verified end to end with a new
+test that runs a real backup through the *full* router (allow-list,
+`authenticate`, `ConnectInfo` — not the bare `router(state)` every other
+route test in that module uses) and reads the resulting history entry's
+`web` field back with the real peer address and `WebAuthMethod::Password`;
+this test cannot actually run to completion in this sandbox (see
+VALIDATION.md's 2026-09-29 note — it joins 21 already-documented tests
+that time out on their own client-side `TcpStream::connect` here,
+independent of anything this session changed).
 
 **Medium · S · Verified**
 

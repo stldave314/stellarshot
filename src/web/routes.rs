@@ -11,15 +11,17 @@
 //! profiles, with no dependency on this machine's real settings.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{ConnectInfo, FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
+use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::app::format::now;
@@ -353,9 +355,35 @@ struct RunStarted {
 /// child-process isolation `crate::app::child` exists for (protecting the
 /// *window's* long-lived process from a crash mid-backup) does not apply
 /// here.
+/// The peer address, from `ConnectInfo` if this router is mounted with
+/// `into_make_service_with_connect_info` (every real request; see
+/// `web::app`) — `None` in `routes::tests`' own bare router, which mounts
+/// these routes with none of `web`'s middleware or connect-info wiring
+/// (see that module's own `spawn`). Written by hand rather than
+/// `Option<ConnectInfo<SocketAddr>>` because axum has no built-in
+/// `Option`-extractor support for `ConnectInfo` (unlike `Extension`, used
+/// the built-in way for the auth method below), only for a request that
+/// truly may or may not have an extension set.
+struct PeerAddr(Option<SocketAddr>);
+
+impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(PeerAddr(
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|ConnectInfo(addr)| *addr),
+        ))
+    }
+}
+
 async fn run_backup(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    PeerAddr(addr): PeerAddr,
+    method: Option<Extension<event_log::WebAuthMethod>>,
 ) -> Result<(StatusCode, Json<RunStarted>), ApiError> {
     let profile = backup_by_id(&state.profiles, &id)?;
     let location = profile.location()?;
@@ -377,7 +405,15 @@ async fn run_backup(
         ..Job::new(location.clone(), secret)
     };
     let profile_id = profile.id;
-    let handle = tokio::spawn(record_backup(profile_id.clone(), location, job));
+    // Both are inserted by the same `authenticate` middleware layer every
+    // real request passes through; only absent in `routes::tests`' own bare
+    // router, which mounts these routes with none of `super`'s middleware
+    // (see that module's own `spawn`) — falls back to an entry with no web
+    // context rather than losing the run itself.
+    let requester = addr
+        .zip(method)
+        .map(|(addr, Extension(method))| (addr, method));
+    let handle = tokio::spawn(record_backup(profile_id.clone(), location, job, requester));
     let job_id = state.track_job(profile_id, &handle);
     let untrack_state = Arc::clone(&state);
     tokio::spawn(async move {
@@ -392,7 +428,12 @@ async fn run_backup(
 /// success or failure triggered here is never "quiet": nothing is polling a
 /// timer's retry schedule, so the one place this result is visible at all is
 /// the History page and the next `GET /api/v1/backups`.
-async fn record_backup(profile_id: String, location: crate::engine::Location, job: Job) {
+async fn record_backup(
+    profile_id: String,
+    location: crate::engine::Location,
+    job: Job,
+    requester: Option<(SocketAddr, event_log::WebAuthMethod)>,
+) {
     let result = tasks::blocking(move || {
         runner::run(
             Operation::Backup,
@@ -402,23 +443,19 @@ async fn record_backup(profile_id: String, location: crate::engine::Location, jo
     })
     .await;
     let now = now();
-    match result {
-        Ok(_) => event_log::record(
-            &profile_id,
-            now,
-            event_log::EventKind::BackedUp,
-            event_log::Source::Web,
-        ),
-        Err(err) => event_log::record(
-            &profile_id,
-            now,
-            event_log::EventKind::Failed {
-                stage: crate::run_state::Stage::Backup,
-                kind: err.kind,
-                detail: err.detail,
-            },
-            event_log::Source::Web,
-        ),
+    let kind = match result {
+        Ok(_) => event_log::EventKind::BackedUp,
+        Err(err) => event_log::EventKind::Failed {
+            stage: crate::run_state::Stage::Backup,
+            kind: err.kind,
+            detail: err.detail,
+        },
+    };
+    match requester {
+        Some((addr, method)) => {
+            event_log::record_web(&profile_id, now, kind, addr.to_string(), method)
+        }
+        None => event_log::record(&profile_id, now, kind, event_log::Source::Web),
     }
 }
 
@@ -726,7 +763,7 @@ mod tests {
         let id = backup.profile.id.clone();
         let state = Arc::new(AppState::new(vec![backup.profile], Vec::new()));
 
-        let result = run_backup(State(state), Path(id)).await;
+        let result = run_backup(State(state), Path(id), PeerAddr(None), None).await;
 
         let Err(error) = result else {
             panic!("expected the second run to be refused, got {result:?}");
@@ -814,5 +851,87 @@ mod tests {
         let last = events.last().expect("the run left a history entry");
         assert_eq!(last.source, event_log::Source::Web);
         assert!(matches!(last.kind, event_log::EventKind::BackedUp));
+    }
+
+    /// Same as `starting_a_backup_records_it_in_the_history_under_the_web_source`,
+    /// but through `super::super::app` — the full router, with the
+    /// allow-list, `authenticate` and `ConnectInfo` wiring `spawn`'s own
+    /// bare `router(state)` skips — to prove the peer address and auth
+    /// method actually reach the history entry, not just that `PeerAddr`
+    /// and the `Extension` compile (WEB-5 in the review plan).
+    #[tokio::test]
+    async fn starting_a_backup_through_the_full_stack_records_the_peer_and_method() {
+        use base64::Engine;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let backup = real_backup_with_id(&uuid::Uuid::new_v4().to_string());
+        let id = backup.profile.id.clone();
+        let password = "secret";
+        let auth = super::super::AuthConfig {
+            password_enabled: true,
+            password: Some(engine::Secret::new(password)),
+            token_enabled: false,
+            token_hash: None,
+            throttle: super::super::Throttle::new(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let state = Arc::new(AppState::new(vec![backup.profile], Vec::new()));
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                super::super::app(
+                    super::super::AppConfig {
+                        allowed_addresses: Vec::new(),
+                        scope: crate::app::config::NetworkScope::Lan,
+                        auth,
+                    },
+                    std::collections::HashSet::new(),
+                    state,
+                )
+                .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+        });
+
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(format!("ignored:{password}"));
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(
+                format!(
+                    "POST /api/v1/backups/{id}/run HTTP/1.1\r\nHost: localhost\r\nAuthorization: Basic {encoded}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        assert!(
+            response.starts_with("HTTP/1.1 202"),
+            "expected 202 Accepted, got: {response}"
+        );
+
+        let mut found = None;
+        for _ in 0..100 {
+            found = event_log::load(&id)
+                .into_iter()
+                .find(|event| matches!(event.kind, event_log::EventKind::BackedUp));
+            if found.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let event = found.expect("the run left a BackedUp history entry");
+        let web = event
+            .web
+            .expect("a web context naming the peer and auth method");
+        assert_eq!(web.method, event_log::WebAuthMethod::Password);
+        assert!(
+            web.addr.starts_with("127.0.0.1:"),
+            "unexpected peer address: {}",
+            web.addr
+        );
     }
 }

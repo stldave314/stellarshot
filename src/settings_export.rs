@@ -328,6 +328,7 @@ mod tests {
                     time: 1,
                     kind: EventKind::BackedUp,
                     source: event_log::Source::Desktop,
+                    web: None,
                 }],
             )],
         };

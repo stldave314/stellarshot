@@ -47,6 +47,7 @@ fn history_is_merged_for_new_and_existing_backups_alike() {
             time: 1,
             kind: EventKind::BackedUp,
             source: Source::Desktop,
+            web: None,
         }],
     )];
 

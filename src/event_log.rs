@@ -87,6 +87,23 @@ pub enum Source {
     Web,
 }
 
+/// Which of the web interface's own auth methods let a [`record_web`]
+/// request through (OWASP ASVS 5.0 §16 asks that a security-relevant event
+/// name the method, not just that one succeeded).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WebAuthMethod {
+    Password,
+    Token,
+}
+
+/// Who made a [`record_web`] request: the peer address and which auth
+/// method it authenticated with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebContext {
+    pub addr: String,
+    pub method: WebAuthMethod,
+}
+
 /// One entry in the log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
@@ -98,6 +115,13 @@ pub struct Event {
     /// web interface did not exist yet either.
     #[serde(default)]
     pub source: Source,
+    /// Set only by [`record_web`]: `None` for every desktop or scheduled
+    /// entry, and for a `Source::Web` entry recorded before this field
+    /// existed or from a place with no request to attribute (see
+    /// `web::routes::drain_running_jobs`, which still calls the plain
+    /// [`record`]).
+    #[serde(default)]
+    pub web: Option<WebContext>,
 }
 
 /// The stored form: a plain `Vec` under one config key, newest last.
@@ -177,13 +201,46 @@ fn push(log: &mut Vec<Event>, event: Event) {
 
 /// Add `kind` at `time` to `profile_id`'s log, from `source`.
 pub fn record(profile_id: &str, time: i64, kind: EventKind, source: Source) {
+    push_event(
+        profile_id,
+        Event {
+            time,
+            kind,
+            source,
+            web: None,
+        },
+    );
+}
+
+/// Same as [`record`], but for a `Source::Web` event that has a request to
+/// attribute: keeps the peer address and which auth method let it through,
+/// alongside the profile's history (OWASP ASVS 5.0 §16).
+pub fn record_web(
+    profile_id: &str,
+    time: i64,
+    kind: EventKind,
+    addr: String,
+    method: WebAuthMethod,
+) {
+    push_event(
+        profile_id,
+        Event {
+            time,
+            kind,
+            source: Source::Web,
+            web: Some(WebContext { addr, method }),
+        },
+    );
+}
+
+fn push_event(profile_id: &str, event: Event) {
     let Some(store) = store() else {
         return;
     };
     let Ok(mut log) = load_checked(&store, profile_id) else {
         return;
     };
-    push(&mut log.0, Event { time, kind, source });
+    push(&mut log.0, event);
     if let Err(err) = store.set(&key(profile_id), &log) {
         error_log!(CONFIG, "could not log an event for {profile_id}: {err}");
     }
@@ -273,6 +330,7 @@ mod tests {
             time,
             kind,
             source: Source::Desktop,
+            web: None,
         }
     }
 
@@ -361,5 +419,15 @@ mod tests {
         let stored = r#"(time:1700000000,kind:BackedUp)"#;
         let loaded: Event = ron::from_str(stored).unwrap();
         assert_eq!(loaded.source, Source::Desktop);
+    }
+
+    #[test]
+    fn a_web_event_logged_before_context_existed_is_read_back_with_none() {
+        // What was actually on disk once `source` existed but `web` did
+        // not: a `Web` source with no `web` key at all.
+        let stored = r#"(time:1700000000,kind:BackedUp,source:Web)"#;
+        let loaded: Event = ron::from_str(stored).unwrap();
+        assert_eq!(loaded.source, Source::Web);
+        assert_eq!(loaded.web, None);
     }
 }

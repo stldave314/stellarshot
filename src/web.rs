@@ -39,6 +39,7 @@ use crate::constants::{
 };
 use crate::debug::WEB;
 use crate::engine::Secret;
+use crate::event_log;
 use crate::{debug_log, error_log};
 
 mod routes;
@@ -148,6 +149,35 @@ struct AuthConfig {
     throttle: Throttle,
 }
 
+/// Whether `auth` can actually let anyone in, after loading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthReadiness {
+    /// At least one enabled method has something to check against.
+    Ready,
+    /// Neither method is enabled: a deliberate choice (every request is
+    /// still rejected, fail closed, just without a method to name) that
+    /// this check is not the place to second-guess. Different from a
+    /// method that was enabled and then silently failed to load.
+    NoneEnabled,
+    /// At least one method is enabled, but none of the enabled methods
+    /// actually loaded anything to check a request against: every request
+    /// will be rejected the same as [`AuthReadiness::NoneEnabled`], but
+    /// silently, unless this is surfaced loudly.
+    EnabledButUnusable,
+}
+
+fn auth_readiness(auth: &AuthConfig) -> AuthReadiness {
+    let password_ready = auth.password_enabled && auth.password.is_some();
+    let token_ready = auth.token_enabled && auth.token_hash.is_some();
+    if password_ready || token_ready {
+        AuthReadiness::Ready
+    } else if auth.password_enabled || auth.token_enabled {
+        AuthReadiness::EnabledButUnusable
+    } else {
+        AuthReadiness::NoneEnabled
+    }
+}
+
 /// Entry point for the `stellarshot-web` binary.
 pub fn main(_args: &[String]) -> ExitCode {
     crate::debug::init(crate::debug::Role::Web);
@@ -193,6 +223,25 @@ pub fn main(_args: &[String]) -> ExitCode {
             token_hash: config.web.token_hash,
             throttle: Throttle::new(),
         };
+        if auth.password_enabled && auth.password.is_none() {
+            error_log!(
+                WEB,
+                "password auth is enabled but no password could be loaded from the keyring; every password attempt will be rejected until this is fixed"
+            );
+        }
+        if auth.token_enabled && auth.token_hash.is_none() {
+            error_log!(
+                WEB,
+                "token auth is enabled but no token is configured; every token attempt will be rejected until this is fixed"
+            );
+        }
+        if auth_readiness(&auth) == AuthReadiness::EnabledButUnusable {
+            error_log!(
+                WEB,
+                "every enabled auth method failed to load; refusing to start rather than run with an interface that would silently reject every request"
+            );
+            return ExitCode::FAILURE;
+        }
         let state = Arc::new(routes::AppState::new(
             config.profiles,
             config.global_exclude_patterns,
@@ -635,7 +684,7 @@ pub fn valid_allow_list_entry(entry: &str) -> bool {
 async fn authenticate(
     State(auth): State<Arc<AuthConfig>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let ip = addr.ip();
@@ -654,10 +703,15 @@ async fn authenticate(
     } else {
         None
     };
-    if is_authenticated(&auth, request.headers()) {
+    if let Some(method) = is_authenticated(&auth, request.headers()) {
         if let Some(reservation) = reservation {
             reservation.succeeded();
         }
+        // A handler that records a `Source::Web` history entry
+        // (`web::routes::record_backup`) reads this back to name which
+        // method actually let the request in, alongside `ConnectInfo`,
+        // which axum already makes available the same way.
+        request.extensions_mut().insert(method);
         return next.run(request).await;
     }
     if reservation.is_some() {
@@ -876,20 +930,21 @@ fn presented_credentials(headers: &HeaderMap) -> bool {
     scheme.eq_ignore_ascii_case("basic") || scheme.eq_ignore_ascii_case("bearer")
 }
 
-fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> bool {
-    let Some(value) = headers
+/// `Some(method)` naming whichever method actually let the request in, for
+/// [`authenticate`] to attach to the request so a handler that records a
+/// [`event_log::WebContext`] (see WEB-5 in the review plan) knows which one
+/// it was.
+fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> Option<event_log::WebAuthMethod> {
+    let value = headers
         .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-    else {
-        return false;
-    };
+        .and_then(|value| value.to_str().ok())?;
     if auth.password_enabled
         && !auth.throttle.password_paused()
         && let Some(password) = &auth.password
         && let Some(candidate) = basic_password(value)
         && constant_time_eq(candidate.as_bytes(), password.expose().as_bytes())
     {
-        return true;
+        return Some(event_log::WebAuthMethod::Password);
     }
     if auth.token_enabled
         && let Some(hash) = &auth.token_hash
@@ -897,9 +952,9 @@ fn is_authenticated(auth: &AuthConfig, headers: &HeaderMap) -> bool {
         && scheme.eq_ignore_ascii_case("bearer")
         && crate::web_token::verify(token, hash)
     {
-        return true;
+        return Some(event_log::WebAuthMethod::Token);
     }
-    false
+    None
 }
 
 /// The password from an `Authorization: Basic <base64(username:password)>`
@@ -1145,31 +1200,34 @@ mod tests {
 
     #[test]
     fn no_credentials_at_all_are_never_authenticated() {
-        assert!(!is_authenticated(
-            &password_auth("secret"),
-            &HeaderMap::new()
-        ));
+        assert_eq!(
+            is_authenticated(&password_auth("secret"), &HeaderMap::new()),
+            None
+        );
     }
 
     #[test]
     fn nothing_authenticates_when_no_method_is_enabled() {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, basic_header("anything", "secret"));
-        assert!(!is_authenticated(&no_auth(), &headers));
+        assert_eq!(is_authenticated(&no_auth(), &headers), None);
     }
 
     #[test]
     fn the_correct_shared_password_authenticates() {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, basic_header("ignored", "secret"));
-        assert!(is_authenticated(&password_auth("secret"), &headers));
+        assert_eq!(
+            is_authenticated(&password_auth("secret"), &headers),
+            Some(event_log::WebAuthMethod::Password)
+        );
     }
 
     #[test]
     fn the_wrong_shared_password_does_not_authenticate() {
         let mut headers = HeaderMap::new();
         headers.insert(header::AUTHORIZATION, basic_header("ignored", "wrong"));
-        assert!(!is_authenticated(&password_auth("secret"), &headers));
+        assert_eq!(is_authenticated(&password_auth("secret"), &headers), None);
     }
 
     #[test]
@@ -1180,7 +1238,10 @@ mod tests {
             header::AUTHORIZATION,
             format!("Bearer {}", token.raw).parse().unwrap(),
         );
-        assert!(is_authenticated(&token_auth(&token.hash), &headers));
+        assert_eq!(
+            is_authenticated(&token_auth(&token.hash), &headers),
+            Some(event_log::WebAuthMethod::Token)
+        );
     }
 
     #[test]
@@ -1191,7 +1252,51 @@ mod tests {
             header::AUTHORIZATION,
             "Bearer not-the-token".parse().unwrap(),
         );
-        assert!(!is_authenticated(&token_auth(&token.hash), &headers));
+        assert_eq!(is_authenticated(&token_auth(&token.hash), &headers), None);
+    }
+
+    #[test]
+    fn no_method_enabled_is_not_treated_as_a_loading_failure() {
+        assert_eq!(auth_readiness(&no_auth()), AuthReadiness::NoneEnabled);
+    }
+
+    #[test]
+    fn a_ready_password_or_token_is_ready() {
+        assert_eq!(
+            auth_readiness(&password_auth("secret")),
+            AuthReadiness::Ready
+        );
+        assert_eq!(auth_readiness(&token_auth("hash")), AuthReadiness::Ready);
+    }
+
+    #[test]
+    fn password_enabled_with_nothing_loaded_is_unusable() {
+        let auth = AuthConfig {
+            password_enabled: true,
+            password: None,
+            ..no_auth()
+        };
+        assert_eq!(auth_readiness(&auth), AuthReadiness::EnabledButUnusable);
+    }
+
+    #[test]
+    fn token_enabled_with_nothing_configured_is_unusable() {
+        let auth = AuthConfig {
+            token_enabled: true,
+            token_hash: None,
+            ..no_auth()
+        };
+        assert_eq!(auth_readiness(&auth), AuthReadiness::EnabledButUnusable);
+    }
+
+    #[test]
+    fn one_ready_method_is_enough_even_if_the_other_is_not() {
+        let auth = AuthConfig {
+            password_enabled: true,
+            password: None,
+            ..token_auth("hash")
+        };
+        assert_eq!(auth_readiness(&auth), AuthReadiness::Ready);
     }
 
     #[test]

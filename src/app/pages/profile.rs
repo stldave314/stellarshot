@@ -339,6 +339,7 @@ impl ProfileState {
                     time: now,
                     kind: kind.clone(),
                     source: crate::event_log::Source::Desktop,
+                    web: None,
                 });
             }
         }
@@ -1589,12 +1590,14 @@ mod tests {
             time: 500,
             kind: EventKind::BackedUp,
             source: crate::event_log::Source::Desktop,
+            web: None,
         });
 
         let loaded = vec![crate::event_log::Event {
             time: 100,
             kind: EventKind::Checked { damaged: false },
             source: crate::event_log::Source::Desktop,
+            web: None,
         }];
         state.update(Message::HistoryLoaded(loaded), &profile());
 

@@ -202,11 +202,30 @@ impl Output {
         }
         if let Event::Progress { .. } = event {
             let temporary = self.progress_file.with_extension("progress.tmp");
-            if std::fs::write(&temporary, &line).is_ok() {
+            if write_progress_temp(&temporary, &line).is_ok() {
                 let _ = std::fs::rename(&temporary, &self.progress_file);
             }
         }
     }
+}
+
+/// Writes `line` to `path`, refusing to follow a symlink already there
+/// rather than `std::fs::write`'s plain open-and-truncate (see SEC-5 in the
+/// review plan). `path`'s own directory is already verified private
+/// (`lock::create_private_dir`), so only this same user's own other
+/// processes could ever plant such a symlink — a narrow residual, but
+/// refusing it costs one open flag.
+fn write_progress_temp(path: &PathBuf, line: &str) -> std::io::Result<()> {
+    let fd = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::TRUNC
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+    )?;
+    std::fs::File::from(fd).write_all(line.as_bytes())
 }
 
 impl ProgressSink for Output {
@@ -473,5 +492,35 @@ mod tests {
     #[test]
     fn an_unrecognized_arg_is_not_an_operation() {
         assert_eq!(Operation::from_arg("not-a-real-operation"), None);
+    }
+
+    #[test]
+    fn write_progress_temp_writes_an_ordinary_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("job.progress.tmp");
+
+        write_progress_temp(&path, "hello").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+    }
+
+    #[test]
+    fn write_progress_temp_refuses_a_symlink_and_does_not_write_through_it() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("elsewhere");
+        std::fs::write(&target, "untouched").unwrap();
+        let path = dir.path().join("job.progress.tmp");
+        symlink(&target, &path).unwrap();
+
+        let result = write_progress_temp(&path, "hostile");
+
+        assert!(result.is_err(), "a symlink must not be written through");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "untouched",
+            "the symlink's real target must be untouched"
+        );
     }
 }

@@ -361,7 +361,7 @@ Clicking Cancel leaves no `rclone` process (`pgrep rclone`).
 
 ### SEC-5. Shared `/tmp` fallbacks for the runtime directory and backend log
 
-**Status: Done, except item 3 (progress-file `O_NOFOLLOW`).**
+**Status: Done.**
 `runtime_dir` and the new `rustic_log_path` (`app/settings.rs`) both fall
 back to `$XDG_CACHE_HOME`/`$XDG_STATE_HOME` (or `~/.cache`/`~/.local/state`)
 rather than `/tmp` when their usual XDG variable is unset, and
@@ -370,13 +370,20 @@ rather than `/tmp` when their usual XDG variable is unset, and
 user, and is not readable or writable by group or other.
 `debug::open_private_log_file` gained the matching check for a
 pre-existing *file*: `O_CREAT` without `O_EXCL` opens rather than fails on
-one, which a symlink check alone does not cover. Not done: routing the
-`.progress.tmp` write in `runner.rs`'s `Output::emit` through
-`O_NOFOLLOW` — now that its directory is verified private, a symlink there
-could only have been planted by this same user, which is a much narrower
-residual than the original shared-`/tmp` scenario; left as a disclosed gap
-rather than done under time pressure. The README's troubleshooting section
-did not reference the backend log's old path, so it needed no change;
+one, which a symlink check alone does not cover. Item 3: the
+`.progress.tmp` write in `runner.rs`'s `Output::emit` now goes through a
+new `write_progress_temp`, opened with `rustix::fs::open`'s
+`O_NOFOLLOW | O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC` (mode `0600`)
+instead of plain `std::fs::write`, the same primitive
+`debug::open_private_log_file` already uses. Proven with a real symlink: a
+new test plants one at the `.progress.tmp` path pointing at a second file,
+asserts the write is refused, and asserts the symlink's real target is
+still untouched — not merely that the open call compiles with the right
+flags. `.progress.tmp`'s directory is already verified private
+(`create_private_dir`), so the residual this closes is narrow — only this
+same user's own other processes could ever plant such a symlink — but
+closing it costs one open flag. The README's troubleshooting section did
+not reference the backend log's old path, so it needed no change;
 VALIDATION.md documents all of the above.
 
 **Low · S · Verified**

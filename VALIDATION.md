@@ -846,6 +846,8 @@ permanently `Locked`, or a symlink a progress-file write would follow).
 | `a_pre_existing_symlink_is_refused_rather_than_followed` | A symlink at the target path is rejected, not followed to whatever it points at |
 | `a_private_pre_existing_directory_is_still_accepted` | The ordinary case — a directory this user already made and locked down — keeps working; the two checks above are not so strict they also reject the correct state |
 
+Even with the directory itself verified private, the `.progress.tmp` file `runner.rs`'s `Output::emit` writes on every progress update was still opened with plain `std::fs::write`, which follows a symlink already at that path rather than refusing it — the one item SEC-5 originally left open. `write_progress_temp` now opens it with `rustix::fs::open`'s `O_NOFOLLOW | O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC`, the same primitive `debug::open_private_log_file` already used. `write_progress_temp_refuses_a_symlink_and_does_not_write_through_it` plants a real symlink at the `.progress.tmp` path pointing at a second file, asserts the write returns `Err`, and asserts the second file's own content is untouched — proving the refusal, not just that the right flags compile; `write_progress_temp_writes_an_ordinary_file` is the non-regression case. The full `tests/runner.rs` suite (16 tests, real `--run` child processes) still passes, so a genuine backup's progress file keeps updating.
+
 ### Language selection (`src/core/localization.rs`)
 
 `a_requested_language_is_actually_used` selects German and reads back

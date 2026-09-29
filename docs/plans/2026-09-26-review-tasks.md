@@ -3081,6 +3081,34 @@ enforces it through the existing `-D warnings`.
 
 ### TST-1. Add regression tests for every High finding
 
+**Status: Done.** Every High finding's own fix already had its named test
+in the codebase — landed alongside each fix, over several sessions, the
+way this row always asked for — but this row's other half
+("be listed in `VALIDATION.md`") had not actually been checked, not
+assumed: read every fix's own code first to find its real test names
+(several did not match this table's own short descriptions closely
+enough to search for blind), then grepped `VALIDATION.md` for every one
+of them by exact name rather than trusting that a topic being covered in
+prose meant the specific test was cited. Six of nine were missing
+outright: `an_imported_backups_schedule_and_hooks_start_off_and_flag_for_review`,
+`an_rclone_remote_outside_the_wizards_shape_is_rejected_on_import`,
+`an_unsafe_profile_id_is_rejected_and_its_history_is_not_merged` (SEC-1);
+`an_after_hook_still_runs_when_the_repository_never_opens` (REL-2);
+`a_backup_does_not_hang_on_a_full_stderr_pipe` (REL-3);
+`a_timeout_kills_the_whole_group_not_just_the_direct_child` and
+`a_timeout_kills_a_backgrounded_grandchild_too` (REL-4);
+`excluded_folders_with_glob_metacharacters_in_their_name_are_not_backed_up`,
+`a_non_utf8_exclude_fails_the_backup_rather_than_including_it` (REL-5);
+`a_non_utf8_named_file_can_be_restored_by_itself`,
+`keep_both_preserves_a_non_utf8_stem` (REL-6) — added rows for all of
+them in their proper sections, not a new dump-everything-here section,
+and re-ran each one individually to confirm it still passes rather than
+trusting that "it exists" meant "it currently works." REL-1
+(`forget_only_touches_this_profiles_own_tagged_snapshots`) and I18N-1
+(`no_locale_has_a_fluent_syntax_error`) were also missing by exact name,
+added the same way. UI-2's own test was already added and documented
+earlier tonight, in the same change that built it.
+
 **High · (with each fix)**
 
 Each High task above names its test. They must land **with** the fix, fail on

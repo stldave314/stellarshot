@@ -231,6 +231,7 @@ pub fn main(args: &[String]) -> ExitCode {
         eprintln!("usage: stellarshot --scheduled <backup-id>");
         return ExitCode::from(2);
     };
+    crate::debug::init(crate::debug::Role::Scheduled);
     // Every real backup runs here or in a `--run` child, never in the
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing

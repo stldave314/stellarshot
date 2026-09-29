@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use super::config::StellarshotConfig;
 use super::{APP_ID, Flags, migrate};
 use crate::constants::{WINDOW_HEIGHT, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_WIDTH};
-use crate::debug::CONFIG;
+use crate::debug::{self, CONFIG};
 use crate::{debug_log, error_log};
 use cosmic::app::Settings;
 use cosmic::iced::{Limits, Size};
@@ -13,6 +13,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init() -> (Settings, Flags) {
+    debug::init(debug::Role::Window);
     set_logger();
     crate::core::localization::init();
     migrate_settings();

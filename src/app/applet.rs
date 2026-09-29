@@ -96,6 +96,7 @@ impl cosmic::Application for Applet {
     }
 
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Message>) {
+        crate::debug::init(crate::debug::Role::Applet);
         crate::core::localization::init();
         let applet = Self {
             core,

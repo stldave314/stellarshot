@@ -394,6 +394,7 @@ pub fn main(args: &[String]) -> ExitCode {
     // `prctl`, say) is not itself a reason to refuse to run a backup.
     let _ = rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
 
+    crate::debug::init(crate::debug::Role::Run);
     // Every real backup, restore or clean-up runs here, never in the
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing

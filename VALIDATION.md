@@ -792,6 +792,30 @@ The backend log's own state directory is created and verified private by
 `engine::lock::create_private_dir`, shared with the write-lock directory: see
 "The lock and log directories are verified private" below for its own tests.
 
+ARC-7: the *developer* debug log (`debug.rs`'s own `SINK`, not the rustic
+backend log above, which already had this fixed) truncated on every
+process's own first write, unconditionally — a `--run` child spawned
+while the window was already open and logging would truncate the file
+the window still held open at its old byte offset, leaving NUL-filled
+holes once the window wrote again. Fixed with `debug::init(Role)`: only
+`Role::Window` truncates; the applet, `stellarshot-web`, a `--run`
+child and a `--scheduled` run all append, and a process that somehow
+logs before calling `init` also appends rather than guessing it is the
+window. Each line now also carries `[role pid]`, so two processes'
+interleaved lines can be told apart. `only_the_window_truncates` and
+`a_formatted_line_names_the_role_and_pid_before_the_category` are new,
+testing the pulled-out pure `Role::truncates`/`format_line` functions
+directly rather than the real global `SINK` (which a unit test cannot
+touch safely — it is shared process-wide, including across tests in the
+same binary). Beyond the unit tests: the real `--run`/`--scheduled`
+integration suites (`tests/child.rs`, `tests/runner.rs`,
+`tests/scheduled.rs` — 23 tests spawning the actual compiled binary)
+still pass with `debug::init` now called at the top of each of those
+entry points, and the panel applet's own `Applet::init` now calls it
+too — it had no debug-log initialization at all before this, despite
+being exactly as long-running as the window and so exactly as exposed
+to the race being fixed.
+
 ### The lock and log directories are verified private (`src/engine/lock.rs`)
 
 `runtime_dir` (the write lock, and the progress files a window reads a

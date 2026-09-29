@@ -150,6 +150,7 @@ struct AuthConfig {
 
 /// Entry point for the `stellarshot-web` binary.
 pub fn main(_args: &[String]) -> ExitCode {
+    crate::debug::init(crate::debug::Role::Web);
     crate::app::settings::set_logger_for_child();
     crate::core::localization::init();
     // Rustls otherwise has to choose between two crypto providers compiled

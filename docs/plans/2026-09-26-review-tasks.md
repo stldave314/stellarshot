@@ -3104,6 +3104,49 @@ wraps as `ErrorKind::Internal`. `io::Error → ErrorKind::Io` loses the path.
 
 ### ARC-7. Debug logging meets the standard fully
 
+**Status: The real bug (the truncation race) and the role/PID prefix are
+done; missing instrumentation is not.** `debug::init(Role)` now exists —
+`Role::Window`, `Applet`, `Run`, `Scheduled`, `Web`, plus a `Role::Unknown`
+this plan text did not ask for but the safe fallback needs: only
+`Role::Window` truncates on its first write, every other role appends,
+and a process that somehow logs before calling `init` at all (should
+never happen, but "should never happen" is exactly what a fallback is
+for) also appends rather than guessing it is the window. Wired into all
+five real entry points: `app::settings::init` (the window, via
+`main.rs`), `runner::main` (`--run`), `scheduled::main` (`--scheduled`),
+`web::main` (`stellarshot-web`), and `Applet::init` (the panel applet,
+which had no debug-log initialization of any kind before this — its own
+`UI`-category lines were the ones most likely to trigger the exact race
+this fixes, since it is long-running like the window but was, until now,
+silently falling back to always-truncate). Each line now carries
+`[role pid]` right after the elapsed time, so two interleaved processes'
+lines can be told apart by either. The stale `[crate::app::settings::RUSTIC_LOG_PATH]`
+intra-doc link — the function moved and was renamed to lowercase
+`rustic_log_path` since this row was written, without the link being
+updated — is fixed to a plain reference instead (an intra-doc link to a
+private item in another module cannot always resolve, so a link that
+might just trade one staleness risk for another was not worth it here).
+
+`format_line` (the line's actual formatting) and `Role::truncates` were
+both pulled out as pure functions specifically so this could be tested
+without touching the real, process-global `SINK` — `only_the_window_truncates`
+and `a_formatted_line_names_the_role_and_pid_before_the_category` are new,
+alongside the module's existing four. Verified beyond the unit tests too:
+the real `--run`/`--scheduled` integration suites (`tests/child.rs`,
+`tests/runner.rs`, `tests/scheduled.rs` — 23 tests, all spawning the real
+compiled binary) still pass with `debug::init` now called at the top of
+each of those entry points.
+
+Not done tonight: moving `rustic_log_path` itself into `debug.rs` (a
+real relocation touching `app/settings.rs`'s own logic, tied to SEC-5,
+not a quick addition alongside this), and every item under "Missing
+instrumentation" — new `HOOKS`, `LOCK`, `KEYRING` and `RCLONE`
+categories, wired into seven different subsystems. That is real,
+exploratory work (deciding exactly what each site should say, at what
+level of detail, matching this project's own established `debug_log!`
+style) large enough to deserve its own pass rather than being rushed
+through as a checklist at the end of this one.
+
 **Medium · S · Verified**
 
 **Files:** `src/debug.rs:47-91`, `src/app/settings.rs:76`

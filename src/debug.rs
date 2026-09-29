@@ -3,9 +3,19 @@
 //! Developer debug logging.
 //!
 //! Flip [`DEVELOPER_LOGGING`] to `true` while debugging and rebuild. Output
-//! goes to [`PATH`], truncated once per process launch, with each line
-//! prefixed by elapsed time and a short category tag so a run can be filtered
-//! with `grep`.
+//! goes to [`PATH`], one line per call, prefixed by elapsed time, which
+//! process wrote it and that process's PID, and a short category tag — a
+//! run can be filtered with `grep` by any of those.
+//!
+//! Several processes can share this one file over a session: the window,
+//! the panel applet, the web daemon, and short-lived `--run`/`--scheduled`
+//! children the window or a timer spawns. Only [`init`]'s [`Role::Window`]
+//! truncates it, once, at that process's own launch; every other role
+//! appends. Truncating from more than one place would race — whichever
+//! process is mid-write when another one truncates keeps writing at its
+//! own, now-stale file offset, leaving NUL-filled holes rather than a
+//! readable log — so the window, being the one thing a session is built
+//! around, is the only truncator.
 //!
 //! Logging goes to a *file* rather than stderr on purpose: a scheduled backup
 //! runs under a systemd timer, where stderr ends up in a journal most people
@@ -58,7 +68,7 @@ pub const MOUNT: &str = "MOUNT";
 /// lines, or the window's.
 ///
 /// These paths are fixed and predictable (one is always `/tmp/…`; see
-/// [`crate::app::settings::RUSTIC_LOG_PATH`] for the other, which is not),
+/// `crate::app::settings::rustic_log_path` for the other, which is not),
 /// so without this, another user on a shared machine could plant a symlink
 /// there first and have Stellarshot truncate or write into a file it does
 /// not otherwise have reason to touch, or read a log meant to be private.
@@ -86,22 +96,84 @@ pub(crate) fn open_private_log_file(path: &str, truncate: bool) -> Option<File> 
     owned_by_us.then_some(file)
 }
 
+/// Which process is writing: see this module's own doc comment for why
+/// only [`Role::Window`] ever truncates the log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Window,
+    Applet,
+    /// A `--run` child.
+    Run,
+    /// A `--scheduled` run.
+    Scheduled,
+    /// The `stellarshot-web` daemon.
+    Web,
+    /// [`init`] was never called before the first log line: should never
+    /// happen outside a bug in some future entry point, but still appends
+    /// rather than guessing this is the window and truncating.
+    Unknown,
+}
+
+impl Role {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Window => "window",
+            Self::Applet => "applet",
+            Self::Run => "run",
+            Self::Scheduled => "scheduled",
+            Self::Web => "web",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn truncates(self) -> bool {
+        matches!(self, Self::Window)
+    }
+}
+
 struct Sink {
     file: Option<File>,
     start: Instant,
+    role: Role,
+    pid: u32,
 }
 
 static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
 
+fn new_sink(role: Role) -> Sink {
+    Sink {
+        file: open_private_log_file(PATH, role.truncates()),
+        start: Instant::now(),
+        role,
+        pid: std::process::id(),
+    }
+}
+
+/// Set which process this is, before anything logs — each of this crate's
+/// binary entry points calls this once, as close to its own start as
+/// possible. A call after the first [`debug_log!`]/[`error_log!`] (or a
+/// second call at all) is a no-op: whichever role initialized the log
+/// first is the one that already decided whether it was truncated.
+pub fn init(role: Role) {
+    let _ = SINK.set(Mutex::new(new_sink(role)));
+}
+
+/// [`sink`]'s lock, initializing with [`Role::Unknown`] (append, the
+/// safest default — see this module's own doc comment) if [`init`] was
+/// never called at all, rather than the truncate-by-default behavior only
+/// the window actually wants.
 fn sink() -> &'static Mutex<Sink> {
-    SINK.get_or_init(|| {
-        // Truncate once per process launch.
-        let file = open_private_log_file(PATH, true);
-        Mutex::new(Sink {
-            file,
-            start: Instant::now(),
-        })
-    })
+    SINK.get_or_init(|| Mutex::new(new_sink(Role::Unknown)))
+}
+
+/// One already-formatted line, given everything [`write`] would otherwise
+/// read from [`SINK`] — kept separate so the format itself is testable
+/// without touching that process-wide state.
+fn format_line(elapsed: f64, role: Role, pid: u32, category: &str, args: &Arguments<'_>) -> String {
+    format!(
+        "[{elapsed:9.3}] [{} {pid:<8}] {category:<7} {args}",
+        role.label()
+    )
 }
 
 /// Write one already-formatted line. Called by [`debug_log!`]; not intended to
@@ -114,8 +186,9 @@ pub fn write(category: &str, args: Arguments<'_>) {
         return;
     };
     let elapsed = sink.start.elapsed().as_secs_f64();
+    let (role, pid) = (sink.role, sink.pid);
     if let Some(file) = sink.file.as_mut() {
-        let _ = writeln!(file, "[{elapsed:9.3}] {category:<7} {args}");
+        let _ = writeln!(file, "{}", format_line(elapsed, role, pid, category, &args));
         let _ = file.flush();
     }
 }
@@ -157,6 +230,37 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn only_the_window_truncates() {
+        for role in [
+            Role::Applet,
+            Role::Run,
+            Role::Scheduled,
+            Role::Web,
+            Role::Unknown,
+        ] {
+            assert!(!role.truncates(), "{role:?} must append, not truncate");
+        }
+        assert!(Role::Window.truncates());
+    }
+
+    #[test]
+    fn a_formatted_line_names_the_role_and_pid_before_the_category() {
+        let line = format_line(1.5, Role::Run, 4242, "ENGINE", &format_args!("hello"));
+        assert!(
+            line.starts_with("[    1.500] [run 4242"),
+            "role and pid must come right after the elapsed time: {line:?}"
+        );
+        assert!(
+            line.contains("ENGINE"),
+            "the category must still be there: {line:?}"
+        );
+        assert!(
+            line.ends_with("hello"),
+            "the formatted message must still be there: {line:?}"
+        );
+    }
 
     #[test]
     fn a_symlink_already_at_the_path_is_not_followed() {

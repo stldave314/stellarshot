@@ -48,7 +48,16 @@ fn data_dir() -> Option<PathBuf> {
 /// a real end-to-end TLS handshake without going through `config`'s "custom"
 /// path, which is meant for a certificate that already exists somewhere.
 pub(crate) fn self_signed_paths(dir: &Path) -> io::Result<(PathBuf, PathBuf)> {
-    std::fs::create_dir_all(dir)?;
+    // `mode(0o700)` only applies to a directory this actually creates, the
+    // same way `write_private`'s own mode only applied to a file it
+    // created before that was fixed below — an already-existing `dir` (the
+    // common case after the first run) keeps whatever mode it already has,
+    // never loosened or tightened by this call.
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
     let cert_path = dir.join("cert.pem");
     let key_path = dir.join("key.pem");
     if !cert_path.exists() || !key_path.exists() {
@@ -120,16 +129,25 @@ pub fn fingerprint(cert_path: &Path) -> io::Result<String> {
 
 /// Write `bytes` to `path`, readable only by this user: a private key must
 /// never be group- or world-readable.
+///
+/// `OpenOptions::mode` only takes effect when the open call actually
+/// *creates* the file — reusing an existing `path` (regenerating `key.pem`
+/// after only `cert.pem` went missing, say) would silently keep whatever
+/// mode was already there instead. Written to a fresh temporary file
+/// instead, which `mode(0o600)` always applies to since it is always newly
+/// created, then moved into place: the rename replaces `path`'s directory
+/// entry outright, so the file that ends up there is the new one, mode and
+/// all, never a reused inode with a stale mode.
 fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?
-        .write_all(bytes)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true).mode(0o600);
+    atomicwrites::AtomicFile::new(path, atomicwrites::AllowOverwrite)
+        .write_with_options(|file| file.write_all(bytes), options)
+        .map_err(|err: atomicwrites::Error<io::Error>| match err {
+            atomicwrites::Error::Internal(err) | atomicwrites::Error::User(err) => err,
+        })
 }
 
 #[cfg(test)]
@@ -228,6 +246,37 @@ mod tests {
         let (_, key) = self_signed_paths(dir.path()).unwrap();
         let mode = std::fs::metadata(&key).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_regenerated_key_is_not_readable_by_anyone_else_even_if_the_old_one_was() {
+        // SEC-7: `OpenOptions::mode` only takes effect on the create, not on
+        // reusing an existing path — a stale, loosely-permissioned key.pem
+        // left over from before this fix (or, in principle, tampered with)
+        // must not survive being "regenerated" over.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let (cert, key) = self_signed_paths(dir.path()).unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::remove_file(&cert).unwrap();
+
+        let (_, key_again) = self_signed_paths(dir.path()).unwrap();
+
+        assert_eq!(key, key_again);
+        let mode = std::fs::metadata(&key_again).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "{mode:o}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_tls_directory_is_not_traversable_by_anyone_else() {
+        use std::os::unix::fs::PermissionsExt;
+        let parent = tempfile::TempDir::new().unwrap();
+        let dir = parent.path().join("web");
+        self_signed_paths(&dir).unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700, "{mode:o}");
     }
 
     #[tokio::test]

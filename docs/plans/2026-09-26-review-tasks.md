@@ -435,15 +435,34 @@ backups".
 
 ### SEC-7. Private key and Open Copy permission gaps
 
-**Status: Open Copy half done (`app.rs`); the TLS-key half is not.**
-`open_copy` now requires `symlink_metadata(&copy)?.is_file()` before
-chmod'ing or opening it, refusing a symlink rather than following it to
-its target. `web_tls.rs`'s `write_private` still uses
-`.create(true).mode(0o600)`, which (as the problem statement itself
-describes) only actually applies the mode when the file is *created* — a
-pre-existing looser `key.pem` reused when only `cert.pem` was missing
-would keep its old mode. Not fixed tonight; that file is the peer
-session's own.
+**Status: Done.** `open_copy` now requires `symlink_metadata(&copy)?.is_file()`
+before chmod'ing or opening it, refusing a symlink rather than following it
+to its target.
+
+`web_tls.rs`'s TLS-key half, earlier left as "the peer session's own,"
+was picked up once that stopped being true. `write_private` no longer
+opens `path` directly with `.create(true).mode(0o600)` — a mode that,
+exactly as the problem statement says, only takes effect when the open
+call actually creates the file, so a pre-existing looser `key.pem`
+(regenerated because only `cert.pem` went missing) kept its old mode.
+Now writes through `atomicwrites::AtomicFile::write_with_options` (the
+same crate this session already reached for in REL-15 and SEC-6) to a
+fresh temporary file, which `mode(0o600)` always applies to since it is
+always newly created, then renames it into place — the rename replaces
+`path`'s directory entry outright, so whatever mode the file had before
+is gone, not merged with the new one. `self_signed_paths` also now
+creates its directory with `DirBuilder::new().mode(0o700)` instead of
+`create_dir_all`'s own default (umask-dependent, and not necessarily
+private), the same "only applies to a directory it actually creates,
+never retroactively loosens or tightens one already there" caveat
+applying there too.
+
+Added `a_regenerated_key_is_not_readable_by_anyone_else_even_if_the_old_one_was`
+— the exact scenario the plan's own verify text describes (a loosely
+permissioned key, its matching certificate deleted, regenerated) — and
+`the_tls_directory_is_not_traversable_by_anyone_else`, neither of which
+existed before; both pass, alongside the 9 other `web_tls::` tests
+already there.
 
 **Low · S · Verified**
 

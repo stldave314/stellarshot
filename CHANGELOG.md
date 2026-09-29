@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already refused a binary run from somewhere like `/tmp`, where any
   local user could recreate the same path after a reboot and have it
   run as someone else.
+- **A regenerated TLS private key can no longer end up readable by
+  anyone else.** If only the certificate half of a self-signed pair
+  went missing, the key was reused as-is rather than rewritten, so a
+  key that had somehow ended up with a looser permission before kept
+  that looser permission afterward too.
 
 ### Added
 

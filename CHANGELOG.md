@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Adding or removing a backup while the web interface is running now
+  shows up there right away**, instead of only after the next manual
+  restart — the same immediate treatment a changed password, token or
+  allow-list entry already got. Editing an existing backup's own settings
+  still does not restart anything, since the list of backups the web
+  interface serves does not change either.
 - **A password keystroke or a running backup's progress no longer rebuilds
   the entire sidebar.** Every backup's own status still updates live, but
   the sidebar's other rows, its selection, and whatever had keyboard focus

@@ -188,6 +188,14 @@ Every configured backup's current status.
 ]
 ```
 
+Adding or removing a backup restarts the daemon right away if it is
+already running, the same as an allow-list or authentication change, so
+a newly created backup appears here (and a removed one disappears)
+without waiting for a manual **Restart**. Editing an existing backup's
+own settings — its folders, its password command, and so on — does not:
+nothing about what this list of backups looks like changes, so nothing
+restarts.
+
 ### `GET /api/v1/backups/{id}/snapshots`
 
 That backup's snapshots, newest first.

@@ -1118,13 +1118,30 @@ impl App {
     }
 
     /// Replace a profile by ID, or add it.
-    fn upsert_profile(&mut self, profile: Profile) {
+    /// Saves `profile`, whether it is new or replacing one with the same
+    /// ID. Returns a restart of the web daemon, if active, only when this
+    /// is a genuinely new profile: a backup the API's own list of backups
+    /// does not yet include (see WEB-1). An edit to a profile already in
+    /// that list does not change what the API can see, so it does not
+    /// restart anything — every other field, on every save, would
+    /// interrupt a request far more often than the one thing this
+    /// protects against.
+    fn upsert_profile(&mut self, profile: Profile) -> Task<Message> {
         let mut profiles = self.config.profiles.clone();
-        match profiles.iter_mut().find(|p| p.id == profile.id) {
+        let is_new = !profiles.iter().any(|existing| existing.id == profile.id);
+        match profiles
+            .iter_mut()
+            .find(|existing| existing.id == profile.id)
+        {
             Some(existing) => *existing = profile,
             None => profiles.push(profile),
         }
         self.save_profiles(profiles);
+        if is_new {
+            self.restart_web_daemon_if_active()
+        } else {
+            Task::none()
+        }
     }
 
     fn remove_profile(&mut self, id: &str) -> Task<Message> {
@@ -1157,7 +1174,10 @@ impl App {
         let forget = Task::perform(async move { crate::keyring::forget(&id).await }, |_| {
             app(Message::Noop)
         });
-        Task::batch([unschedule, forget, self.activate_selected()])
+        // Removing a backup takes it off the API's own list too (see
+        // WEB-1), the same reason adding one restarts the daemon.
+        let restart = self.restart_web_daemon_if_active();
+        Task::batch([unschedule, forget, restart, self.activate_selected()])
     }
 
     /// Show the selected profile, looking for its password if needed.
@@ -1810,8 +1830,7 @@ impl App {
                 profile::Effect::RecordSuccess(time) => {
                     let mut updated = profile.clone();
                     updated.last_success = Some(time);
-                    self.upsert_profile(updated);
-                    Task::none()
+                    self.upsert_profile(updated)
                 }
                 profile::Effect::OpenRestore(secret) => {
                     let root = profile
@@ -2065,7 +2084,7 @@ impl App {
             }
         }
         let id = profile.id.clone();
-        self.upsert_profile(profile.clone());
+        let saved = self.upsert_profile(profile.clone());
         self.rebuild_nav(Some(&id));
         let scheduled = Self::apply_schedule(profile.clone());
 
@@ -2080,7 +2099,12 @@ impl App {
                 effects = state.back_up(&profile);
             }
         }
-        Task::batch([close, scheduled, self.run_profile_effects(&id, effects)])
+        Task::batch([
+            close,
+            saved,
+            scheduled,
+            self.run_profile_effects(&id, effects),
+        ])
     }
 
     fn on_dialog(&mut self, message: DialogMessage) -> Task<Message> {
@@ -2180,11 +2204,11 @@ impl App {
                     }
                     Dialog::PasswordCommand { id, text } => {
                         self.dialog = None;
-                        if let Some(mut profile) = self.config.profile(&id).cloned() {
-                            profile.password_command = text.trim().to_owned();
-                            self.upsert_profile(profile);
-                        }
-                        Task::none()
+                        let Some(mut profile) = self.config.profile(&id).cloned() else {
+                            return Task::none();
+                        };
+                        profile.password_command = text.trim().to_owned();
+                        self.upsert_profile(profile)
                     }
                     Dialog::ChangePassword {
                         id,

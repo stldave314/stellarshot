@@ -571,25 +571,41 @@ production `axum_server` path.
 
 ### WEB-1. Credential and profile changes never reach the running daemon
 
-**Status: The "minimum" fix is done for auth and the allow-list; profile
-changes still do not reach the daemon.** Toggling password or token auth,
-saving a new password, regenerating the token, and adding or removing an
-allow-list entry now call `App::restart_web_daemon_if_active`, which
-restarts the daemon (if `web_daemon::Status::Active`, from the last status
-Settings was told) right after the setting is saved — closing the specific
-bug in the Problem section (a regenerated token's old value kept working).
-Fixed the `config.rs` doc comment and added a paragraph to
-`docs/web-interface.md`. Scope change already started/stopped the daemon;
-switching between `Localhost` and `Lan` while already on is unchanged
-(deliberately manual — see that arm's own comment) and so is a port or TLS
-change (still the Restart button, per the existing docs). Not done: a
-backup being added, edited or removed still does not reach the daemon
-until it restarts — the plan's own "preferred" `ArcSwap` fix, or extending
-the restart-on-change treatment to profile changes specifically (visibility
-on the API, not every field edit — restarting on every minor edit would
-interrupt far more than it protects), whichever is chosen later. Not run
-tonight: the live `curl` regenerate-then-retry proof (needs a real running
-daemon and keyring; not attempted against this sandbox's real settings).
+**Status: The "minimum" fix is done for auth, the allow-list, and now
+profile visibility too.** Toggling password or token auth, saving a new
+password, regenerating the token, and adding or removing an allow-list
+entry all call `App::restart_web_daemon_if_active`, which restarts the
+daemon (if `web_daemon::Status::Active`, from the last status Settings was
+told) right after the setting is saved — closing the specific bug in the
+Problem section (a regenerated token's old value kept working). Fixed the
+`config.rs` doc comment and added a paragraph to `docs/web-interface.md`.
+Scope change already started/stopped the daemon; switching between
+`Localhost` and `Lan` while already on is unchanged (deliberately manual
+— see that arm's own comment) and so is a port or TLS change (still the
+Restart button, per the existing docs).
+
+`upsert_profile` now also restarts the daemon, but only when the profile
+is genuinely new (not already in `self.config.profiles`) — the API's own
+list of backups changed, the one thing this is protecting; an edit to a
+profile already in that list (a renamed source, a changed password
+command, `RecordSuccess` after a backup finishes) does not restart
+anything, since it changes nothing the API can see and restarting on
+every such save would interrupt a request far more often than it
+protects. `remove_profile` restarts unconditionally, for the same
+"visibility changed" reason. Both call sites route through the one
+`upsert_profile`/`remove_profile` already shared by every path that adds,
+edits or removes a profile (the wizard finishing, `RecordSuccess`, the
+password-command dialog, "Remove", "Delete all data"), so nothing needed
+touching at each of those call sites individually.
+
+Not done: the plan's own "preferred" `ArcSwap` fix (restarting still
+means a brief window where in-flight requests are cut, which WEB-8's own
+graceful-shutdown work already softens but does not eliminate). Not run:
+the live `curl` regenerate-then-retry proof, or its equivalent for a
+newly-added backup appearing in `GET /api/v1/backups` after a restart
+(needs a real running daemon and keyring; not attempted against this
+machine's real settings, which is now Dave's live desktop session, not
+an idle sandbox).
 
 **Medium · M · Verified**
 

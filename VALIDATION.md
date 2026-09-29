@@ -270,6 +270,26 @@ The settings surface for a planned web interface and REST API: a network scope, 
 
 Not covered by an automated test: the Settings page's own new controls in `src/app.rs` (the scope radio buttons, the two toggles-with-detail for password and token, the allow-list add/remove row) — UI wiring, following the same pattern as every other settings control already in this section. Also from a real report: saving the shared password gave no feedback beyond the field clearing itself, indistinguishable from nothing happening — fixed with a confirmation dialog on success, the same `Dialog::Info` already used for a generated API token. Not proven at all: PAM authentication itself. Its checkbox exists and its setting persists, but nothing calls into PAM yet; whether verifying a Linux user's own password from an unprivileged per-user service actually works (via `pam_unix`'s `unix_chkpwd` helper, which by design only checks the calling user's own password) is design research recorded in ROADMAP.md, not a running, tested code path.
 
+WEB-1's daemon-restart-on-change treatment (auth, the allow-list) now also
+covers a backup being added or removed: `App::upsert_profile` restarts the
+daemon (if active) only when the profile was not already in the saved
+list, and `App::remove_profile` always does, both routing through the
+same `restart_web_daemon_if_active` the auth/allow-list paths already
+used. Editing a profile already in the list restarts nothing, since the
+`GET /api/v1/backups` list itself does not change — checked directly by
+reading `upsert_profile`'s three call sites (the wizard finishing a new
+or edited backup, `RecordSuccess` after a backup completes, the
+password-command dialog) rather than assumed, since an edit accidentally
+restarting the daemon on every completed backup would be a much worse
+regression than the one this fixes. Same category of gap as the rest of
+this section: `app::tests::` covers every pure decision this touches
+(`Launch`'s own tests, the network-scope tests above), but the
+Task-producing wiring itself (whether a restart really fires) has no
+test seam yet — the same reason the existing controls above are UI
+wiring, not logic. Not run live: the daemon-restart-then-`GET /api/v1/backups`
+proof against a real running daemon on this machine's now-live desktop
+session.
+
 ### The web interface's own daemon (`src/web.rs`, `src/bin/web.rs`, `src/web_token.rs`)
 
 The `stellarshot-web` binary: binds according to the network scope and port settings, enforces the IP allow-list, then checks authentication — password and token for real, PAM not wired up yet, throttled per address after repeated failures — ahead of every route, including the health check. Order matters and is proven, not assumed: the allow-list runs before authentication, so an address that was never going to be let in is rejected before its credentials are even looked at.

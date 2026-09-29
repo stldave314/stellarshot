@@ -70,6 +70,14 @@ Any request needs to satisfy at least one enabled method:
 - **This computer's own sign-in** (PAM) — not implemented yet. The setting
   exists and is saved, but the daemon does not check it.
 
+Either credential grants the same thing: whoever holds it can list every
+backup, every snapshot, and every file name in every one of them (not file
+*contents* — there is no download route yet), and can start any backup,
+which runs its owner's own hooks. A token is the one most likely to end up
+somewhere it can leak from by accident — a script, a shell history, a
+committed file — so treat it the same as the shared password: regenerate
+it if you suspect it got out, and never put it anywhere world-readable.
+
 A request with no `Authorization` header, or one this daemon does not
 recognize, gets `401 Unauthorized` (with a `WWW-Authenticate: Bearer` header)
 but is never counted against the address below — only an actual wrong

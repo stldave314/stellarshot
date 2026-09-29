@@ -4030,20 +4030,27 @@ without `\b` when checking.
 
 ### DOC-2. Docs that contradict the code
 
-**Status: Every non-`docs/web-interface.md` item checked and already
-resolved, except the screenshots.** `SECURITY.md:37` was corrected as part
-of SEC-3 tonight. README's shortcuts table already has F1; the backend log
-path README references is the *developer debug* log
-(`/tmp/stellarshot-debug.log`), which SEC-5 deliberately did not move, so
-there was never a stale reference to fix there; tarball install
-instructions were added as part of CI-5. `CHANGELOG.md` no longer says
-"quit completely" anywhere (resolved before tonight, alongside UI-3's own
-Quit action landing). The `docs/web-interface.md` items are the peer
-session's own territory (WEB-1/6/8). **Not done:** regenerating
-`docs/screenshots/`, which needs a live COSMIC session and this session's
-own AT-SPI/interactive-UI limitations apply — not attempted rather than
-risk an unreliable result, or disturbing Dave's actual desktop session in
-the middle of the night to drive it.
+**Status: Every item checked and resolved except the screenshots.**
+`SECURITY.md:37` was corrected as part of SEC-3. README's shortcuts table
+already has F1; the backend log path README references is the *developer
+debug* log (`/tmp/stellarshot-debug.log`), which SEC-5 deliberately did
+not move, so there was never a stale reference to fix there; tarball
+install instructions were added as part of CI-5. `CHANGELOG.md` no longer
+says "quit completely" anywhere (resolved alongside UI-3's own Quit action
+landing). `docs/web-interface.md`'s own 5 items were re-checked directly
+against the current file rather than trusting the plan's "peer session's
+own territory" note: the `202`/`409` status mapping (WEB-6/WEB-8), the
+profile/credential-change restart wording (WEB-1), and "every network
+interface" for the LAN scope were already there — only the blast-radius
+item was genuinely still missing, now added to the Authentication section:
+either credential lists every backup, snapshot and file *name* (not
+contents — confirmed there is still no download route in `routes::router`)
+and can start a backup, running its owner's own hooks; a token is singled
+out as the one most likely to leak by accident (a script, a committed
+file). **Not done:** regenerating `docs/screenshots/`, which needs a live
+COSMIC session and this session's own AT-SPI/interactive-UI limitations
+apply — not attempted rather than risk an unreliable result, or disturbing
+Dave's actual desktop session in the middle of the night to drive it.
 
 **Medium · S · Verified**
 

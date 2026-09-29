@@ -2630,6 +2630,20 @@ logical, and Enter confirms dialogs.
 
 ### UI-9. Generated API token cannot be copied; regeneration is unconfirmed
 
+**Status: Already done — this row's own line numbers had drifted, and
+re-checking against the current code found both halves of the fix already
+in place, not written for this pass.** `Dialog::Token`'s view is a
+read-only `text_input` holding the raw token (selectable, unlike plain
+dialog text) next to a `web-token-copy` button wired to
+`Message::CopyToClipboard`. `Message::GenerateWebToken` only jumps
+straight to showing a new token when `self.config.web.token_hash` is
+`None` (nothing to lose the first time); once a token already exists, it
+shows `Dialog::RegenerateToken` first — a `destructive`-styled confirm
+button, gated on the dialog's own `can_confirm()` — and only generates and
+installs the new token, invalidating the old one, once that is confirmed.
+Not re-verified live (needs a running window and a real clipboard, the
+same disclosed gap as UI-1 through UI-3's own click-through).
+
 **Medium · S · Verified**
 
 **Files:** `src/app.rs:2781-2788`

@@ -857,6 +857,19 @@ One pedantic finding is accepted: the application ID contains uppercase
 letters (`Stellarshot`), which AppStream discourages. That follows the COSMIC
 convention (`com.system76.CosmicFiles`).
 
+I18N-3 added `stellarshot-applet` and `stellarshot-web` to `<provides>`
+(both binaries are installed by the same package, per `install.sh`) and
+a `<supports>` block for keyboard/pointing input. Ran
+`scripts/validate-metadata.sh` itself, not just `appstreamcli` on its
+own, so the change is checked against every rule this project's own
+script enforces (screenshot captions, the release-version match, the ID
+agreement across component/launchable/desktop-file/icon, and the rest),
+not only the generic validator's. Still one pedantic finding, the same
+pre-existing one above — nothing new introduced. Not done: the
+localized `Name[xx]`/`Comment[xx]` half of I18N-3, which needs a
+build-time generator this project does not have yet; see the review
+plan's own status note for why that was not rushed in alongside this.
+
 ### Packages (`./install.sh package`, CI)
 
 CI builds the `.deb`, `.rpm` and tarball on every push and prints the `.deb`'s

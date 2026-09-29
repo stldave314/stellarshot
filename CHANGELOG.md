@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "N found so far" while browsing, "N changed" in Compare, a password's
   character count, and forgetting N snapshots) — each now uses its
   language's own singular form for a count of one.
+- **The app's metainfo now lists the applet and web daemon binaries it
+  installs, and declares keyboard and pointer support**, for software
+  centers that read it.
 - **Adding or removing a backup while the web interface is running now
   shows up there right away**, instead of only after the next manual
   restart — the same immediate treatment a changed password, token or

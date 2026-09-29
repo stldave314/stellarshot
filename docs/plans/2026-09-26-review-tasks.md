@@ -2712,6 +2712,33 @@ Stellarshot's own language setting — has somewhere to live).
 
 ### I18N-3. Localize the desktop entries and metainfo
 
+**Status: Partial.** Added `stellarshot-applet` and `stellarshot-web` to
+`<provides>` (both are installed by the same package as `stellarshot`
+itself, per `install.sh`) and a `<supports><control>keyboard</control>
+<control>pointing</control></supports>` block, both in
+`res/io.github.stldave314.Stellarshot.metainfo.xml`. Verified against the
+real tools, not just by reading the XML: `appstreamcli validate
+--pedantic` still passes (one pre-existing pedantic note about the
+component ID's own capitalization, unrelated to this change and present
+before it), and `desktop-file-validate` on both `.desktop` files is
+clean.
+
+Not done: the actual localization (`Name[de]`, `Comment[de]`, and
+localized `Actions`/`Keywords`, generated from the Fluent files so they
+cannot drift). Looked at both options the plan offers before picking
+neither tonight: `xdgen` is a real, published crate, but only at `0.1.0`
+— a single-version build-time code generator with no track record is a
+real risk to take on for a Low-severity, cosmetic gap, and a hand-rolled
+`build.rs` doing the same job (reading `app-title`/`app-comment`/
+`app-keywords` out of all 5 `.ftl` files and rewriting the `.desktop`/
+`.metainfo.xml` files with `[xx]` keys at build time) is a genuine new
+build-time system, not a quick addition — it needs its own decisions
+about when it runs (every build, or only for packaging), how it handles
+a locale missing one of the three keys, and how the *generated* files
+relate to the checked-in ones packaging currently references directly.
+Better scoped as its own change than rushed in alongside everything else
+tonight.
+
 **Low · M**
 
 **Files:** `res/*.desktop`, `res/*.metainfo.xml`

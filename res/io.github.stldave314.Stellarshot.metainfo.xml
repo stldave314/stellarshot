@@ -176,5 +176,11 @@
   </keywords>
   <provides>
     <binary>stellarshot</binary>
+    <binary>stellarshot-applet</binary>
+    <binary>stellarshot-web</binary>
   </provides>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
 </component>

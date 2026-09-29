@@ -3928,8 +3928,8 @@ pass vacuously.
 
 ### CI-5. Packaging fixes
 
-**Status: 3 of 5 done** (the other two are cross-referenced to TST-3 and
-WEB-10 by the plan itself, neither started).
+**Status: 4 of 5 done** (the fifth is cross-referenced to TST-3 by the
+plan itself, not started).
 
 - **The tarball's `install.sh` couldn't work:** done. New
   `install-tarball.sh` only copies the tarball's already-built `usr/` tree
@@ -3954,9 +3954,20 @@ WEB-10 by the plan itself, neither started).
   linking the *versioned* doc from Settings instead of `main` — that's a
   Settings-page change in `app.rs`'s web-settings section, left to whoever
   is working WEB-1 through WEB-12 tonight.
-- **Uninstall leaves user units behind:** not started; see
-  [WEB-10](#web-10-service-unit-hardening-and-upgrade-handling), which this
-  task already deferred to.
+- **Uninstall leaves user units behind:** done. `cmd_uninstall` already
+  warned to `systemctl --user disable --now 'stellarshot*'`, but disabling
+  and stopping a unit does not delete its file from
+  `~/.config/systemd/user/` — re-checked against the actual filenames
+  `schedule.rs` (`stellarshot-backup-<id>.service`/`.timer`) and
+  `web_daemon.rs` (`stellarshot-web.service`) create, rather than assuming
+  the existing glob already covered it. Added a second line to the same
+  warning: `rm -f ~/.config/systemd/user/stellarshot*.service
+  ~/.config/systemd/user/stellarshot*.timer`. Not automated: `install.sh`
+  runs as whatever user invokes it (often root, for a system-wide
+  install), which is not necessarily the user account whose
+  `~/.config/systemd/user/` actually holds these units, so removing them
+  automatically risked acting on the wrong account or silently doing
+  nothing; the existing design of disclosing rather than guessing is kept.
 
 **Medium · S · Verified**
 

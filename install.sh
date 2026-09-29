@@ -150,8 +150,10 @@ cmd_uninstall() {
     info "Removed. Settings in ~/.config/cosmic/$APP_ID and every repository were kept."
     warn "Any per-user systemd unit (the web interface, a scheduled backup) is left" \
         "running and installed, since it belongs to your user account, not this" \
-        "prefix. Stop and remove them yourself if you want to:"
+        "prefix. Stopping and disabling a unit does not delete its file, so both" \
+        "steps are needed to remove them yourself:"
     warn "  systemctl --user disable --now 'stellarshot*'"
+    warn "  rm -f ~/.config/systemd/user/stellarshot*.service ~/.config/systemd/user/stellarshot*.timer"
 }
 
 cmd_deb() {

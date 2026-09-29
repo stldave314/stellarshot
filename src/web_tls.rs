@@ -90,7 +90,7 @@ fn cert_names(hostname: &str) -> Vec<String> {
 }
 
 fn generate(cert_path: &Path, key_path: &Path) -> io::Result<()> {
-    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+    let hostname = crate::engine::hostname();
     let names = cert_names(&hostname);
     let signing_key = rcgen::KeyPair::generate().map_err(io::Error::other)?;
     let mut params = rcgen::CertificateParams::new(names).map_err(io::Error::other)?;

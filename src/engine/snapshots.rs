@@ -39,8 +39,18 @@ pub struct SnapshotSummary {
 impl SnapshotSummary {
     /// The first eight hex characters, as restic and rustic show IDs.
     pub fn short_id(&self) -> &str {
-        self.id.get(..8).unwrap_or(&self.id)
+        short_id(&self.id)
     }
+}
+
+/// The first [`SHORT_ID_LEN`] hex characters of a snapshot ID, as restic
+/// and rustic show IDs. A free function, not only [`SnapshotSummary::short_id`],
+/// for a caller (`event_log`) that only ever has the plain ID string on
+/// hand, never a whole `SnapshotSummary`.
+pub const SHORT_ID_LEN: usize = 8;
+
+pub fn short_id(id: &str) -> &str {
+    id.get(..SHORT_ID_LEN).unwrap_or(id)
 }
 
 impl From<&SnapshotFile> for SnapshotSummary {

@@ -22,6 +22,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use crate::app::format::now;
 use crate::app::tasks;
 use crate::debug::WEB;
 use crate::engine::{self, EngineError, ErrorKind, SnapshotSummary, TreeEntry};
@@ -111,7 +112,7 @@ pub(super) async fn drain_running_jobs(state: &AppState, timeout: std::time::Dur
     if stragglers.is_empty() {
         return;
     }
-    let now = jiff::Timestamp::now().as_second();
+    let now = now();
     for (profile_id, abort_handle) in stragglers {
         error_log!(
             WEB,
@@ -293,7 +294,7 @@ fn backup_by_id(profiles: &[Profile], id: &str) -> Result<Profile, ApiError> {
 }
 
 async fn list_backups(State(state): State<Arc<AppState>>) -> Json<Vec<Status>> {
-    let now = jiff::Timestamp::now().as_second();
+    let now = now();
     Json(status::all(&state.profiles, now))
 }
 
@@ -400,7 +401,7 @@ async fn record_backup(profile_id: String, location: crate::engine::Location, jo
         )
     })
     .await;
-    let now = jiff::Timestamp::now().as_second();
+    let now = now();
     match result {
         Ok(_) => event_log::record(
             &profile_id,

@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::backup::BackupRequest;
 use super::error::{EngineError, ErrorKind};
+use super::repo::canonicalize_or_raw;
 use crate::constants::PROGRESS_INTERVAL;
 
 /// Files and bytes a backup would read.
@@ -145,10 +146,7 @@ pub fn exclusion_breakdown(
 /// Paths as the walk reports them: canonical, so `/home` and `/var/home`
 /// compare equal where one is a link to the other.
 fn canonical(paths: &[PathBuf]) -> Vec<PathBuf> {
-    paths
-        .iter()
-        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
-        .collect()
+    paths.iter().map(|path| canonicalize_or_raw(path)).collect()
 }
 
 /// Visit every file the backup of `request` would read, with its size, the

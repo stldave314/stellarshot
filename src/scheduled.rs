@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use crate::app::config::StellarshotConfig;
 use crate::app::errors;
+use crate::app::format::now;
 use crate::constants::CHECK_INTERVAL;
 use crate::debug::SCHED;
 use crate::engine::{EngineError, ErrorKind, KeepRules, Location, Secret, profile_tag};
@@ -68,10 +69,6 @@ fn is_quiet(error: &EngineError) -> bool {
         error.kind,
         ErrorKind::DestinationUnavailable | ErrorKind::Locked | ErrorKind::ConditionsNotMet
     )
-}
-
-fn now() -> i64 {
-    jiff::Timestamp::now().as_second()
 }
 
 /// A skipped slot is quiet on its own — the next one tries again — but a

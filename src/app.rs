@@ -2626,7 +2626,7 @@ impl Application for App {
             web_allowed_address_input: String::new(),
             web_port_input: String::new(),
             web_password_status: None,
-            hostname: gethostname::gethostname().to_string_lossy().into_owned(),
+            hostname: engine::hostname(),
             web_daemon_status: web_daemon::Status::default(),
         };
         app.reload_runs();

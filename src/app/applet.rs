@@ -23,6 +23,7 @@ use cosmic::surface::action::{app_popup, destroy_popup};
 use cosmic::widget::{self, list_column, settings};
 
 use crate::app::config::{CONFIG_VERSION, StellarshotConfig};
+use crate::app::format::now;
 use crate::constants::{APPLET_IDLE_REFRESH as IDLE_REFRESH, APPLET_REFRESH as REFRESH};
 use crate::debug::UI;
 use crate::error_log;
@@ -53,12 +54,9 @@ pub enum Message {
 /// Off the UI thread: reads the config file and every backup's run-state
 /// file, and probes each one's repository lock.
 async fn refresh() -> Vec<Status> {
-    tokio::task::spawn_blocking(|| {
-        let now = jiff::Timestamp::now().as_second();
-        status::all(&StellarshotConfig::config().profiles, now)
-    })
-    .await
-    .unwrap_or_default()
+    tokio::task::spawn_blocking(|| status::all(&StellarshotConfig::config().profiles, now()))
+        .await
+        .unwrap_or_default()
 }
 
 /// Launch (or, with single-instance active, raise) the main window.

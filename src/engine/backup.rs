@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::progress::ProgressSink;
-use super::repo::Repo;
+use super::repo::{Repo, canonicalize_or_raw};
 use super::snapshots::SnapshotSummary;
 use crate::debug::ENGINE;
 use crate::debug_log;
@@ -110,7 +110,7 @@ impl BackupRequest {
     pub(crate) fn globs(&self) -> Result<Vec<String>, EngineError> {
         let mut globs = Vec::new();
         for path in &self.excludes {
-            let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+            let path = canonicalize_or_raw(path);
             // `literal_glob`, not `path.display()`: an exclude is a real
             // path, not a pattern, and must match only itself however many
             // glob metacharacters its name happens to contain (see the

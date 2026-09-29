@@ -42,7 +42,7 @@ pub use repo::{
     scrub_url_credentials,
 };
 pub use restore::{ConflictPolicy, Ownership, RestorePreview, RestoreRequest, Target};
-pub use snapshots::SnapshotSummary;
+pub use snapshots::{SnapshotSummary, short_id};
 pub use statistics::Statistics;
 
 #[cfg(test)]

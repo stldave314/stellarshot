@@ -2841,6 +2841,74 @@ new `src/app/mod.rs` is under about 700 lines.
 
 ### ARC-2. Remove duplicated logic
 
+**Status: Partial — 4 of 12 rows done, the ones that unify onto a
+function that already existed rather than needing a brand-new shared
+module.** Checked each row against the current code first, rather than
+assuming the table was still accurate — two rows had already stopped
+being duplicated:
+
+- **Keyring store, load and forget** — already unified into
+  `store_item`/`load_item`/`forget_item` during tonight's REL-16 work.
+- **`" (deleted)"` handling** — already unified into `src/exe.rs` during
+  REL-11; `schedule.rs:142`'s own mention is a doc comment referencing
+  the fix, not a second copy of the logic.
+
+Fixed four more, each reusing a function that already existed rather
+than needing anywhere new:
+
+- **Hostname.** `engine::hostname()` already existed
+  (`engine/maintenance.rs`) but only `maintenance.rs` itself used it;
+  `web_tls.rs`, `web.rs` and `app.rs` each repeated
+  `gethostname::gethostname().to_string_lossy().into_owned()` inline.
+  All three now call `engine::hostname()`.
+- **Current Unix time.** Five call sites, in five different files
+  (`scheduled.rs`, `web.rs`, `applet.rs`, and three in `routes.rs`),
+  each wrote `jiff::Timestamp::now().as_second()` fresh (`web.rs` even
+  wrapped it in its own private `now_secs()`, still a second definition
+  of the same one-liner). Consolidated onto `app::format::now()`, which
+  already existed and was already `pub` — a new `core::time::now()`, as
+  the plan's own "single home" column suggests, would have meant
+  inventing a module for a job an existing one already does; not done,
+  since `web.rs`/`routes.rs` already depend on `crate::app::` for other
+  things (`app::config`, `app::tasks`), so this does not introduce a new
+  cross-module edge, only reuses one already there. That existing
+  dependency direction is itself what ARC-4 is about — not something to
+  quietly fix as a side effect of this row.
+- **Short snapshot ID.** `SnapshotSummary::short_id` and
+  `event_log`'s own `short` both did the identical `get(..8).unwrap_or(..)`
+  — `event_log`'s own doc comment already explained why it couldn't just
+  call the method (no `SnapshotSummary` on hand, only the plain ID
+  string). Pulled the shared logic into a new free function,
+  `engine::short_id`, with `SnapshotSummary::short_id` now a thin
+  wrapper over it and `event_log` calling it directly instead of
+  redefining it.
+- **`canonicalize(..).unwrap_or(raw)`.** `engine::repo`'s own
+  `canonicalize_or_raw` already existed (used for lock-file naming) but
+  was private; `backup.rs`'s exclude-path canonicalization and
+  `estimate.rs`'s walk-path canonicalization each repeated the identical
+  `std::fs::canonicalize(path).unwrap_or_else(|_| path.clone())` inline.
+  Made it `pub(super)` and pointed both at it.
+
+Not done, and not attempted tonight: the remaining six rows (systemd
+unit helpers, XDG/HOME resolution, process-with-timeout, state store
+opening, status derivation, spawn-error mapping) all call for a genuinely
+new shared module (`src/systemd.rs`, `src/paths.rs`, `src/process.rs`,
+`core/state.rs`) rather than pointing existing call sites at an existing
+function — each is its own real design-and-migration effort (deciding
+the new module's API, moving several files' worth of logic behind it,
+re-verifying every caller), not a mechanical consolidation like the four
+above, and better scoped as their own changes.
+
+Verified against a real build for all four: `cargo clippy --all-targets
+--all-features` and `cargo fmt --all -- --check` both clean, targeted
+tests for each touched module pass (`event_log::tests` — including
+`every_new_event_kind_describes_itself_with_the_snapshots_short_id` —
+and `engine::estimate::tests`), and the full `engine::tests::` module
+(73 tests, exercising `backup.rs`'s exclusion canonicalization directly)
+and a full `cargo test --all-features --lib` run (468 tests) both passed
+with no new failures beyond the 21 pre-existing, documented,
+environment-only socket ones.
+
 **Medium · M · Verified**
 
 | Logic | Copies | Single home |

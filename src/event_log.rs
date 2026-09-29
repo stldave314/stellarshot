@@ -17,7 +17,7 @@ use crate::app::config::CONFIG_VERSION;
 use crate::app::{errors, format};
 use crate::constants::EVENT_LOG_CAPACITY;
 use crate::debug::CONFIG;
-use crate::engine::{EngineError, ErrorKind};
+use crate::engine::{EngineError, ErrorKind, short_id};
 use crate::fl;
 use crate::run_state::Stage;
 use crate::{debug_log, error_log};
@@ -210,13 +210,6 @@ pub fn merge(profile_id: &str, incoming: &[Event]) {
     }
 }
 
-/// A snapshot ID, shortened the same way `SnapshotSummary::short_id` does:
-/// this module never has a `SnapshotSummary` on hand, only the plain ID a
-/// caller already had when it recorded the event.
-fn short(snapshot: &str) -> &str {
-    snapshot.get(..8).unwrap_or(snapshot)
-}
-
 /// One entry, as a sentence.
 pub fn describe(kind: &EventKind) -> String {
     match kind {
@@ -255,19 +248,19 @@ pub fn describe(kind: &EventKind) -> String {
             size = format::bytes(*bytes)
         ),
         EventKind::SnapshotDeleted { snapshot } => {
-            fl!("event-snapshot-deleted", snapshot = short(snapshot))
+            fl!("event-snapshot-deleted", snapshot = short_id(snapshot))
         }
         EventKind::Pinned {
             snapshot,
             pinned: true,
-        } => fl!("event-pinned", snapshot = short(snapshot)),
+        } => fl!("event-pinned", snapshot = short_id(snapshot)),
         EventKind::Pinned {
             snapshot,
             pinned: false,
-        } => fl!("event-unpinned", snapshot = short(snapshot)),
+        } => fl!("event-unpinned", snapshot = short_id(snapshot)),
         EventKind::PasswordChanged => fl!("event-password-changed"),
-        EventKind::Mounted { snapshot } => fl!("event-mounted", snapshot = short(snapshot)),
-        EventKind::Unmounted { snapshot } => fl!("event-unmounted", snapshot = short(snapshot)),
+        EventKind::Mounted { snapshot } => fl!("event-mounted", snapshot = short_id(snapshot)),
+        EventKind::Unmounted { snapshot } => fl!("event-unmounted", snapshot = short_id(snapshot)),
     }
 }
 

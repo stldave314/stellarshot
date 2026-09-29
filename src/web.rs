@@ -32,6 +32,7 @@ use sha2::Digest;
 use subtle::ConstantTimeEq;
 
 use crate::app::config::{NetworkScope, StellarshotConfig};
+use crate::app::format::now;
 use crate::constants::{
     WEB_ATTEMPTS_MEMORY_SECS, WEB_GLOBAL_BUDGET_MAX, WEB_GLOBAL_BUDGET_WINDOW_SECS,
     WEB_LOCKOUT_LEVEL_SECS, WEB_LOCKOUT_MAX_ATTEMPTS, WEB_MAX_TRACKED_ADDRESSES,
@@ -75,7 +76,7 @@ fn allowed_origins(scope: NetworkScope, port: u16) -> HashSet<url::Origin> {
             add("localhost");
             add("127.0.0.1");
             add("[::1]");
-            let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+            let hostname = crate::engine::hostname();
             add(&hostname);
             add(&format!("{hostname}.local"));
         }
@@ -675,10 +676,6 @@ fn lockout_duration(level: u32) -> i64 {
     WEB_LOCKOUT_LEVEL_SECS[(level as usize).min(WEB_LOCKOUT_LEVEL_SECS.len() - 1)]
 }
 
-fn now_secs() -> i64 {
-    jiff::Timestamp::now().as_second()
-}
-
 /// One address's recent failed attempts, and how many times it has already
 /// been locked out.
 #[derive(Debug, Clone, Copy)]
@@ -767,7 +764,7 @@ impl Throttle {
             attempts: Mutex::new(HashMap::new()),
             global: Mutex::new(GlobalBudget {
                 count: 0,
-                window_start: now_secs(),
+                window_start: now(),
             }),
         }
     }
@@ -780,7 +777,7 @@ impl Throttle {
     /// [`Reservation::succeeded`] to clear the address's history.
     fn try_begin(&self, addr: IpAddr) -> Result<Reservation<'_>, i64> {
         let mut attempts = self.attempts.lock().unwrap_or_else(PoisonError::into_inner);
-        let now = now_secs();
+        let now = now();
         if let Some(remaining) = attempts
             .get(&addr)
             .copied()
@@ -827,7 +824,7 @@ impl Throttle {
     /// once, the moment the budget is exceeded — not on every request after.
     fn note_global_failure(&self) {
         let mut budget = self.global.lock().unwrap_or_else(PoisonError::into_inner);
-        let now = now_secs();
+        let now = now();
         if now - budget.window_start >= WEB_GLOBAL_BUDGET_WINDOW_SECS {
             *budget = GlobalBudget {
                 count: 0,
@@ -848,7 +845,7 @@ impl Throttle {
     /// (not token auth) should be refused regardless of the password itself.
     fn password_paused(&self) -> bool {
         let budget = self.global.lock().unwrap_or_else(PoisonError::into_inner);
-        now_secs() - budget.window_start < WEB_GLOBAL_BUDGET_WINDOW_SECS
+        now() - budget.window_start < WEB_GLOBAL_BUDGET_WINDOW_SECS
             && budget.count > WEB_GLOBAL_BUDGET_MAX
     }
 }

@@ -295,7 +295,7 @@ impl Location {
 /// that does not exist yet always does, and this is only ever used to name
 /// a lock file, not to open anything, so falling back rather than erroring
 /// out is the right default.
-fn canonicalize_or_raw(path: &Path) -> PathBuf {
+pub(super) fn canonicalize_or_raw(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 

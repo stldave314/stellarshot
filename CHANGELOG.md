@@ -7,10 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.1] - 2026-09-29
+## [0.8.2] - 2026-09-29
 
 ### Security
 
+- **A release build no longer touches `/tmp/stellarshot-debug.log` at
+  all.** The fix that made only the window truncate that file (rather
+  than every process racing to) called its setup unconditionally at
+  every entry point, which on its own defeated the whole point of
+  `release-build`: the file still got created, and the window still
+  truncated it, in a build that is supposed to carry no trace of
+  developer logging. No log content was ever written — writing itself
+  was already correctly gated — but the file was. Caught by the
+  project's own standing "prove it, don't assume it" check, not by
+  reading the code.
 - **The web interface's own systemd unit now refuses to point at a
   binary in an untrustworthy location**, closing the one place this
   protection did not already reach: a scheduled backup's own unit

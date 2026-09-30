@@ -155,6 +155,9 @@ fn new_sink(role: Role) -> Sink {
 /// second call at all) is a no-op: whichever role initialized the log
 /// first is the one that already decided whether it was truncated.
 pub fn init(role: Role) {
+    if !ENABLED {
+        return;
+    }
     let _ = SINK.set(Mutex::new(new_sink(role)));
 }
 

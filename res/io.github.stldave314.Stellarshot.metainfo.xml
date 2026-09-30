@@ -66,7 +66,7 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="0.8.0" date="2026-09-29">
+    <release version="0.8.1" date="2026-09-29">
       <description>
         <p>Estimate a backup's size without opening it, and a broader
         security and reliability pass across the web interface, restore

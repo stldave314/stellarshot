@@ -1215,7 +1215,18 @@ fn archive_folder_leaves_nothing_behind_when_a_blob_read_fails_partway_through()
         .archive_folder("latest", &fixture.source.join("nested"), &destination)
         .unwrap_err();
 
-    assert_eq!(err.kind, ErrorKind::Internal, "{err:?}");
+    // Whether the corruption is caught while opening the blob (Internal, a
+    // RusticError) or while streaming it through BlobReader (Io, a plain
+    // io::Error `?`-converted with no richer classification) depends on
+    // which internal rustic_core path handles it. Asserting only Internal
+    // passed every time run alone, but failed with Io instead under the
+    // full suite's parallel load (reproduced locally and in CI). Either is
+    // a genuine read failure; the two assertions below are what this test
+    // actually exists to prove.
+    assert!(
+        matches!(err.kind, ErrorKind::Internal | ErrorKind::Io),
+        "expected a blob read failure, got {err:?}"
+    );
     assert!(
         !destination.exists(),
         "nothing is written when a blob fails to read partway through archiving"

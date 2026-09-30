@@ -714,7 +714,11 @@ mod tests {
     /// actually finished rather than merely that the request returned, since
     /// [`run_backup`] answers before the backup itself is done.
     async fn wait_for_a_second_snapshot(addr: std::net::SocketAddr, id: &str) {
-        for _ in 0..100 {
+        // 30s, not 5s: a real backup running under a loaded test suite (or
+        // CI runner) can take much longer than it does run alone, and this
+        // loop only ever costs its actual wait time — it returns the
+        // moment the snapshot appears.
+        for _ in 0..600 {
             let (_, body) = get_json(addr, &format!("/api/v1/backups/{id}/snapshots")).await;
             if body
                 .as_array()
@@ -914,7 +918,8 @@ mod tests {
         );
 
         let mut found = None;
-        for _ in 0..100 {
+        // 30s, not 5s — see wait_for_a_second_snapshot's own comment above.
+        for _ in 0..600 {
             found = event_log::load(&id)
                 .into_iter()
                 .find(|event| matches!(event.kind, event_log::EventKind::BackedUp));

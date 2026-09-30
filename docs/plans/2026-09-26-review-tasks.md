@@ -3649,6 +3649,20 @@ swap pressure rather than the server being genuinely slow to bind. Still
 not a conclusion about the real bug; a machine under this much pressure
 cannot be trusted to say anything about it either way.
 
+Same evening, a full `cargo test` (prompted by a dependency bump — see
+below) confirmed [[feedback_resource-pressure-pause]]'s note that this
+isn't unique to `rest_server.rs`: 22-23 of `web.rs`'s own tests failed
+with `Os { code: 110, kind: TimedOut }` from a plain
+`tokio::net::TcpStream::connect` against a server the same test had just
+spawned on loopback — an OS-level connect timeout, which is client-side
+and has nothing to do with any HTTP library. Reproduced identically in
+an isolated, single-threaded rerun of just `web::`, which took 3036
+seconds for 80 tests (`ps --sort=-rss` at the time showed a normal, busy
+interactive desktop: browser, editor, chat client, office suite, several
+other unrelated background sessions — not anything this task started).
+Not treated as a signal about the CI-only bug either way, for the same
+reason as above.
+
 **Medium · M · Verified**
 
 All tests in `tests/rest_server.rs` are `#[ignore]`, so the REST backend (the

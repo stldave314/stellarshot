@@ -66,6 +66,23 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.8.0" date="2026-09-29">
+      <description>
+        <p>Estimate a backup's size without opening it, and a broader
+        security and reliability pass across the web interface, restore
+        and accessibility.</p>
+        <ul>
+          <li>An "Estimate Size" button next to Back Up Now shows a backup's file count and total size without opening it or asking for its password</li>
+          <li>A generated API token can now be copied with one click, and confirms before replacing one already in use</li>
+          <li>The web interface's password, port and allow-list fields validate as you type instead of popping up dialogs, and its address in Settings is now a clickable link</li>
+          <li>A hostile snapshot name can no longer be used to probe whether a file exists elsewhere on the machine, and a symlink at a backup's progress file path is no longer followed</li>
+          <li>Restoring into a folder where a snapshot expects a directory but a plain file already exists there is now reported as a real conflict instead of silently restoring nothing</li>
+          <li>The panel applet shows a failure, an overdue backup and real damage as three distinct icons, and no longer polls constantly while its popup is closed</li>
+          <li>Every icon button, checkbox and the two fields that most needed it now work properly with a screen reader or the keyboard alone</li>
+          <li>Comparing snapshots, browsing a large folder, or excluding deep folders no longer redoes the same work on every tick or renders unbounded lists</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-09-27">
       <description>
         <p>A full security and reliability audit, and the web interface

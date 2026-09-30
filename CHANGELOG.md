@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-29
+
 ### Security
 
 - **The web interface's own systemd unit now refuses to point at a
@@ -20,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   went missing, the key was reused as-is rather than rewritten, so a
   key that had somehow ended up with a looser permission before kept
   that looser permission afterward too.
+- **A symlink placed at a backup's progress file can no longer be
+  followed.** The lock and log files already refused a pre-existing
+  symlink at their own paths; writing progress data now does too,
+  instead of silently writing through it to wherever it points.
+- **A hostile snapshot name can no longer be used to probe whether a
+  file exists elsewhere on the machine.** Restoring already refused a
+  snapshot name trying to escape its own folder with `..` or an
+  absolute path; the same check now covers every other place a
+  snapshot's own untrusted names are read — browsing, mounting, and
+  looking for missing files.
 
 ### Added
 
@@ -55,6 +67,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "N found so far" while browsing, "N changed" in Compare, a password's
   character count, and forgetting N snapshots) — each now uses its
   language's own singular form for a count of one.
+- **The TLS certificate and key pickers' Choose and Reset buttons had
+  been reusing the cache-location row's own translation keys**, giving
+  translators no way to word them differently for an unrelated setting;
+  they're separate keys now. A backup's schedule and retention summary
+  is also now one translatable sentence instead of two fragments joined
+  by fixed English-first punctuation, so word order is a translator's
+  choice per language.
+- **Restoring into a folder where a snapshot expects a directory but a
+  plain file already exists there now reports it as a real conflict and
+  honors Skip**, instead of silently reporting no conflicts and then
+  failing partway through the restore.
+- **The web interface now refuses to start, rather than running and
+  silently rejecting every request forever, if every authentication
+  method it was told to enable turns out to be unusable at startup** —
+  a locked keyring at boot, for instance. A backup started over the API
+  is also now recorded on the History page with the address and
+  authentication method that started it.
+- **Uninstalling now names the exact leftover systemd unit files to
+  remove by hand** (a scheduled backup's timer, the web interface's
+  service) instead of just saying they exist.
 - **The app's metainfo now lists the applet and web daemon binaries it
   installs, and declares keyboard and pointer support**, for software
   centers that read it.

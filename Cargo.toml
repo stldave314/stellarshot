@@ -1,6 +1,6 @@
 [package]
 name = "stellarshot"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.93"
 license = "GPL-3.0-only"
@@ -164,7 +164,7 @@ rustls-pki-types = { version = "1", features = ["std"] }
 # (`X-Content-Type-Options`, `Cache-Control`, a strict CSP) for the web
 # interface. Already pulled in transitively through axum's own dependency
 # tree, at the same version; this is a direct dependency, not a second copy.
-tower-http = { version = "0.6", features = ["timeout", "limit", "set-header"] }
+tower-http = { version = "0.7", features = ["timeout", "limit", "set-header"] }
 # Wraps the repository password (`engine::Secret`) so it zeroizes on drop and
 # its `Debug` is redacted by the crate itself, not by a hand-written impl that
 # could rot if a new field were ever added without updating it too.

@@ -256,6 +256,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Stellarshot process shares.
 - **A failed password change no longer leaves the new key behind**, and a
   backup stops uploading as soon as one upload fails.
+- **A scheduled run that shows a failure notification ends right away**
+  instead of staying active for up to 15 minutes waiting for a click,
+  which made the next scheduled slot skip. A small helper waits for the
+  click instead.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**

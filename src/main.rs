@@ -17,6 +17,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("--run") => return stellarshot::runner::main(&args[1..]),
         Some("--scheduled") => return stellarshot::scheduled::main(&args[1..]),
+        Some("--await-notification") => return stellarshot::notify::await_main(&args[1..]),
         _ => {}
     }
 

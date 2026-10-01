@@ -50,26 +50,43 @@
   <screenshots>
     <screenshot type="default">
       <caption>A backup and its snapshots, with Back Up Now</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/profile.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/profile.png</image>
     </screenshot>
     <screenshot>
       <caption>Setting up a backup, with a live size estimate</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/wizard.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/wizard.png</image>
     </screenshot>
     <screenshot>
       <caption>Browsing a snapshot to restore files</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/restore.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/restore.png</image>
     </screenshot>
     <screenshot>
       <caption>The first screen, before anything is backed up</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/empty.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/empty.png</image>
     </screenshot>
     <screenshot>
       <caption>A backup in the light theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/profile-light.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/profile-light.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.9.0" date="2026-09-30">
+      <description>
+        <p>Test an automatic backup from its page, translated launcher
+        entries, and a release-review pass across scheduling, restore and
+        security.</p>
+        <ul>
+          <li>Backups set to run when their drive is connected run once per
+          connection, and a wired network can be a trusted one.</li>
+          <li>Restore handles file/folder conflicts, hard links and crafted
+          repositories, and never restores setuid or setgid.</li>
+          <li>REST server passwords are kept in the keyring, and an
+          unreachable destination is skipped quietly.</li>
+          <li>A status or history that cannot be read can be reset, and
+          dialogs and the keyboard behave while one is open.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.2" date="2026-09-29">
       <description>
         <p>Fixes a release build creating a developer log file that it is

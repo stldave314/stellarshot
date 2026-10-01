@@ -398,11 +398,13 @@ impl ProfileState {
             // away if a password was found after all.
             // A keyring that cannot be reached is, for unlocking by hand, the
             // same as one with nothing remembered: ask for the password.
-            Message::KeyringLoaded(Ok(None))
-            | Message::KeyringLoaded(Err(EngineError {
-                kind: ErrorKind::KeyringUnavailable,
-                ..
-            })) => {
+            Message::KeyringLoaded(
+                Ok(None)
+                | Err(EngineError {
+                    kind: ErrorKind::KeyringUnavailable,
+                    ..
+                }),
+            ) => {
                 if self.unlock_focused {
                     Vec::new()
                 } else {

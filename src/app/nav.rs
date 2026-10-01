@@ -228,7 +228,7 @@ impl App {
             Some(fraction) => fl!(
                 "nav-running-percent",
                 name = profile.name.clone(),
-                percent = ((fraction * 100.0).round() as i64)
+                percent = whole_percent(fraction)
             ),
             None => fl!("nav-running", name = profile.name.clone()),
         }
@@ -302,4 +302,10 @@ fn read_runs(ids: &[String]) -> HashMap<String, RunState> {
     ids.iter()
         .map(|id| (id.clone(), run_state::load(id)))
         .collect()
+}
+
+/// `fraction` (0.0 to 1.0) as a whole percentage.
+#[expect(clippy::cast_possible_truncation, reason = "clamped to 0..=100 first")]
+fn whole_percent(fraction: f32) -> i64 {
+    (fraction.clamp(0.0, 1.0) * 100.0).round() as i64
 }

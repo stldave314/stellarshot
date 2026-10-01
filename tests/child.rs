@@ -19,6 +19,10 @@ use tempfile::TempDir;
 
 const PASSWORD: &str = "correct horse battery staple";
 
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "child::run_with takes the outcome of finding the binary"
+)]
 fn exe() -> std::io::Result<PathBuf> {
     Ok(PathBuf::from(env!("CARGO_BIN_EXE_stellarshot")))
 }
@@ -41,7 +45,7 @@ fn setup(files: usize) -> (TempDir, Job) {
                 state ^= state << 13;
                 state ^= state >> 7;
                 state ^= state << 17;
-                (state >> 24) as u8
+                (state >> 24).to_le_bytes()[0]
             })
             .collect();
         std::fs::write(source.join(format!("{index}.bin")), block).unwrap();
@@ -59,7 +63,7 @@ fn setup(files: usize) -> (TempDir, Job) {
 }
 
 /// `count` unreadable subdirectories under the source: each one makes
-/// rustic_core log a warning to the child's stderr, which is how REL-3's
+/// `rustic_core` log a warning to the child's stderr, which is how REL-3's
 /// regression test reproduces a pipe full enough to block a `write(2)` that
 /// never gets drained.
 fn setup_with_unreadable_dirs(count: usize) -> (TempDir, Job) {

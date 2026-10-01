@@ -13,7 +13,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
-use rustic_core::repofile::{Node, NodeType, SnapshotFile};
+use rustic_core::repofile::{Metadata, Node, NodeType, SnapshotFile};
 use rustic_core::vfs::OpenFile;
 use rustic_core::{IndexedFullStatus, LsOptions, Repository, TreeId};
 use serde::{Deserialize, Serialize};
@@ -149,7 +149,7 @@ fn entry(path: PathBuf, node: &rustic_core::repofile::Node) -> TreeEntry {
         path,
         kind: kind_of(node),
         size: node.meta.size,
-        modified: node.meta.mtime.map(|time| time.as_second()),
+        modified: node.meta.mtime.map(jiff::Timestamp::as_second),
     }
 }
 
@@ -166,7 +166,7 @@ fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
         name: node.name().into_owned(),
         kind: kind_of(node),
         size: node.meta.size,
-        modified: node.meta.mtime.map(|time| time.as_second()),
+        modified: node.meta.mtime.map(jiff::Timestamp::as_second),
         mode: node.meta.mode,
         symlink_target: node
             .is_symlink()
@@ -196,7 +196,7 @@ pub(super) fn node_at(
     snapshot: &SnapshotFile,
     path: &Path,
 ) -> Result<Node, EngineError> {
-    let mut node = Node::new_node(OsStr::new(""), NodeType::Dir, Default::default());
+    let mut node = Node::new_node(OsStr::new(""), NodeType::Dir, Metadata::default());
     node.subtree = Some(snapshot.tree);
     let missing = || not_found(&path.display().to_string());
     for component in path.components() {
@@ -494,7 +494,7 @@ impl Browser {
                 let default_mode = if node.is_dir() { 0o755 } else { 0o644 };
                 header.set_mode(node.meta.mode.unwrap_or(default_mode));
                 if let Some(mtime) = node.meta.mtime {
-                    header.set_mtime(mtime.as_second().max(0) as u64);
+                    header.set_mtime(u64::try_from(mtime.as_second()).unwrap_or(0));
                 }
                 if let Some(uid) = node.meta.uid {
                     header.set_uid(u64::from(uid));
@@ -522,7 +522,9 @@ impl Browser {
                         repo: &repo,
                         open_file: repo.open_file(&node)?,
                         position: 0,
-                        size: node.meta.size as usize,
+                        // Only a 32-bit system has files too big to
+                        // address; it reads what it can and pads the rest.
+                        size: usize::try_from(node.meta.size).unwrap_or(usize::MAX),
                     };
                     tar.append_data(&mut header, &relative, &mut reader)?;
                     if reader.position != reader.size {
@@ -663,7 +665,7 @@ impl Browser {
             versions.push(FileVersion {
                 snapshot: summary.clone(),
                 size: node.meta.size,
-                modified: node.meta.mtime.map(|time| time.as_second()),
+                modified: node.meta.mtime.map(jiff::Timestamp::as_second),
                 same_as_newer,
             });
             newer_content = Some(content);
@@ -1019,7 +1021,7 @@ mod tests {
         let mut archive = tar::Archive::new(&tar_bytes[..]);
         let result = archive
             .entries()
-            .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>());
+            .and_then(std::iter::Iterator::collect::<std::io::Result<Vec<_>>>);
         assert!(
             result.is_err(),
             "an unpadded short entry must corrupt the archive past it, proving the \
@@ -1067,7 +1069,7 @@ mod tests {
     /// tree-saving API.
     #[test]
     fn a_maliciously_named_node_is_rejected_when_listed() {
-        let node = Node::new_node(OsStr::new("../escape"), NodeType::File, Default::default());
+        let node = Node::new_node(OsStr::new("../escape"), NodeType::File, Metadata::default());
 
         let error = checked_entry(Path::new("/some/dir"), &node).unwrap_err();
 
@@ -1076,7 +1078,11 @@ mod tests {
 
     #[test]
     fn an_ordinary_node_name_lists_fine() {
-        let node = Node::new_node(OsStr::new("report.pdf"), NodeType::File, Default::default());
+        let node = Node::new_node(
+            OsStr::new("report.pdf"),
+            NodeType::File,
+            Metadata::default(),
+        );
 
         let listed = checked_entry(Path::new("/some/dir"), &node).unwrap();
 
@@ -1085,7 +1091,7 @@ mod tests {
 
     #[test]
     fn a_maliciously_named_node_is_rejected_when_mounted() {
-        let node = Node::new_node(OsStr::new("../escape"), NodeType::File, Default::default());
+        let node = Node::new_node(OsStr::new("../escape"), NodeType::File, Metadata::default());
 
         let error = checked_mount_entry(&node).unwrap_err();
 

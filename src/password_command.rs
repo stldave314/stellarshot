@@ -4,7 +4,7 @@
 //! typing it, for a password manager with a command-line client (the
 //! Bitwarden CLI, `pass`, a Vaultwarden client).
 //!
-//! The command is split into an argument list the same way rustic_core
+//! The command is split into an argument list the same way `rustic_core`
 //! splits its own `stdin_command` and rclone-command strings: without
 //! invoking a real shell, so it is never subject to shell injection, at the
 //! cost of not supporting pipes or other shell operators directly. A small
@@ -94,19 +94,18 @@ async fn run_with_timeout(
     // a timeout.
     let stdout = Capture::start(child.stdout.take(), PASSWORD_COMMAND_MAX_OUTPUT, true);
     let stderr = Capture::start(child.stderr.take(), CHILD_STDERR_DETAIL, false);
-    let status = match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(result) => result.map_err(|err| {
+    let status = if let Ok(result) = tokio::time::timeout(timeout, child.wait()).await {
+        result.map_err(|err| {
             EngineError::new(ErrorKind::Internal, format!("password command: {err}"))
-        })?,
-        Err(_) => {
-            if let Some(group) = group {
-                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-            }
-            return Err(EngineError::new(
-                ErrorKind::TimedOut,
-                timeout.as_secs().to_string(),
-            ));
+        })?
+    } else {
+        if let Some(group) = group {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
         }
+        return Err(EngineError::new(
+            ErrorKind::TimedOut,
+            timeout.as_secs().to_string(),
+        ));
     };
     // Its own output is already in the pipes; give the readers a moment to
     // move it across, then take what there is.

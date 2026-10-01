@@ -4,7 +4,7 @@
 //!
 //! Passwords are never written to Stellarshot's own settings. When the user
 //! asks for one to be remembered it goes to the Secret Service (GNOME Keyring,
-//! KWallet), which encrypts it with the login password. Scheduled backups need
+//! `KWallet`), which encrypts it with the login password. Scheduled backups need
 //! this: they run with nobody there to type a password.
 //!
 //! Every function here treats a missing or locked keyring as "not

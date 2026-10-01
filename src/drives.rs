@@ -115,7 +115,7 @@ fn drives_from(
         .collect();
 
     let mut drives = Vec::new();
-    for Mount {
+    for MountLine {
         mount_point,
         source,
         ..
@@ -154,7 +154,7 @@ fn drives_from(
 
 /// One line of `/proc/self/mountinfo`, the parts read here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Mount {
+pub(crate) struct MountLine {
     pub mount_point: PathBuf,
     pub fstype: OsString,
     pub source: OsString,
@@ -163,7 +163,7 @@ pub(crate) struct Mount {
 
 /// Every mount in `mountinfo` (the bytes of `/proc/self/mountinfo`). A line
 /// that does not have the expected shape is skipped.
-pub(crate) fn mounts(mountinfo: &[u8]) -> Vec<Mount> {
+pub(crate) fn mounts(mountinfo: &[u8]) -> Vec<MountLine> {
     let mut mounts = Vec::new();
     for line in mountinfo.split(|&byte| byte == b'\n') {
         let Some(separator) = line.windows(3).position(|window| window == b" - ") else {
@@ -180,7 +180,7 @@ pub(crate) fn mounts(mountinfo: &[u8]) -> Vec<Mount> {
         else {
             continue;
         };
-        mounts.push(Mount {
+        mounts.push(MountLine {
             mount_point: PathBuf::from(unescape(mount_point)),
             fstype: unescape(fstype),
             source: unescape(source),
@@ -294,8 +294,11 @@ mod tests {
         let unplugged: String = String::from_utf8_lossy(MOUNTINFO)
             .lines()
             .filter(|line| !line.contains("/dev/sdb1"))
-            .map(|line| format!("{line}\n"))
-            .collect();
+            .fold(String::new(), |mut text, line| {
+                text.push_str(line);
+                text.push('\n');
+                text
+            });
         let drives = drives_from(&by_uuid, &by_label, unplugged.as_bytes(), &same);
 
         assert!(drives.iter().all(|d| d.uuid != "1111-AAAA"));

@@ -153,7 +153,7 @@ impl BackupRequest {
     fn pattern_file_lines(&self) -> Result<Vec<String>, EngineError> {
         let mut lines = Vec::new();
         for path in &self.exclude_pattern_files {
-            let text = std::fs::read_to_string(path).map_err(|err| EngineError::io(path, err))?;
+            let text = std::fs::read_to_string(path).map_err(|err| EngineError::io(path, &err))?;
             lines.extend(
                 text.lines()
                     .map(str::to_owned)

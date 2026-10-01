@@ -97,7 +97,7 @@ fn spawn_server(data_dir: &Path, login: Option<(&str, &str)>) -> Server {
     match receiver.recv_timeout(Duration::from_secs(30)) {
         Ok(url) if url.ends_with('/') => server.url = url,
         Ok(url) => server.url = format!("{url}/"),
-        Err(_) => panic!("rclone serve restic did not start listening in time"),
+        Err(err) => panic!("rclone serve restic did not start listening in time: {err}"),
     }
     server
 }

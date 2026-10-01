@@ -368,7 +368,7 @@ mod tests {
         let profile = profile(Schedule::Manual, Some(500));
         let run = RunState {
             damaged: true,
-            failure: failure(600),
+            failure: Some(failure(600)),
             ..RunState::default()
         };
         assert_eq!(
@@ -424,20 +424,20 @@ mod tests {
         );
     }
 
-    fn failure(time: i64) -> Option<Failure> {
-        Some(Failure {
+    fn failure(time: i64) -> Failure {
+        Failure {
             time,
             stage: Stage::Backup,
             kind: ErrorKind::WrongPassword,
             detail: String::new(),
-        })
+        }
     }
 
     #[test]
     fn a_failure_shows_until_a_later_success() {
         let mut state = RunState {
             last_success: Some(100),
-            failure: failure(200),
+            failure: Some(failure(200)),
             ..RunState::default()
         };
         assert!(state.current_failure(None, i64::MAX).is_some());
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn a_failure_with_no_success_ever_shows() {
         let state = RunState {
-            failure: failure(5),
+            failure: Some(failure(5)),
             ..RunState::default()
         };
         assert!(state.current_failure(None, i64::MAX).is_some());
@@ -491,7 +491,7 @@ mod tests {
         };
         assert!(state.current_failure(None, 1000).is_some());
         let backup_same_second = RunState {
-            failure: failure(500),
+            failure: Some(failure(500)),
             ..state
         };
         assert!(backup_same_second.current_failure(None, 1000).is_none());
@@ -501,7 +501,7 @@ mod tests {
     fn a_success_stamped_in_the_future_hides_nothing() {
         let state = RunState {
             last_success: Some(9_999_999),
-            failure: failure(200),
+            failure: Some(failure(200)),
             ..RunState::default()
         };
         assert!(

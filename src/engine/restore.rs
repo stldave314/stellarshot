@@ -538,8 +538,7 @@ fn shape(
             Decision::Rename(
                 renamed
                     .strip_prefix(destination)
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|_| relative.to_path_buf()),
+                    .map_or_else(|_| relative.to_path_buf(), Path::to_path_buf),
             )
         }
         ConflictPolicy::Skip => Decision::Skip,

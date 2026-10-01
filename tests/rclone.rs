@@ -188,8 +188,7 @@ fn signing_in_never_writes_into_a_readable_configuration() {
 fn running_with(needle: &str) -> bool {
     std::fs::read_dir("/proc").unwrap().flatten().any(|entry| {
         std::fs::read(entry.path().join("cmdline"))
-            .map(|cmdline| String::from_utf8_lossy(&cmdline).contains(needle))
-            .unwrap_or(false)
+            .is_ok_and(|cmdline| String::from_utf8_lossy(&cmdline).contains(needle))
     })
 }
 
@@ -211,7 +210,7 @@ fn canceling_a_backup_through_rclone_ends_it_and_stops_rclone() {
                 state ^= state << 13;
                 state ^= state >> 7;
                 state ^= state << 17;
-                (state >> 24) as u8
+                (state >> 24).to_le_bytes()[0]
             })
             .collect();
         std::fs::write(source.join(format!("{index}.bin")), block).unwrap();

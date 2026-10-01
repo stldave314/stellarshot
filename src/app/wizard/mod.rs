@@ -708,17 +708,16 @@ impl Wizard {
         let Some(destination) = self.destination() else {
             return Vec::new();
         };
-        let mut profile = match &self.base {
-            Some(base) => base.clone(),
-            None => {
-                let mut profile = Profile::new(
-                    self.name.trim().to_owned(),
-                    destination,
-                    self.sources.clone(),
-                );
-                profile.bandwidth_limit = self.place.bandwidth_limit.trim().to_owned();
-                profile
-            }
+        let mut profile = if let Some(base) = &self.base {
+            base.clone()
+        } else {
+            let mut profile = Profile::new(
+                self.name.trim().to_owned(),
+                destination,
+                self.sources.clone(),
+            );
+            profile.bandwidth_limit = self.place.bandwidth_limit.trim().to_owned();
+            profile
         };
         self.apply_to(&mut profile);
         let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
@@ -868,7 +867,7 @@ impl Wizard {
                             }
                             result.extend(self.restart_estimate());
                         }
-                        other => result.push(Effect::Browse(other)),
+                        other @ browse::Effect::List(..) => result.push(Effect::Browse(other)),
                     }
                 }
                 result
@@ -1602,7 +1601,7 @@ pub fn retention_label(retention: Retention) -> String {
         Retention::KeepFor { days: 90 } => fl!("keep-3-months"),
         Retention::KeepFor { days: 182 } => fl!("keep-6-months"),
         Retention::KeepFor { days: 365 } => fl!("keep-1-year"),
-        Retention::KeepFor { days } => fl!("keep-days", days = (days as i64)),
+        Retention::KeepFor { days } => fl!("keep-days", days = i64::from(days)),
     }
 }
 
@@ -1611,14 +1610,14 @@ pub fn retention_description(retention: Retention) -> String {
     match retention {
         Retention::Smart => fl!("keep-smart-description"),
         Retention::KeepForever => fl!("keep-forever-description"),
-        Retention::KeepFor { days } => fl!("keep-for-description", days = (days as i64)),
+        Retention::KeepFor { days } => fl!("keep-for-description", days = i64::from(days)),
     }
 }
 
 fn battery_label(choice: Option<u8>) -> String {
     match choice {
         None => fl!("wizard-battery-none"),
-        Some(percent) => fl!("wizard-battery-percent", percent = (percent as i64)),
+        Some(percent) => fl!("wizard-battery-percent", percent = i64::from(percent)),
     }
 }
 

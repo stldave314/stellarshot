@@ -2,7 +2,7 @@
 
 //! Mounting a snapshot as a read-only folder through FUSE.
 //!
-//! rustic_core exposes no `vfs` or mount feature of its own (unlike the
+//! `rustic_core` exposes no `vfs` or mount feature of its own (unlike the
 //! separate `rustic` command-line tool, which links `libfuse` directly for
 //! this); [`SnapshotFs`] is a small filesystem of Stellarshot's own,
 //! reading through the same [`Browser`] the restore page already does, so
@@ -133,7 +133,7 @@ pub fn unmount_dead() {
 
 /// The mount points of Stellarshot's own snapshot mounts belonging to
 /// `uid`.
-fn ours(mounts: &[crate::drives::Mount], uid: u32) -> Vec<PathBuf> {
+fn ours(mounts: &[crate::drives::MountLine], uid: u32) -> Vec<PathBuf> {
     let owner = format!("user_id={uid}");
     mounts
         .iter()
@@ -274,13 +274,13 @@ fn attr(ino: INodeNo, entry: &MountEntry, uid: u32, gid: u32) -> FileAttr {
     // read-only mount either way; a sensible read-only default otherwise.
     let perm = entry
         .mode
-        .map(|mode| (mode & 0o777) as u16)
-        .unwrap_or(default_perm);
+        .map_or(default_perm, |mode| (mode & 0o777) as u16);
     let mtime = entry
         .modified
         .and_then(|seconds| u64::try_from(seconds).ok())
-        .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
-        .unwrap_or(SystemTime::UNIX_EPOCH);
+        .map_or(SystemTime::UNIX_EPOCH, |seconds| {
+            SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+        });
     FileAttr {
         ino,
         size: entry.size,
@@ -387,7 +387,11 @@ impl Filesystem for SnapshotFs {
                 let path = dir.join(&entry.name);
                 rows.push((self.ino_for(&path), file_type(entry.kind), path));
             }
-            for (index, (row_ino, kind, path)) in rows.iter().enumerate().skip(offset as usize) {
+            for (index, (row_ino, kind, path)) in rows
+                .iter()
+                .enumerate()
+                .skip(usize::try_from(offset).unwrap_or(usize::MAX))
+            {
                 let name = if *path == Path::new(".") || *path == Path::new("..") {
                     path.as_os_str()
                 } else {
@@ -438,10 +442,11 @@ impl Filesystem for SnapshotFs {
                 reply.error(Errno::EBADF);
                 return;
             };
-            match self
-                .browser
-                .read_open_file(open_file, offset as usize, size as usize)
-            {
+            match self.browser.read_open_file(
+                open_file,
+                usize::try_from(offset).unwrap_or(usize::MAX),
+                usize::try_from(size).unwrap_or(usize::MAX),
+            ) {
                 Ok(data) => reply.data(&data),
                 Err(err) => {
                     debug_log!(MOUNT, "read handle {fh:?}: {err}");

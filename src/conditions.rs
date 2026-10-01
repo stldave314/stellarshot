@@ -4,7 +4,7 @@
 //! in: see [`crate::profile::Conditions`]. Checked only for a run the timer
 //! starts; **Back Up Now** always runs regardless.
 //!
-//! Reading the real state (through UPower and NetworkManager, both over the
+//! Reading the real state (through `UPower` and `NetworkManager`, both over the
 //! system D-Bus) and deciding whether it satisfies a profile's conditions
 //! are kept apart, so the decision itself ([`met`]) is tested without a
 //! real system bus.
@@ -18,7 +18,7 @@ use crate::{debug_log, error_log};
 /// care. `None` (or, for the network, a `connected_networks` of `None`) means a
 /// piece could not be read: the relevant service is not running, did not
 /// answer in time, or the machine plainly has nothing to read it from (no
-/// battery, no NetworkManager). Power and metered-connection conditions are
+/// battery, no `NetworkManager`). Power and metered-connection conditions are
 /// then treated as met rather than blocking a schedule indefinitely on a
 /// machine that can never satisfy a check it has no way to answer. The
 /// trusted-network condition is the exception: it is a privacy control, so
@@ -29,7 +29,7 @@ pub struct SystemState {
     pub battery_percent: Option<u8>,
     pub metered: Option<bool>,
     /// Wi-Fi and wired connections currently up, by connection name (the
-    /// same name NetworkManager's own network list shows); `None` if this
+    /// same name `NetworkManager`'s own network list shows); `None` if this
     /// could not be read at all.
     pub connected_networks: Option<Vec<String>>,
     pub vpn_up: bool,
@@ -97,7 +97,7 @@ trait UPower {
     fn on_battery(&self) -> zbus::Result<bool>;
 }
 
-/// UPower's own summary of every power source, kept at a fixed, documented
+/// `UPower`'s own summary of every power source, kept at a fixed, documented
 /// path so no enumeration is needed. `IsPresent` is false with nothing
 /// meaningful in `Percentage` on a machine with no real battery.
 #[zbus::proxy(
@@ -152,11 +152,11 @@ trait NetworkDevice {
     fn interface(&self) -> zbus::Result<String>;
 }
 
-/// Whether an active connection is a VPN: a connection NetworkManager flags
-/// `Vpn` itself (its plugins: OpenVPN, and so on) or types `vpn` or
+/// Whether an active connection is a VPN: a connection `NetworkManager` flags
+/// `Vpn` itself (its plugins: `OpenVPN`, and so on) or types `vpn` or
 /// `wireguard`, or a plain `tun`/`tap` device on an interface known to be
 /// one. Tailscale comes up as the latter — confirmed against a real
-/// connection, which NetworkManager does *not* set `Vpn: true` for — but
+/// connection, which `NetworkManager` does *not* set `Vpn: true` for — but
 /// any tun or tap device would otherwise count, and a libvirt or QEMU one
 /// would make every network "trusted".
 fn is_vpn(connection_type: &str, interfaces: &[String]) -> bool {
@@ -169,6 +169,17 @@ fn is_vpn(connection_type: &str, interfaces: &[String]) -> bool {
     }
 }
 
+/// A battery percentage from `UPower` (0.0 to 100.0) as a whole number.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped to 0..=100 first"
+)]
+fn percent_u8(value: f64) -> u8 {
+    // Down, as before: 99.6% has not reached a 100% minimum.
+    value.clamp(0.0, 100.0).floor() as u8
+}
+
 async fn upower_state() -> (Option<bool>, Option<u8>) {
     let Ok(connection) = zbus::Connection::system().await else {
         return (None, None);
@@ -179,7 +190,7 @@ async fn upower_state() -> (Option<bool>, Option<u8>) {
     };
     let percent = match UPowerDisplayDeviceProxy::new(&connection).await {
         Ok(proxy) if proxy.is_present().await == Ok(true) => {
-            proxy.percentage().await.ok().map(|value| value as u8)
+            proxy.percentage().await.ok().map(percent_u8)
         }
         _ => None,
     };
@@ -391,7 +402,7 @@ mod tests {
         assert!(met(&conditions, &unknown_but_on_a_vpn).is_ok());
     }
 
-    /// Reads whatever UPower and NetworkManager actually expose here. Not a
+    /// Reads whatever `UPower` and `NetworkManager` actually expose here. Not a
     /// substitute for the pure tests above (their whole point is to not
     /// need a real system bus): this only proves the D-Bus interface names,
     /// property names and types this module hardcodes still match reality,

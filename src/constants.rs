@@ -164,17 +164,16 @@ pub const TERM_GRACE: std::time::Duration =
 /// stay "activating" forever, and every later timer fire would be skipped
 /// without a word. A day: a first backup of a large folder over a slow
 /// connection can genuinely take most of one.
-pub const SCHEDULED_UNIT_TIMEOUT_START: std::time::Duration =
-    std::time::Duration::from_secs(24 * 3600);
+pub const SCHEDULED_UNIT_TIMEOUT_START: std::time::Duration = std::time::Duration::from_hours(24);
 
 /// How often a scheduled backup also checks the repository for damage. A
 /// check reads every index and tree, which is slow on a large backup behind
 /// a slow connection, so it runs after a backup at most this often.
-pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30 * 86_400);
+pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_hours(720);
 
 /// How long a scheduled run waits for the user to click its failure
 /// notification before exiting. Clicking opens the backup in Stellarshot.
-pub const NOTIFICATION_WAIT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+pub const NOTIFICATION_WAIT: std::time::Duration = std::time::Duration::from_mins(15);
 
 /// Entries kept in a backup's own event log. The oldest are dropped as new
 /// ones arrive, so a backup that has run for years does not grow its log
@@ -190,7 +189,7 @@ pub const OVERDUE_FACTOR: i64 = 2;
 /// A mounted snapshot never changes once taken, so there is nothing a
 /// short TTL would ever need to catch — a stat or a directory listing is
 /// good until the filesystem is unmounted.
-pub const MOUNT_ATTR_TTL: std::time::Duration = std::time::Duration::from_secs(365 * 24 * 3600);
+pub const MOUNT_ATTR_TTL: std::time::Duration = std::time::Duration::from_hours(8760);
 
 /// How often a blocking wait loop (a hook's or rclone's own child process
 /// exiting) re-checks rather than blocking on it directly: frequent enough
@@ -206,8 +205,7 @@ pub const SCHEDULED_UNIT_NICE: i32 = 10;
 /// How far a scheduled backup's own start can be randomly delayed, so
 /// several backups due at the same wall-clock moment (every timer set to
 /// "daily", say) do not all start at once.
-pub const SCHEDULED_UNIT_RANDOMIZED_DELAY: std::time::Duration =
-    std::time::Duration::from_secs(10 * 60);
+pub const SCHEDULED_UNIT_RANDOMIZED_DELAY: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// How often relative times ("2 hours ago") are refreshed.
 pub const WINDOW_CLOCK_TICK: std::time::Duration = std::time::Duration::from_secs(30);
@@ -290,7 +288,7 @@ pub const STATUS_KEY_MAX_AGE: std::time::Duration = std::time::Duration::from_se
 /// treated as not reachable now.
 pub const RCLONE_SERVE_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// How long a scheduled run waits for UPower and NetworkManager to answer
+/// How long a scheduled run waits for `UPower` and `NetworkManager` to answer
 /// before treating what they would have said as unknown. zbus sets no
 /// timeout of its own, and a hung service would otherwise leave the
 /// `--scheduled` unit "activating" for good, every later timer fire skipped
@@ -313,16 +311,16 @@ pub const OPEN_COPY_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
 /// How long an "Open a copy" folder stays before it is removed. Long enough
 /// that one still open in a viewer is not pulled away within a working day.
-pub const OPEN_COPY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+pub const OPEN_COPY_MAX_AGE: std::time::Duration = std::time::Duration::from_hours(24);
 
 /// How long a cloud sign-in may take in the browser before rclone is stopped
 /// and the sign-in reported as timed out.
-pub const SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+pub const SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// How long a scheduled run waits before trying again a check that failed
 /// with an error (not one that found damage): long enough that a check that
 /// cannot run does not repeat at every slot.
-pub const CHECK_RETRY: std::time::Duration = std::time::Duration::from_secs(86_400);
+pub const CHECK_RETRY: std::time::Duration = std::time::Duration::from_hours(24);
 
 /// The most a `--run` job read from stdin may be: far more than any real job
 /// (folders, exclusions and a password), and a cap on what a wrong caller can

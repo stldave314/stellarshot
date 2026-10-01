@@ -13,6 +13,7 @@
 //! or changed, and removing a backup can never damage a remote the user set up
 //! for something else.
 
+use std::fmt::Write as _;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -357,12 +358,13 @@ fn join(path: &str, name: &str) -> String {
 pub fn sftp_remote(host: &str, user: &str, port: u16, known_hosts: &Path) -> String {
     let mut remote = format!(":sftp,host={},port={port}", quote(host));
     if !user.is_empty() {
-        remote.push_str(&format!(",user={}", quote(user)));
+        let _ = write!(remote, ",user={}", quote(user));
     }
-    remote.push_str(&format!(
+    let _ = write!(
+        remote,
         ",known_hosts_file={}",
         quote(&known_hosts.display().to_string())
-    ));
+    );
     remote
 }
 
@@ -442,7 +444,7 @@ fn make_private(config: &Path) -> Result<(), EngineError> {
     // Always, not only when it is missing: one that already exists may be
     // someone else's, or readable by others.
     if let Some(dir) = config.parent() {
-        crate::paths::tighten_private(dir).map_err(|err| EngineError::io(dir, err))?;
+        crate::paths::tighten_private(dir).map_err(|err| EngineError::io(dir, &err))?;
     }
     std::fs::OpenOptions::new()
         .create(true)
@@ -529,7 +531,7 @@ fn set_section_values(
 ) -> Result<(), EngineError> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
-    let text = std::fs::read_to_string(config).map_err(|err| EngineError::io(config, err))?;
+    let text = std::fs::read_to_string(config).map_err(|err| EngineError::io(config, &err))?;
     let header = format!("[{name}]");
     let mut out = Vec::new();
     let mut in_section = false;
@@ -567,11 +569,11 @@ fn set_section_values(
         .create_new(true)
         .mode(0o600)
         .open(&temporary)
-        .map_err(|err| EngineError::io(&temporary, err))?;
+        .map_err(|err| EngineError::io(&temporary, &err))?;
     file.write_all((out.join("\n") + "\n").as_bytes())
         .and_then(|()| file.sync_all())
-        .map_err(|err| EngineError::io(&temporary, err))?;
-    std::fs::rename(&temporary, config).map_err(|err| EngineError::io(config, err))
+        .map_err(|err| EngineError::io(&temporary, &err))?;
+    std::fs::rename(&temporary, config).map_err(|err| EngineError::io(config, &err))
 }
 
 /// Remove a remote Stellarshot created.

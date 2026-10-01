@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-/// Route `log` output (what rustic_core, rustic_backend and the rclone
+/// Route `log` output (what `rustic_core`, `rustic_backend` and the rclone
 /// process they run all use) into `tracing`, then to stderr and
 /// [`crate::debug::backend_log_path`], at `warn` unless `RUST_LOG` says otherwise. Call once
 /// from the window's own startup, which owns the file for its whole run and
@@ -64,7 +64,7 @@ mod tests {
 
     /// Proves the fix for a real backup failure whose error dialog said
     /// "check the logs" while `set_logger` had no working path from `log`
-    /// (what rustic_core, rustic_backend and rclone's own output all go
+    /// (what `rustic_core`, `rustic_backend` and rclone's own output all go
     /// through) into anywhere at all: the bridge from `log` into `tracing`
     /// was never actually installed, despite this function's own doc comment
     /// already claiming it was.

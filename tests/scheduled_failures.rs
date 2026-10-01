@@ -37,7 +37,7 @@ struct PrivateBus {
     daemon: Child,
     keyring: Option<Child>,
     address: String,
-    _dir: TempDir,
+    dir: TempDir,
 }
 
 impl PrivateBus {
@@ -79,7 +79,7 @@ impl PrivateBus {
             daemon,
             keyring: None,
             address: address.trim().to_owned(),
-            _dir: dir,
+            dir,
         }
     }
 
@@ -88,8 +88,8 @@ impl PrivateBus {
     fn with_empty_keyring() -> Self {
         use std::io::Write;
         let mut bus = Self::start();
-        let home = bus._dir.path().join("home");
-        let runtime = bus._dir.path().join("runtime");
+        let home = bus.dir.path().join("home");
+        let runtime = bus.dir.path().join("runtime");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&runtime).unwrap();
         std::fs::set_permissions(
@@ -244,9 +244,7 @@ impl Home {
     }
 
     fn snapshots(&self) -> usize {
-        std::fs::read_dir(self.repository.join("snapshots"))
-            .map(|entries| entries.count())
-            .unwrap_or(0)
+        std::fs::read_dir(self.repository.join("snapshots")).map_or(0, std::iter::Iterator::count)
     }
 }
 

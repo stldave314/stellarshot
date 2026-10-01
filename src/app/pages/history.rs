@@ -52,7 +52,7 @@ pub fn view<'a>(entries: &'a [(String, Event)], profiles: &'a [Profile]) -> Elem
         .into()
 }
 
-fn row<'a>(profile_name: String, event: &'a Event) -> Element<'a, Message> {
+fn row(profile_name: String, event: &Event) -> Element<'_, Message> {
     let spacing = theme::active().cosmic().spacing;
     let mut line = widget::row::with_capacity(4)
         .spacing(spacing.space_s)

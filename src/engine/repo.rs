@@ -2,7 +2,7 @@
 
 //! Opening and creating repositories.
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -139,6 +139,7 @@ impl Location {
     /// The same location, with a bandwidth limit applied if this is an
     /// rclone location; a no-op for a local one, which has no transfer to
     /// limit.
+    #[must_use]
     pub fn with_bandwidth_limit(mut self, limit: &str) -> Self {
         if let Self::Rclone {
             bandwidth_limit, ..
@@ -213,8 +214,10 @@ impl Location {
     fn digest(bytes: &[u8]) -> String {
         Sha256::digest(bytes)[..8]
             .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect()
+            .fold(String::with_capacity(16), |mut hex, byte| {
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            })
     }
 
     /// What rustic needs to reach this location, and, for one reached over
@@ -296,10 +299,11 @@ fn rclone_command(config: &Path, bandwidth_limit: &str) -> String {
         RCLONE_SERVE_FLAGS.join(" ")
     );
     if !bandwidth_limit.is_empty() {
-        command.push_str(&format!(
+        let _ = write!(
+            command,
             " --bwlimit {}",
             shell_words::quote(bandwidth_limit)
-        ));
+        );
     }
     // Defense in depth against a remote name outside the shape
     // `Destination::location` already enforces (see SEC-1): a trailing `--`
@@ -322,7 +326,7 @@ pub(super) fn canonicalize_or_raw(path: &Path) -> PathBuf {
 /// Removes any `userinfo@` (`user:pass@`, or just `user@`) immediately
 /// after a `scheme://` found anywhere inside `text`, for a message that is
 /// not itself a bare URL (use [`redact_url`] for that) but may have one
-/// embedded in it — an error from rustic_backend or the `reqwest` it uses
+/// embedded in it — an error from `rustic_backend` or the `reqwest` it uses
 /// for a REST location, which can include the URL it was trying to reach,
 /// credentials and all, in its own `Display` text.
 ///
@@ -593,9 +597,8 @@ pub fn open(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
         // share or a drive whose mount point stays behind when it is not
         // mounted. That is "not reachable now" (a scheduled run skips it
         // quietly), not a folder that holds something else.
-        let empty_or_missing = std::fs::read_dir(path)
-            .map(|mut entries| entries.next().is_none())
-            .unwrap_or(true);
+        let empty_or_missing =
+            std::fs::read_dir(path).map_or(true, |mut entries| entries.next().is_none());
         if empty_or_missing {
             return Err(EngineError::new(
                 ErrorKind::DestinationUnavailable,

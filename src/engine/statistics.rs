@@ -9,7 +9,7 @@
 //! refers to any more).
 //!
 //! `infos_index` breaks its totals down by blob type (file data versus the
-//! folder trees that describe it), but rustic_core does not make the
+//! folder trees that describe it), but `rustic_core` does not make the
 //! `BlobType` those totals are keyed by part of its public API, so the two
 //! cannot be told apart here. Both are counted together instead: trees are a
 //! small fraction of a real backup, so the combined ratio is close to the

@@ -25,8 +25,7 @@ pub fn explain(error: &EngineError) -> String {
     let path = || {
         error
             .path()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| error.detail.clone())
+            .map_or_else(|| error.detail.clone(), |path| path.display().to_string())
     };
     match error.kind {
         ErrorKind::WrongPassword => fl!("error-wrong-password"),

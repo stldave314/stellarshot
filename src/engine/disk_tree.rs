@@ -43,7 +43,7 @@ pub fn list_with_sizes(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(DiskEntry),
 ) -> Result<Option<Vec<DiskEntry>>, EngineError> {
-    let read_dir = fs::read_dir(dir).map_err(|err| EngineError::io(dir, err))?;
+    let read_dir = fs::read_dir(dir).map_err(|err| EngineError::io(dir, &err))?;
     let mut entries = Vec::new();
     for item in read_dir {
         if cancel.load(Ordering::Relaxed) {
@@ -59,7 +59,7 @@ pub fn list_with_sizes(
         };
         let is_dir = metadata.is_dir();
         let size = if is_dir {
-            match dir_size(&path, cancel)? {
+            match dir_size(&path, cancel) {
                 Some(size) => size,
                 None => return Ok(None),
             }
@@ -81,12 +81,12 @@ pub fn list_with_sizes(
 
 /// The total size of everything under `dir`, symlinks counted by their own
 /// size and never followed. `Ok(None)` if `cancel` was set partway through.
-fn dir_size(dir: &Path, cancel: &AtomicBool) -> Result<Option<u64>, EngineError> {
+fn dir_size(dir: &Path, cancel: &AtomicBool) -> Option<u64> {
     let mut total = 0u64;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
         if cancel.load(Ordering::Relaxed) {
-            return Ok(None);
+            return None;
         }
         let Ok(read_dir) = fs::read_dir(&current) else {
             // Unreadable partway through (permissions, or it vanished): its
@@ -106,7 +106,7 @@ fn dir_size(dir: &Path, cancel: &AtomicBool) -> Result<Option<u64>, EngineError>
             }
         }
     }
-    Ok(Some(total))
+    Some(total)
 }
 
 #[cfg(test)]

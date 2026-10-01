@@ -197,11 +197,10 @@ impl SettingsPage {
 
     pub fn view<'a>(&'a self, config: &'a StellarshotConfig) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
-        let cache_dir_label = config
-            .cache_dir
-            .as_ref()
-            .map(|path| format::path(path))
-            .unwrap_or_else(|| fl!("settings-cache-dir-default"));
+        let cache_dir_label = config.cache_dir.as_ref().map_or_else(
+            || fl!("settings-cache-dir-default"),
+            |path| format::path(path),
+        );
         let cache = widget::settings::section()
             .title(fl!("settings-cache-title"))
             .add(

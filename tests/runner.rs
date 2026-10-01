@@ -181,7 +181,7 @@ fn bulky_source(source: &Path, count: usize) {
                 state ^= state << 13;
                 state ^= state >> 7;
                 state ^= state << 17;
-                (state >> 24) as u8
+                (state >> 24).to_le_bytes()[0]
             })
             .collect();
         std::fs::write(source.join(format!("bulk-{index:03}.bin")), block).unwrap();
@@ -213,7 +213,7 @@ fn a_backup_that_cannot_write_reports_an_error_and_leaves_a_sound_repository() {
                 rlim_cur: 256 * 1024,
                 rlim_max: 256 * 1024,
             };
-            if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) == 0 {
+            if libc::setrlimit(libc::RLIMIT_FSIZE, &raw const limit) == 0 {
                 Ok(())
             } else {
                 Err(std::io::Error::last_os_error())
@@ -624,7 +624,7 @@ fn an_after_hook_still_runs_when_the_destination_is_unreachable() {
     assert_eq!(status.code(), Some(1));
     match events.last() {
         Some(Event::Error { error }) => {
-            assert_eq!(error.kind, ErrorKind::DestinationUnavailable)
+            assert_eq!(error.kind, ErrorKind::DestinationUnavailable);
         }
         other => panic!("expected an error event, got {other:?}"),
     }

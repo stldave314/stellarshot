@@ -2,7 +2,7 @@
 
 //! Importing a Déjà Dup backup.
 //!
-//! Déjà Dup keeps its settings in GSettings. A Flatpak install stores them in
+//! Déjà Dup keeps its settings in `GSettings`. A Flatpak install stores them in
 //! a keyfile inside its sandbox; a native install stores them in dconf, and
 //! `dconf dump` prints the same keyfile format. Keys the user never changed
 //! are absent, and take Déjà Dup's schema defaults.
@@ -25,7 +25,7 @@ use crate::profile::{Retention, Schedule};
 /// Where the Flatpak build keeps its settings, relative to `$HOME`.
 const FLATPAK_KEYFILE: &str = ".var/app/org.gnome.DejaDup/config/glib-2.0/settings/keyfile";
 
-/// The GSettings path Déjà Dup's schema lives at.
+/// The `GSettings` path Déjà Dup's schema lives at.
 const SCHEMA_PATH: &str = "org/gnome/deja-dup";
 
 /// Where a Déjà Dup backup is kept.
@@ -128,7 +128,7 @@ fn normalize_section(name: &str) -> Option<String> {
     (!name.contains('/') || name.ends_with('/')).then(|| name.trim_matches('/').to_owned())
 }
 
-/// One GVariant string literal at the start of `text`, and what follows it.
+/// One `GVariant` string literal at the start of `text`, and what follows it.
 ///
 /// `g_variant_print` wraps a string in single quotes, or in double quotes
 /// when it contains a `'` (`"Bob's Music"`), and escapes backslashes, the
@@ -196,13 +196,13 @@ fn literal(text: &str) -> Option<(String, &str)> {
     None
 }
 
-/// A GVariant string: `'text'` or `"text"`, see [`literal`].
+/// A `GVariant` string: `'text'` or `"text"`, see [`literal`].
 fn string(value: &str) -> Option<String> {
     let (text, rest) = literal(value.trim())?;
     rest.trim().is_empty().then_some(text)
 }
 
-/// A GVariant string array: `['a', "b's"]`, or `@as []` for an empty one.
+/// A `GVariant` string array: `['a', "b's"]`, or `@as []` for an empty one.
 fn string_array(value: &str) -> Option<Vec<String>> {
     let value = value.trim().trim_start_matches("@as").trim();
     let mut rest = value.strip_prefix('[')?.strip_suffix(']')?;
@@ -429,7 +429,7 @@ mod tests {
     /// Modeled on a real Déjà Dup 50 Flatpak keyfile: Google Drive, a long
     /// exclude list, and no `include-list`, `tool` or `periodic` keys, so
     /// those take their schema defaults.
-    const FLATPAK: &str = r#"[org/gnome/deja-dup]
+    const FLATPAK: &str = r"[org/gnome/deja-dup]
 periodic-timestamp='2026-09-22T22:59:29.766968-05'
 backend='google'
 periodic-period=7
@@ -443,10 +443,10 @@ folder='laptop-backup'
 
 [org/gnome/deja-dup/local]
 folder='laptop'
-"#;
+";
 
     /// What `dconf dump /org/gnome/deja-dup/` prints for a native install.
-    const DCONF: &str = r#"[/]
+    const DCONF: &str = r"[/]
 backend='drive'
 include-list=['$HOME', '/srv/projects']
 exclude-list=@as []
@@ -456,7 +456,7 @@ tool='restic'
 uuid='1111-AAAA'
 folder='$HOSTNAME'
 name='Backup SSD'
-"#;
+";
 
     fn home() -> PathBuf {
         PathBuf::from("/home/alex")

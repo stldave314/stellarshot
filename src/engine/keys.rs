@@ -17,7 +17,7 @@ use crate::{debug_log, error_log};
 ///
 /// Not included: who added it, or when. A key file carries `hostname`,
 /// `username` and `created` fields for that, but reading one back needs a
-/// raw, undecrypted read of a `Key`-type file, and the only read rustic_core
+/// raw, undecrypted read of a `Key`-type file, and the only read `rustic_core`
 /// exposes publicly (`cat_file`, used for every other file type) always
 /// decrypts with the repository's master key — the wrong key entirely for a
 /// key file, which is protected by the password instead. Worth raising with

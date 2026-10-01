@@ -184,7 +184,7 @@ pub enum ContextPage {
 }
 
 impl ContextPage {
-    fn title(&self) -> String {
+    fn title(self) -> String {
         match self {
             Self::About => fl!("about"),
             Self::Settings => fl!("settings"),
@@ -329,8 +329,8 @@ impl App {
             );
             return false;
         }
-        let result = match &self.config_handler {
-            Some(handler) => self.config.set_profiles(handler, profiles).map_err(|err| {
+        let result = if let Some(handler) = &self.config_handler {
+            self.config.set_profiles(handler, profiles).map_err(|err| {
                 // `set_profiles` already assigned `self.config.profiles`
                 // to the new value before this write failed (the derived
                 // setter's own doing, not fixable here): reloading from
@@ -338,11 +338,10 @@ impl App {
                 // showing a list that was never actually saved.
                 self.config = StellarshotConfig::config();
                 err.to_string()
-            }),
-            None => {
-                self.config = StellarshotConfig::config();
-                Err("no config handler".to_owned())
-            }
+            })
+        } else {
+            self.config = StellarshotConfig::config();
+            Err("no config handler".to_owned())
         };
         match result {
             Ok(_) => true,
@@ -647,23 +646,22 @@ impl Application for App {
     /// or a notification's `--profile <id>`), does that too, the same as
     /// [`Self::init`] would have for a fresh start.
     fn dbus_activation(&mut self, msg: cosmic::dbus_activation::Message) -> Task<Self::Message> {
-        let raise = match self.core.main_window_id() {
-            Some(id) => Task::batch([window::gain_focus(id), window::minimize(id, false)]),
-            None => {
-                let (id, open) = window::open(window::Settings {
-                    size: cosmic::iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT),
-                    // `cosmic::app::Settings` sets this for the window the
-                    // app starts with (client-side decorations, the default
-                    // for a COSMIC app); a bare `window::Settings::default()`
-                    // does not, so this reopened window got both the
-                    // compositor's own title bar and the app's own — a
-                    // double one.
-                    decorations: false,
-                    ..window::Settings::default()
-                });
-                self.core.set_main_window_id(Some(id));
-                open.map(|_| cosmic::Action::App(Message::Noop))
-            }
+        let raise = if let Some(id) = self.core.main_window_id() {
+            Task::batch([window::gain_focus(id), window::minimize(id, false)])
+        } else {
+            let (id, open) = window::open(window::Settings {
+                size: cosmic::iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT),
+                // `cosmic::app::Settings` sets this for the window the
+                // app starts with (client-side decorations, the default
+                // for a COSMIC app); a bare `window::Settings::default()`
+                // does not, so this reopened window got both the
+                // compositor's own title bar and the app's own — a
+                // double one.
+                decorations: false,
+                ..window::Settings::default()
+            });
+            self.core.set_main_window_id(Some(id));
+            open.map(|_| cosmic::Action::App(Message::Noop))
         };
         // D-Bus carries only plain strings either way, whatever `Flags`'s
         // own `CosmicFlags::SubCommand`/`Args` are typed as on the sending

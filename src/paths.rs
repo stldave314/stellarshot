@@ -37,10 +37,10 @@ pub fn home_dir() -> Option<PathBuf> {
     let status = unsafe {
         libc::getpwuid_r(
             libc::getuid(),
-            &mut entry,
+            &raw mut entry,
             buffer.as_mut_ptr().cast(),
             buffer.len(),
-            &mut found,
+            &raw mut found,
         )
     };
     if status != 0 || found.is_null() || entry.pw_dir.is_null() {

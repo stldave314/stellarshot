@@ -172,7 +172,7 @@ pub fn merge(existing: &[Profile], export: &Export) -> Merged {
         if !profile::valid_id(&profile.id)
             || !remote_is_safe(&profile.destination)
             || !rest_url_is_sane(&profile.destination)
-            || !retention_is_sane(&profile.retention)
+            || !retention_is_sane(profile.retention)
         {
             counts.rejected += 1;
             continue;
@@ -282,9 +282,9 @@ fn rest_url_is_sane(destination: &Destination) -> bool {
 /// the rule cannot be expressed at all. `forget` refuses both anyway;
 /// refusing the profile here keeps a backup from being imported in a
 /// state where its very first clean-up would fail.
-fn retention_is_sane(retention: &Retention) -> bool {
+fn retention_is_sane(retention: Retention) -> bool {
     match retention {
-        Retention::KeepFor { days } => (1..=RETENTION_MAX_DAYS).contains(days),
+        Retention::KeepFor { days } => (1..=RETENTION_MAX_DAYS).contains(&days),
         Retention::KeepForever | Retention::Smart => true,
     }
 }

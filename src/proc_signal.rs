@@ -95,9 +95,9 @@ pub fn install() {
     // thread's mask (and, by inheritance, threads it creates afterward).
     let set = unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGTERM);
-        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, libc::SIGTERM);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &raw const set, std::ptr::null_mut());
         set
     };
     let spawned = std::thread::Builder::new()
@@ -106,7 +106,7 @@ pub fn install() {
             let mut signal: libc::c_int = 0;
             // SAFETY: `set` is a valid, initialized `sigset_t`; `signal`
             // is a valid out-pointer for the duration of the call.
-            while unsafe { libc::sigwait(&set, &mut signal) } != 0 {}
+            while unsafe { libc::sigwait(&raw const set, &raw mut signal) } != 0 {}
             on_term(state);
         });
     if let Err(err) = spawned {

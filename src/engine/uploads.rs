@@ -349,7 +349,7 @@ mod tests {
             Ok(files
                 .iter()
                 .filter(|(kind, _, _)| *kind == tpe)
-                .map(|(_, id, size)| (*id, *size as u32))
+                .map(|(_, id, size)| (*id, u32::try_from(*size).unwrap_or(u32::MAX)))
                 .collect())
         }
         fn read_full(&self, _: FileType, _: &Id) -> RusticResult<Bytes> {
@@ -390,9 +390,10 @@ mod tests {
                         "the network went away",
                     ));
                 }
-                if Some(number) == self.panic_pack {
-                    panic!("the network went very, very away");
-                }
+                assert!(
+                    Some(number) != self.panic_pack,
+                    "the network went very, very away"
+                );
             }
             self.files.lock().unwrap().push((tpe, *id, content.size()));
             Ok(())

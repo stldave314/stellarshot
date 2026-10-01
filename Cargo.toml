@@ -238,6 +238,41 @@ missing_debug_implementations = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
+# The stricter set COSMIC's own app template checks, less what does not fit
+# this code, each for a reason:
+pedantic = { level = "warn", priority = -1 }
+# Nearly every query here would carry it, for no caller that drops results.
+must_use_candidate = "allow"
+# Error cases are explained by `ErrorKind`'s own docs, not each function's.
+missing_errors_doc = "allow"
+# Counts, sizes and times passed to Fluent as i64 never come near 2^63.
+cast_possible_wrap = "allow"
+# Progress fractions and percentages are shown, not computed with.
+cast_precision_loss = "allow"
+# The views are long by nature: one widget tree each, top to bottom.
+too_many_lines = "allow"
+# Settings and page state are flags the UI toggles one by one.
+struct_excessive_bools = "allow"
+# `a = b.clone()` reads plainer than `a.clone_from(&b)`, and none is hot.
+assigning_clones = "allow"
+# Arms are kept apart where each case has its own reason, written there.
+match_same_arms = "allow"
+# Debug output leaves out passwords and process handles on purpose.
+missing_fields_in_debug = "allow"
+# `id` and `ids`, `path` and `paths`: the names say what they are.
+similar_names = "allow"
+# A helper declared where it is used is easier to follow than one hoisted.
+items_after_statements = "allow"
+# The views take the window's own maps; no other hasher is ever passed.
+implicit_hasher = "allow"
+# A page's view helpers stay its methods, so its view is in one place.
+unused_self = "allow"
+# Owned arguments where the caller is done with the value anyway.
+needless_pass_by_value = "allow"
+# A recorded restore decision is three-way: skip, keep, or rename.
+option_option = "allow"
+# A `match` with its reason written beside each arm reads better than `if let`.
+single_match_else = "allow"
 unwrap_used = "warn"
 expect_used = "warn"
 panic = "warn"

@@ -45,8 +45,10 @@ pub fn runtime_dir() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
-        .map(|dir| dir.join("stellarshot"))
-        .unwrap_or_else(|| cache_dir().join("stellarshot/run"))
+        .map_or_else(
+            || cache_dir().join("stellarshot/run"),
+            |dir| dir.join("stellarshot"),
+        )
 }
 
 /// Create `dir/name` for an "Open a copy", private from the start: `dir`
@@ -136,6 +138,10 @@ impl Drop for WriteLock {
 }
 
 /// An exclusive OFD lock covering the whole file, non-blocking.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "F_WRLCK and SEEK_SET are 1 and 0; `flock` declares them `short`"
+)]
 fn exclusive_lock() -> libc::flock {
     // Zeroed, then the fields that matter set: a struct literal would not
     // compile on a libc target whose `flock` has padding or extra fields.
@@ -176,7 +182,7 @@ fn lock_file(dir: &Path, key: &str, location: &Location) -> Result<File, EngineE
         .read(true)
         .write(true)
         .open(&path)
-        .map_err(|err| EngineError::io(&path, err))?;
+        .map_err(|err| EngineError::io(&path, &err))?;
     let mut lock = exclusive_lock();
     // SAFETY: `file` is a valid, open file description for the lifetime of
     // this call, and `lock` is a valid `flock` the kernel only reads and
@@ -270,7 +276,7 @@ fn probe_locked(dir: &Path, key: &str) -> io::Result<bool> {
     if result != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(lock.l_type as libc::c_int != libc::F_UNLCK)
+    Ok(libc::c_int::from(lock.l_type) != libc::F_UNLCK)
 }
 
 /// Creates `dir` (and any missing parent) mode `0700` if it does not exist

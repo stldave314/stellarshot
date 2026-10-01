@@ -204,22 +204,21 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
             Err(err) => break Err(format!("hook: {err}")),
         }
     }?;
-    let stderr = match receiver.recv_timeout(DRAIN_AFTER_EXIT) {
-        Ok(text) => text,
-        Err(_) => {
-            kill_group(&child);
-            // Bounded the same way as the wait above it: a hook can leave
-            // behind a process that has left this group entirely (`setsid`
-            // starts a new session and process group of its own), which
-            // `kill_group` cannot reach. Such a process can keep this pipe's
-            // write end open indefinitely, and an unbounded `recv()` here
-            // would then hang the backup — and the repository lock it
-            // holds — forever, rather than finishing with whatever stderr
-            // had already arrived.
-            receiver
-                .recv_timeout(DRAIN_AFTER_EXIT)
-                .unwrap_or_else(|_| "<stderr left open by a background process>".to_owned())
-        }
+    let stderr = if let Ok(text) = receiver.recv_timeout(DRAIN_AFTER_EXIT) {
+        text
+    } else {
+        kill_group(&child);
+        // Bounded the same way as the wait above it: a hook can leave
+        // behind a process that has left this group entirely (`setsid`
+        // starts a new session and process group of its own), which
+        // `kill_group` cannot reach. Such a process can keep this pipe's
+        // write end open indefinitely, and an unbounded `recv()` here
+        // would then hang the backup — and the repository lock it
+        // holds — forever, rather than finishing with whatever stderr
+        // had already arrived.
+        receiver
+            .recv_timeout(DRAIN_AFTER_EXIT)
+            .unwrap_or_else(|_| "<stderr left open by a background process>".to_owned())
     };
     Ok((status, stderr))
 }

@@ -317,8 +317,8 @@ pub struct Conditions {
     #[serde(default)]
     pub block_metered: bool,
     /// Skip unless connected to one of `trusted_networks`, a Wi-Fi or wired
-    /// connection matched by its name in NetworkManager, or a VPN interface
-    /// (Tailscale, WireGuard, or any other) is up.
+    /// connection matched by its name in `NetworkManager`, or a VPN interface
+    /// (Tailscale, `WireGuard`, or any other) is up.
     #[serde(default)]
     pub require_trusted_network: bool,
     #[serde(default)]

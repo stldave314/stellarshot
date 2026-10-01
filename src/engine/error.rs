@@ -127,7 +127,7 @@ impl EngineError {
     /// ("No such file or directory (os error 2)"), so a plain `?` through
     /// `From<std::io::Error>` loses exactly the detail that would tell
     /// whoever reads the error which file actually failed.
-    pub fn io(path: &std::path::Path, err: std::io::Error) -> Self {
+    pub fn io(path: &std::path::Path, err: &std::io::Error) -> Self {
         Self::new(ErrorKind::Io, format!("{}: {err}", path.display()))
     }
 

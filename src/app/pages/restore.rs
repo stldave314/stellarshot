@@ -754,8 +754,7 @@ impl RestorePage {
                 self.expanded = None;
                 self.dir = path
                     .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| PathBuf::from("/"));
+                    .map_or_else(|| PathBuf::from("/"), Path::to_path_buf);
                 self.list()
             }
             Message::RestoreSelection => {
@@ -1224,7 +1223,7 @@ impl RestorePage {
         let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
         match &self.missing {
             None if self.finding_missing.is_some() => {
-                list = list.push(widget::text::body(fl!("restore-searching")))
+                list = list.push(widget::text::body(fl!("restore-searching")));
             }
             None => list = list.push(widget::text::body(fl!("deleted-intro"))),
             Some(found) if found.is_empty() => {
@@ -1275,11 +1274,11 @@ impl RestorePage {
         let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
         match &self.diff {
             None if self.comparing.is_some() => {
-                list = list.push(widget::text::body(fl!("restore-searching")))
+                list = list.push(widget::text::body(fl!("restore-searching")));
             }
             None => list = list.push(widget::text::body(fl!("compare-intro"))),
             Some(diff) if diff.is_empty() => {
-                list = list.push(widget::text::body(fl!("compare-none")))
+                list = list.push(widget::text::body(fl!("compare-none")));
             }
             Some(diff) => {
                 list = list.push(widget::text::caption(fl!(
@@ -1388,7 +1387,7 @@ impl RestorePage {
         let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
         match &self.global_results {
             None if self.global_searching.is_some() => {
-                list = list.push(widget::text::body(fl!("restore-searching")))
+                list = list.push(widget::text::body(fl!("restore-searching")));
             }
             None => list = list.push(widget::text::body(fl!("search-all-intro"))),
             Some(results) if results.is_empty() => {

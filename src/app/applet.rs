@@ -219,7 +219,7 @@ impl cosmic::Application for Applet {
                     Message::Surface(destroy_popup(id))
                 } else if let Some(main_window) = main_window {
                     Message::Surface(app_popup::<Applet>(
-                        |_| Default::default(),
+                        |_| cosmic::surface::action::LiveSettings::default(),
                         move |state: &mut Applet| {
                             let new_id = Id::unique();
                             state.popup = Some(new_id);
@@ -231,10 +231,10 @@ impl cosmic::Application for Applet {
                                 None,
                             );
                             popup_settings.positioner.anchor_rect = Rectangle {
-                                x: (bounds.x - offset.x) as i32,
-                                y: (bounds.y - offset.y) as i32,
-                                width: bounds.width as i32,
-                                height: bounds.height as i32,
+                                x: pixels(bounds.x - offset.x),
+                                y: pixels(bounds.y - offset.y),
+                                width: pixels(bounds.width),
+                                height: pixels(bounds.height),
                             };
                             popup_settings
                         },
@@ -359,6 +359,16 @@ fn status_text(status: &Status) -> String {
         Some(time) => crate::app::format::local_time(time),
         None => fl!("never-backed-up"),
     }
+}
+
+/// A position or size on screen in whole pixels, as the popup's anchor
+/// takes it.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a position on screen, nowhere near i32's range"
+)]
+fn pixels(value: f32) -> i32 {
+    value as i32
 }
 
 #[cfg(test)]

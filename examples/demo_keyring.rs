@@ -10,8 +10,8 @@
 //! Stellarshot's own keyring module: `scripts/screenshots.sh` runs this so
 //! the demo profile opens unlocked, then removes the entry again.
 //!
-//! Usage: cargo run --example demo_keyring -- store <profile-id>
-//!        cargo run --example demo_keyring -- forget <profile-id>
+//! Usage: cargo run --example `demo_keyring` -- store <profile-id>
+//!        cargo run --example `demo_keyring` -- forget <profile-id>
 //! `store` reads the password from the `DEMO_PASSWORD` environment variable.
 
 use stellarshot::engine::Secret;

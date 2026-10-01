@@ -592,8 +592,7 @@ impl Place {
                 let folder = self
                     .folder
                     .as_ref()
-                    .map(|path| format::path(path))
-                    .unwrap_or_else(|| fl!("wizard-no-folder"));
+                    .map_or_else(|| fl!("wizard-no-folder"), |path| format::path(path));
                 widget::settings::section()
                     .add(
                         widget::settings::item::builder(folder).control(

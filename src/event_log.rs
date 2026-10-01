@@ -498,7 +498,7 @@ mod tests {
     fn an_event_logged_before_source_existed_is_read_back_as_desktop() {
         // What was actually on disk before this field was added: no
         // `source` key at all, not a null or a default placeholder.
-        let stored = r#"(time:1700000000,kind:BackedUp)"#;
+        let stored = r"(time:1700000000,kind:BackedUp)";
         let loaded: Event = ron::from_str(stored).unwrap();
         assert_eq!(loaded.source, Source::Desktop);
     }
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn a_source_written_by_a_later_version_loads_as_other_too() {
-        let stored = r#"(time:1700000000,kind:BackedUp,source:SomethingNew)"#;
+        let stored = r"(time:1700000000,kind:BackedUp,source:SomethingNew)";
         let loaded: Event = ron::from_str(stored).unwrap();
         assert_eq!(loaded.source, Source::Other);
     }

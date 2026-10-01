@@ -459,17 +459,16 @@ impl Session {
                 });
             }
             Operation::Restore => {
-                return match job.restore {
-                    Some(request) => repo.restore(&request, sink).map(|restored| Outcome {
+                return if let Some(request) = job.restore {
+                    repo.restore(&request, sink).map(|restored| Outcome {
                         restored: Some(restored),
                         ..Outcome::default()
-                    }),
-                    None => {
-                        let snapshot = job.snapshot.ok_or_else(|| missing("snapshot"))?;
-                        let destination = job.destination.ok_or_else(|| missing("destination"))?;
-                        repo.restore_all(&snapshot, &destination, sink)
-                            .map(|()| Outcome::default())
-                    }
+                    })
+                } else {
+                    let snapshot = job.snapshot.ok_or_else(|| missing("snapshot"))?;
+                    let destination = job.destination.ok_or_else(|| missing("destination"))?;
+                    repo.restore_all(&snapshot, &destination, sink)
+                        .map(|()| Outcome::default())
                 };
             }
             Operation::Check => repo.check().map(|()| Outcome::default()),

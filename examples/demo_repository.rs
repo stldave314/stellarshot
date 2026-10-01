@@ -12,7 +12,7 @@
 //! something new in it. They are dated a day apart, ending two hours ago, so
 //! the history looks like a backup that has been running for a while.
 //!
-//! Usage: cargo run --example demo_repository -- <repository> <source> <count>
+//! Usage: cargo run --example `demo_repository` -- <repository> <source> <count>
 //! The password is read from the `DEMO_PASSWORD` environment variable.
 
 use std::path::PathBuf;

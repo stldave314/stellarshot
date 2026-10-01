@@ -653,3 +653,11 @@ hook-row = { $timing } · { $command }
 size-removed = −{ $size }
 compression-ratio = { $ratio }×
 list-separator = {", "}
+
+## Desktop entries and store listing (checked against res/ by tests/desktop_l10n.rs)
+desktop-comment = Säkerhetskopiera dina filer med krypterade, deduplicerade ögonblicksbilder
+desktop-keywords = Säkerhetskopia;Säkerhetskopiering;Backup;Ögonblicksbild;Återställ;restic;rustic;
+desktop-new-backup = Ny säkerhetskopia
+desktop-restore = Återställ filer
+applet-comment = Om en säkerhetskopiering pågår, och när var och en senast lyckades
+metainfo-summary = Säkerhetskopiera dina filer med krypterade ögonblicksbilder

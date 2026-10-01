@@ -653,3 +653,11 @@ hook-row = { $timing } · { $command }
 size-removed = −{ $size }
 compression-ratio = { $ratio }×
 list-separator = {", "}
+
+## Desktop entries and store listing (checked against res/ by tests/desktop_l10n.rs)
+desktop-comment = Back up your files with encrypted, deduplicated snapshots
+desktop-keywords = Backup;Backups;Snapshot;Restore;restic;rustic;
+desktop-new-backup = New Backup
+desktop-restore = Restore Files
+applet-comment = Whether a backup is running, and when each last succeeded
+metainfo-summary = Back up your files with encrypted snapshots

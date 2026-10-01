@@ -1,6 +1,10 @@
 [Desktop Entry]
 Name=Stellarshot
 Comment=Back up your files with encrypted, deduplicated snapshots
+Comment[de]=Sichere deine Dateien mit verschlüsselten, deduplizierten Momentaufnahmen
+Comment[sv]=Säkerhetskopiera dina filer med krypterade, deduplicerade ögonblicksbilder
+Comment[bg]=Архивирайте файловете си с шифровани моментни състояния без дублиране
+Comment[gsw]=Sicher dini Dateie mit verschlüsslete, deduplizierte Momentuufnahme
 Exec=stellarshot
 Terminal=false
 Type=Application
@@ -8,12 +12,24 @@ StartupNotify=true
 Icon=io.github.stldave314.Stellarshot
 Categories=Utility;Archiving;
 Keywords=Backup;Backups;Snapshot;Restore;restic;rustic;
+Keywords[de]=Sicherung;Datensicherung;Backup;Momentaufnahme;Wiederherstellen;restic;rustic;
+Keywords[sv]=Säkerhetskopia;Säkerhetskopiering;Backup;Ögonblicksbild;Återställ;restic;rustic;
+Keywords[bg]=Архив;Резервно копие;Backup;Моментно състояние;Възстановяване;restic;rustic;
+Keywords[gsw]=Sicherig;Datesicherig;Backup;Momentuufnahm;Widerherstelle;restic;rustic;
 Actions=new-backup;restore;
 
 [Desktop Action new-backup]
 Name=New Backup
+Name[de]=Neue Sicherung
+Name[sv]=Ny säkerhetskopia
+Name[bg]=Ново резервно копие
+Name[gsw]=Neui Sicherig
 Exec=stellarshot --new-backup
 
 [Desktop Action restore]
 Name=Restore Files
+Name[de]=Dateien wiederherstellen
+Name[sv]=Återställ filer
+Name[bg]=Възстановяване на файлове
+Name[gsw]=Dateie widerherstelle
 Exec=stellarshot --restore

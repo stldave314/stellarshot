@@ -653,3 +653,11 @@ hook-row = { $timing } · { $command }
 size-removed = −{ $size }
 compression-ratio = { $ratio }×
 list-separator = {", "}
+
+## Desktop entries and store listing (checked against res/ by tests/desktop_l10n.rs)
+desktop-comment = Архивирайте файловете си с шифровани моментни състояния без дублиране
+desktop-keywords = Архив;Резервно копие;Backup;Моментно състояние;Възстановяване;restic;rustic;
+desktop-new-backup = Ново резервно копие
+desktop-restore = Възстановяване на файлове
+applet-comment = Дали тече архивиране и кога всяко е било успешно за последно
+metainfo-summary = Архивирайте файловете си с шифровани моментни състояния

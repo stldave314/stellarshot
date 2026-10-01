@@ -5,6 +5,10 @@
   <project_license>GPL-3.0-only</project_license>
   <name>Stellarshot</name>
   <summary>Back up your files with encrypted snapshots</summary>
+  <summary xml:lang="de">Sichere deine Dateien mit verschlüsselten Momentaufnahmen</summary>
+  <summary xml:lang="sv">Säkerhetskopiera dina filer med krypterade ögonblicksbilder</summary>
+  <summary xml:lang="bg">Архивирайте файловете си с шифровани моментни състояния</summary>
+  <summary xml:lang="gsw">Sicher dini Dateie mit verschlüsslete Momentuufnahme</summary>
   <developer id="io.github.stldave314">
     <name>stldave314</name>
   </developer>

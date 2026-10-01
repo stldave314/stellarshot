@@ -653,3 +653,11 @@ hook-row = { $timing } · { $command }
 size-removed = −{ $size }
 compression-ratio = { $ratio }×
 list-separator = {", "}
+
+## Desktop entries and store listing (checked against res/ by tests/desktop_l10n.rs)
+desktop-comment = Sicher dini Dateie mit verschlüsslete, deduplizierte Momentuufnahme
+desktop-keywords = Sicherig;Datesicherig;Backup;Momentuufnahm;Widerherstelle;restic;rustic;
+desktop-new-backup = Neui Sicherig
+desktop-restore = Dateie widerherstelle
+applet-comment = Öb grad e Sicherig lauft und wänn jedi s letscht Mal klappt hät
+metainfo-summary = Sicher dini Dateie mit verschlüsslete Momentuufnahme

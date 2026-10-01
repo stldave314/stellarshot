@@ -1,6 +1,10 @@
 [Desktop Entry]
 Name=Stellarshot
 Comment=Whether a backup is running, and when each last succeeded
+Comment[de]=Ob gerade eine Sicherung läuft und wann jede zuletzt gelungen ist
+Comment[sv]=Om en säkerhetskopiering pågår, och när var och en senast lyckades
+Comment[bg]=Дали тече архивиране и кога всяко е било успешно за последно
+Comment[gsw]=Öb grad e Sicherig lauft und wänn jedi s letscht Mal klappt hät
 Exec=stellarshot-applet
 Terminal=false
 Type=Application

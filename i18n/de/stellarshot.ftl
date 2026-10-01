@@ -653,3 +653,11 @@ hook-row = { $timing } · { $command }
 size-removed = −{ $size }
 compression-ratio = { $ratio }×
 list-separator = {", "}
+
+## Desktop entries and store listing (checked against res/ by tests/desktop_l10n.rs)
+desktop-comment = Sichere deine Dateien mit verschlüsselten, deduplizierten Momentaufnahmen
+desktop-keywords = Sicherung;Datensicherung;Backup;Momentaufnahme;Wiederherstellen;restic;rustic;
+desktop-new-backup = Neue Sicherung
+desktop-restore = Dateien wiederherstellen
+applet-comment = Ob gerade eine Sicherung läuft und wann jede zuletzt gelungen ist
+metainfo-summary = Sichere deine Dateien mit verschlüsselten Momentaufnahmen

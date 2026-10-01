@@ -190,12 +190,29 @@ fn push(log: &mut Vec<Event>, event: Event) {
     }
 }
 
-/// Add `kind` at `time` to `profile_id`'s log, from `source`.
 /// Forget a removed backup's history entirely.
 pub fn remove(profile_id: &str) -> Result<(), String> {
     crate::paths::with_state_lock(|| crate::paths::remove_state_key(&key(profile_id)))
 }
 
+/// Whether `profile_id`'s history is there but cannot be read, so nothing
+/// new can be added to it (see [`load_checked`]) until [`reset_if_unreadable`].
+pub fn is_unreadable(profile_id: &str) -> bool {
+    store().is_some_and(|store| load_checked(&store, profile_id).is_err())
+}
+
+/// Move an unreadable history aside (see [`crate::paths::set_aside_state_key`])
+/// so the backup starts a new one. Leaves a readable one alone.
+pub fn reset_if_unreadable(profile_id: &str) -> Result<(), String> {
+    crate::paths::with_state_lock(|| {
+        if is_unreadable(profile_id) {
+            crate::paths::set_aside_state_key(&key(profile_id))?;
+        }
+        Ok(())
+    })
+}
+
+/// Add `kind` at `time` to `profile_id`'s log, from `source`.
 pub fn record(profile_id: &str, time: i64, kind: EventKind, source: Source) {
     push_event(profile_id, Event { time, kind, source });
 }

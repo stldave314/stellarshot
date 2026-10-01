@@ -731,7 +731,10 @@ checked, the last failure, the space freed) was saved in a form this version
 cannot read, usually by a newer version. Automatic freeing of space is
 paused while it is, in case the summary said the backup was damaged. Run the
 newer version again, or press **Reset Status** to start the summary afresh;
-the next backup and check fill it in. The backup itself is not touched.
+the next backup and check fill it in. A history this version cannot read is
+handled the same way. The unreadable original is kept beside it, as
+`<name>.unreadable` in `~/.local/state/cosmic/io.github.stldave314.Stellarshot/v2/`,
+and the backup itself is not touched.
 
 </details>
 

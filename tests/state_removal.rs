@@ -104,6 +104,39 @@ fn an_unreadable_status_can_be_reset() {
 
     run_state::reset(&id).unwrap();
     assert_eq!(run_state::load(&id), RunState::default());
+    // The original is kept beside it, for a newer version or a person.
+    let [aside] = find(state, &format!("{key}.unreadable"))
+        .try_into()
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(aside).unwrap(),
+        "(failure: Some(NotAThing))"
+    );
     run_state::update(&id, |run| run.last_check = Some(5)).unwrap();
     assert_eq!(run_state::load(&id).last_check, Some(5));
+}
+
+#[test]
+fn an_unreadable_history_can_be_set_aside_and_started_again() {
+    let state = state_dir();
+    let id = uuid::Uuid::new_v4().to_string();
+    let key = format!("event-log-{id}");
+    event_log::record(&id, 1, EventKind::BackedUp, Source::Desktop);
+    let [file] = find(state, &key).try_into().unwrap();
+    std::fs::write(&file, "([(time: 1, kind: NotAThing)])").unwrap();
+
+    assert!(event_log::is_unreadable(&id));
+    // Nothing new reaches it while it cannot be read.
+    event_log::record(&id, 2, EventKind::BackedUp, Source::Desktop);
+    assert!(event_log::is_unreadable(&id));
+
+    event_log::reset_if_unreadable(&id).unwrap();
+    assert!(!event_log::is_unreadable(&id));
+    assert_eq!(find(state, &format!("{key}.unreadable")).len(), 1);
+    event_log::record(&id, 3, EventKind::BackedUp, Source::Desktop);
+    assert_eq!(event_log::load(&id).len(), 1);
+
+    // A readable one is left alone.
+    event_log::reset_if_unreadable(&id).unwrap();
+    assert_eq!(event_log::load(&id).len(), 1);
 }

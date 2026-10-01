@@ -100,11 +100,17 @@ pub async fn statistics(
 }
 
 /// A backup's history, off the UI thread: it is a config read like any
-/// other, but every other one already goes through here.
-pub async fn history(profile_id: String) -> Vec<crate::event_log::Event> {
-    blocking(move || Ok::<_, EngineError>(crate::event_log::load(&profile_id)))
-        .await
-        .unwrap_or_default()
+/// other, but every other one already goes through here. With it, whether
+/// the history is there but cannot be read.
+pub async fn history(profile_id: String) -> (Vec<crate::event_log::Event>, bool) {
+    blocking(move || {
+        Ok::<_, EngineError>((
+            crate::event_log::load(&profile_id),
+            crate::event_log::is_unreadable(&profile_id),
+        ))
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Every backup's settings and history, as text ready to write out.

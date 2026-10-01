@@ -183,12 +183,7 @@ pub fn remove_state_key(key: &str) -> Result<(), String> {
     use cosmic::cosmic_config::{Config, ConfigSet};
     let store = Config::new_state(crate::constants::APP_ID, crate::constants::CONFIG_VERSION)
         .map_err(|err| err.to_string())?;
-    let path = state_root()
-        .ok_or("no state directory")?
-        .join("cosmic")
-        .join(crate::constants::APP_ID)
-        .join(format!("v{}", crate::constants::CONFIG_VERSION))
-        .join(key);
+    let path = state_key_path(key)?;
     if std::fs::symlink_metadata(&path).is_err() {
         // Never saved, or already gone.
         return Ok(());
@@ -210,6 +205,40 @@ pub fn remove_state_key(key: &str) -> Result<(), String> {
         ));
     }
     std::fs::remove_file(&path).map_err(|err| err.to_string())
+}
+
+/// Where cosmic-config keeps `key` of Stellarshot's state store (see
+/// [`remove_state_key`], which proves it before deleting anything).
+fn state_key_path(key: &str) -> Result<PathBuf, String> {
+    Ok(state_root()
+        .ok_or("no state directory")?
+        .join("cosmic")
+        .join(crate::constants::APP_ID)
+        .join(format!("v{}", crate::constants::CONFIG_VERSION))
+        .join(key))
+}
+
+/// Move `key`'s file aside as `<key>.unreadable` (with the time added if
+/// that is taken), for a value this version cannot read that is about to be
+/// replaced: a newer version may still read it, or a person recover it.
+/// Returns where it went; `None` if there was nothing to move. Call under
+/// [`with_state_lock`].
+pub fn set_aside_state_key(key: &str) -> Result<Option<PathBuf>, String> {
+    let path = state_key_path(key)?;
+    if std::fs::symlink_metadata(&path).is_err() {
+        return Ok(None);
+    }
+    let mut aside = path.with_file_name(format!("{key}.unreadable"));
+    if std::fs::symlink_metadata(&aside).is_ok() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        aside = path.with_file_name(format!("{key}.unreadable.{now}"));
+    }
+    std::fs::rename(&path, &aside).map_err(|err| format!("{}: {err}", path.display()))?;
+    crate::error_log!(CONFIG, "kept unreadable state as {}", aside.display());
+    Ok(Some(aside))
 }
 
 #[cfg(test)]

@@ -289,7 +289,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**
   It says what happened instead, and **Reset Status** starts the status
-  afresh; before, even a passing check could not clear it.
+  afresh; before, even a passing check could not clear it. A history that
+  cannot be read, which stopped recording anything new, is handled the same
+  way, and either original is kept beside it as `<name>.unreadable`.
 - **Removing a backup deletes its history and status too**, instead of
   leaving them in the state folder for good.
 - **The window no longer reads and writes the status files on its own

@@ -138,6 +138,8 @@ pub struct ProfileState {
     /// page opens; every later entry is added here directly, since whatever
     /// adds one already knows what it is.
     history: Vec<crate::event_log::Event>,
+    /// The saved history cannot be read, so nothing new reaches it.
+    history_unreadable: bool,
     history_loaded: bool,
     /// Open the restore page as soon as the backup is unlocked: the
     /// desktop entry's "Restore Files" action.
@@ -183,7 +185,8 @@ pub enum Message {
     StatisticsLoaded(Result<Statistics, EngineError>),
     EstimateSize,
     Estimate(SizeEstimateEvent),
-    HistoryLoaded(Vec<crate::event_log::Event>),
+    /// The history, and whether it is there but cannot be read.
+    HistoryLoaded(Vec<crate::event_log::Event>, bool),
 }
 
 /// What the page needs the application to do.
@@ -270,6 +273,7 @@ impl Default for ProfileState {
             estimate: None,
             estimating: false,
             history: Vec::new(),
+            history_unreadable: false,
             history_loaded: false,
             restore_when_unlocked: false,
         }
@@ -662,7 +666,8 @@ impl ProfileState {
                 }
                 Vec::new()
             }
-            Message::HistoryLoaded(mut history) => {
+            Message::HistoryLoaded(mut history, unreadable) => {
+                self.history_unreadable = unreadable;
                 // Whatever this page logged itself while the read was in
                 // flight goes after it, but only what the read cannot
                 // already have on disk: an event a moment after everything
@@ -764,7 +769,7 @@ impl ProfileState {
             ));
         }
 
-        if let Some(banner) = trouble(profile, run, now, self.can_work()) {
+        if let Some(banner) = trouble(profile, run, self.history_unreadable, now, self.can_work()) {
             page = page.push(banner);
         }
         page = page.push(self.status_card(profile, now));
@@ -1162,11 +1167,12 @@ fn hooks_summary(hooks: &[crate::profile::Hook]) -> String {
 fn trouble<'a>(
     profile: &Profile,
     run: &RunState,
+    history_unreadable: bool,
     now: i64,
     can_work: bool,
 ) -> Option<Element<'a, Message>> {
     let spacing = theme::active().cosmic().spacing;
-    let (title, body, action) = if run.unreadable {
+    let (title, body, action) = if run.unreadable || history_unreadable {
         (
             fl!("status-unreadable-title"),
             fl!("status-unreadable-body"),
@@ -1599,7 +1605,7 @@ mod tests {
             kind: EventKind::Checked { damaged: false },
             source: crate::event_log::Source::Desktop,
         }];
-        state.update(Message::HistoryLoaded(loaded), &profile());
+        state.update(Message::HistoryLoaded(loaded, false), &profile());
 
         assert_eq!(state.history.len(), 2, "nothing lost, nothing duplicated");
         assert_eq!(state.history[0].time, 100);

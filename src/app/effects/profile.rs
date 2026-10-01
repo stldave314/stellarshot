@@ -220,7 +220,10 @@ impl App {
                     let ids = id.clone();
                     let reset = Task::perform(
                         tasks::blocking(move || {
+                            // One after the other: each takes the state
+                            // lock itself.
                             run_state::reset(&ids)
+                                .and_then(|()| event_log::reset_if_unreadable(&ids))
                                 .map_err(|err| EngineError::new(engine::ErrorKind::Io, err))
                         }),
                         |result| match result {
@@ -231,13 +234,21 @@ impl App {
                             ))),
                         },
                     );
-                    reset.chain(self.load_runs())
+                    let history_id = id.clone();
+                    let history =
+                        Task::perform(tasks::history(id.clone()), move |(history, unreadable)| {
+                            app(Message::Profile(
+                                history_id.clone(),
+                                profile::Message::HistoryLoaded(history, unreadable),
+                            ))
+                        });
+                    reset.chain(Task::batch([self.load_runs(), history]))
                 }
                 profile::Effect::FetchHistory => {
-                    Task::perform(tasks::history(id.clone()), move |history| {
+                    Task::perform(tasks::history(id.clone()), move |(history, unreadable)| {
                         app(Message::Profile(
                             id.clone(),
-                            profile::Message::HistoryLoaded(history),
+                            profile::Message::HistoryLoaded(history, unreadable),
                         ))
                     })
                 }

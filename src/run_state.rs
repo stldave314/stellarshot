@@ -276,7 +276,13 @@ pub fn load(profile_id: &str) -> RunState {
 /// (the last run and check times, a failure, the space freed), not data;
 /// the next run and check fill it in again.
 pub fn reset(profile_id: &str) -> Result<(), String> {
-    crate::paths::with_state_lock(|| save(profile_id, &RunState::default()))
+    crate::paths::with_state_lock(|| {
+        // Kept, not overwritten: a newer version may still read it.
+        if load_checked(profile_id).is_err() {
+            crate::paths::set_aside_state_key(&key(profile_id))?;
+        }
+        save(profile_id, &RunState::default())
+    })
 }
 
 /// Forget a removed backup's state entirely.

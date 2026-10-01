@@ -220,8 +220,9 @@ right-click menu).
    While automatic backups are on, a **Conditions** section lets a laptop
    skip a slot rather than run in a state you would not want it to: only on
    mains power, only above a battery level, not on a connection marked
-   metered, or only on a trusted Wi-Fi network or a VPN (Tailscale,
-   WireGuard, or one NetworkManager manages itself). A slot skipped this way
+   metered, or only on a trusted network or a VPN (Tailscale, WireGuard, or
+   one NetworkManager manages itself). A trusted network is a Wi-Fi or wired
+   connection, named as it is in your network settings. A slot skipped this way
    is quiet, the same as a destination that is not reachable; the next one
    tries again. The trusted-network condition does not guess: if
    NetworkManager cannot be reached to say which network this is, the slot

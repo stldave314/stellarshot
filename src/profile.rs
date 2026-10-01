@@ -316,12 +316,9 @@ pub struct Conditions {
     /// Skip on a connection the system has marked metered.
     #[serde(default)]
     pub block_metered: bool,
-    /// Skip unless connected to one of `trusted_networks` by name, or a VPN
-    /// interface (Tailscale, WireGuard, or any other) is up. Only Wi-Fi
-    /// connections are checked by name (see `conditions::network_state`); a
-    /// wired connection never matches unless a VPN is also up.
-    // TODO: confirm whether a wired connection should be able to match
-    // `trusted_networks` too, or whether Wi-Fi-only is intentional.
+    /// Skip unless connected to one of `trusted_networks`, a Wi-Fi or wired
+    /// connection matched by its name in NetworkManager, or a VPN interface
+    /// (Tailscale, WireGuard, or any other) is up.
     #[serde(default)]
     pub require_trusted_network: bool,
     #[serde(default)]

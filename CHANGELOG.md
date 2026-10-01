@@ -260,6 +260,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of staying active for up to 15 minutes waiting for a click,
   which made the next scheduled slot skip. A small helper waits for the
   click instead.
+- **"Only on a trusted network" can be met on a wired connection**, named
+  as in your network settings; it only ever looked at Wi-Fi, so a desktop
+  on a cable never backed up with it on. The Bulgarian description of the
+  setting also no longer says the opposite of what it does.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**

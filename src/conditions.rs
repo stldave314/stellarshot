@@ -15,7 +15,7 @@ use crate::profile::Conditions;
 use crate::{debug_log, error_log};
 
 /// The state actually on the machine right now, as far as these conditions
-/// care. `None` (or, for the network, a `connected_wifi` of `None`) means a
+/// care. `None` (or, for the network, a `connected_networks` of `None`) means a
 /// piece could not be read: the relevant service is not running, did not
 /// answer in time, or the machine plainly has nothing to read it from (no
 /// battery, no NetworkManager). Power and metered-connection conditions are
@@ -28,10 +28,10 @@ pub struct SystemState {
     pub on_battery: Option<bool>,
     pub battery_percent: Option<u8>,
     pub metered: Option<bool>,
-    /// Wi-Fi networks currently connected to, by connection name (the same
-    /// name NetworkManager's own network list shows); `None` if this could
-    /// not be read at all.
-    pub connected_wifi: Option<Vec<String>>,
+    /// Wi-Fi and wired connections currently up, by connection name (the
+    /// same name NetworkManager's own network list shows); `None` if this
+    /// could not be read at all.
+    pub connected_networks: Option<Vec<String>>,
     pub vpn_up: bool,
 }
 
@@ -54,7 +54,7 @@ pub fn met(conditions: &Conditions, state: &SystemState) -> Result<(), String> {
         return Err("on a connection marked metered".to_owned());
     }
     if conditions.require_trusted_network && !state.vpn_up {
-        let Some(connected) = &state.connected_wifi else {
+        let Some(connected) = &state.connected_networks else {
             return Err("cannot tell which network this is".to_owned());
         };
         if !connected
@@ -202,7 +202,7 @@ async fn network_state() -> (Option<bool>, Option<Vec<String>>, bool) {
     let Ok(active_connections) = nm.active_connections().await else {
         return (metered, None, false);
     };
-    let mut wifi = Vec::new();
+    let mut named = Vec::new();
     let mut vpn_up = false;
     for path in active_connections {
         let Ok(active) = ActiveConnectionProxy::new(&connection, path).await else {
@@ -222,23 +222,28 @@ async fn network_state() -> (Option<bool>, Option<Vec<String>>, bool) {
         if active.vpn().await == Ok(true) || is_vpn(&connection_type, &interfaces) {
             vpn_up = true;
         }
-        if connection_type == "802-11-wireless"
-            && let Ok(id) = active.id().await
+        // Wi-Fi or wired, by the name the user gave it (for Wi-Fi, usually
+        // the network's own name): a desktop on a cable could otherwise
+        // never meet the condition.
+        if matches!(
+            connection_type.as_str(),
+            "802-11-wireless" | "802-3-ethernet"
+        ) && let Ok(id) = active.id().await
         {
-            wifi.push(id);
+            named.push(id);
         }
     }
-    (metered, Some(wifi), vpn_up)
+    (metered, Some(named), vpn_up)
 }
 
 async fn read_state() -> SystemState {
     let (on_battery, battery_percent) = upower_state().await;
-    let (metered, connected_wifi, vpn_up) = network_state().await;
+    let (metered, connected_networks, vpn_up) = network_state().await;
     SystemState {
         on_battery,
         battery_percent,
         metered,
-        connected_wifi,
+        connected_networks,
         vpn_up,
     }
 }
@@ -252,7 +257,7 @@ mod tests {
             on_battery: Some(false),
             battery_percent: Some(80),
             metered: Some(false),
-            connected_wifi: Some(vec!["Home".to_owned()]),
+            connected_networks: Some(vec!["Home".to_owned()]),
             vpn_up: false,
         }
     }
@@ -342,7 +347,7 @@ mod tests {
         };
         assert!(met(&conditions, &state()).is_ok());
         let elsewhere = SystemState {
-            connected_wifi: Some(vec!["Coffee Shop".to_owned()]),
+            connected_networks: Some(vec!["Coffee Shop".to_owned()]),
             ..state()
         };
         assert!(met(&conditions, &elsewhere).is_err());
@@ -356,7 +361,7 @@ mod tests {
             ..Conditions::default()
         };
         let on_vpn = SystemState {
-            connected_wifi: Some(vec!["Coffee Shop".to_owned()]),
+            connected_networks: Some(vec!["Coffee Shop".to_owned()]),
             vpn_up: true,
             ..state()
         };
@@ -371,7 +376,7 @@ mod tests {
             ..Conditions::default()
         };
         let unknown = SystemState {
-            connected_wifi: None,
+            connected_networks: None,
             ..state()
         };
         assert_eq!(

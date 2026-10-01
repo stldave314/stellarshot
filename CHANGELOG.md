@@ -314,6 +314,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The History page labels an entry recorded by another program "Other
   program". Entries written by earlier versions with a source this version
   does not know still load.
+- The restore progress card matches a backup's: an animated bar until the
+  total is known, the running time, and a note when the figures stand
+  still.
 - The restore page's Browse, Deleted, Compare and Search are real tabs, and
   each backup on the home screen has a name screen readers announce.
 - Page widths and the folder-size list follow one set of sizes, the History

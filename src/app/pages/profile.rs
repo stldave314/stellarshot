@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::time::Instant;
 
 use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
@@ -13,10 +12,10 @@ use cosmic::{Apply, Element, theme, widget};
 use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::errors;
 use crate::app::format;
-use crate::app::pages::row;
+use crate::app::pages::{Timing, progress_body, row};
 use crate::app::wizard::retention_label;
+use crate::constants::PROFILE_RECENT_ROWS as RECENT;
 use crate::constants::{NOTICE_ICON_SIZE, PAGE_MAX_WIDTH};
-use crate::constants::{PROFILE_RECENT_ROWS as RECENT, STALL_NOTICE};
 use crate::engine::{
     EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SizeEstimate,
     SnapshotSummary, Statistics,
@@ -60,9 +59,7 @@ pub struct Running {
     work: Work,
     handle: Option<ChildHandle>,
     progress: Option<ProgressEvent>,
-    started: Instant,
-    /// When the progress last moved: bytes read or bytes uploaded.
-    moved: Instant,
+    timing: Timing,
     /// Set only for `Work::Modify`.
     context: Option<ModifyContext>,
 }
@@ -73,17 +70,13 @@ impl Running {
             work,
             handle: None,
             progress: None,
-            started: Instant::now(),
-            moved: Instant::now(),
+            timing: Timing::new(),
             context: None,
         }
     }
 
     fn update(&mut self, progress: ProgressEvent) {
-        let key = |p: &ProgressEvent| (p.phase, p.done, p.uploaded);
-        if self.progress.as_ref().map(key) != Some(key(&progress)) {
-            self.moved = Instant::now();
-        }
+        self.timing.observe(self.progress.as_ref(), &progress);
         self.progress = Some(progress);
     }
 
@@ -1221,80 +1214,23 @@ fn trouble<'a>(
 /// figures have not moved for [`STALL_NOTICE`] the card says why they may
 /// not, so a slow destination never looks like a hung backup.
 fn progress(running: &Running) -> Element<'_, Message> {
-    let spacing = theme::active().cosmic().spacing;
-    let (label, fraction, detail) = match &running.progress {
-        None => (fl!("progress-starting"), None, String::new()),
-        Some(progress) => {
-            let label = match (running.work, progress.phase) {
-                (Work::CleanUp, _) => fl!("progress-cleaning-up"),
-                (Work::Check, _) | (_, Phase::Checking) => fl!("progress-checking"),
-                (_, Phase::Preparing) => fl!("progress-preparing"),
-                (_, Phase::BackingUp) => fl!("progress-backing-up"),
-                (_, Phase::Restoring) => fl!("progress-restoring"),
-            };
-            let fraction = running.fraction();
-            let amount = match (progress.bytes, progress.total) {
-                (true, Some(total)) => fl!(
-                    "progress-amount",
-                    done = format::bytes(progress.done),
-                    total = format::bytes(total)
-                ),
-                (true, None) => format::bytes(progress.done),
-                (false, _) => String::new(),
-            };
-            let detail = match progress
-                .uploaded
-                .filter(|_| progress.phase == Phase::BackingUp)
-            {
-                Some(uploaded) => fl!(
-                    "progress-uploaded",
-                    amount = amount,
-                    uploaded = format::bytes(uploaded)
-                ),
-                None => amount,
-            };
-            (label, fraction, detail)
-        }
+    let label = match (running.work, running.progress.as_ref().map(|p| p.phase)) {
+        (_, None) => fl!("progress-starting"),
+        (Work::CleanUp, _) => fl!("progress-cleaning-up"),
+        (Work::Check, _) | (_, Some(Phase::Checking)) => fl!("progress-checking"),
+        (_, Some(Phase::Preparing)) => fl!("progress-preparing"),
+        (_, Some(Phase::BackingUp)) => fl!("progress-backing-up"),
+        (_, Some(Phase::Restoring)) => fl!("progress-restoring"),
     };
-
-    let elapsed = fl!(
-        "progress-elapsed",
-        time = format::duration(running.started.elapsed().as_secs())
-    );
-    let still = running.moved.elapsed();
-    let waiting = (still >= STALL_NOTICE).then(|| {
-        let seconds = format::duration(still.as_secs());
-        match running.progress.as_ref().map(|progress| progress.phase) {
-            None | Some(Phase::Preparing) => fl!("progress-waiting-preparing", time = seconds),
-            Some(_) => fl!("progress-waiting", time = seconds),
-        }
-    });
-
-    // The total is not known yet while rustic is still walking the sources
-    // (or, for an upload-bound backup, while it waits on the destination):
-    // an animated bar says something is happening, rather than sitting at
-    // an empty 0%, which reads as stalled.
-    let bar: Element<'_, Message> = match fraction {
-        Some(fraction) => widget::progress_bar::determinate_linear(fraction).into(),
-        None => widget::progress_bar::indeterminate_linear().into(),
+    let action: Element<'_, Message> = if running.work == Work::CleanUp {
+        // Pruning deletes data as it goes; it is left to finish.
+        widget::text::caption(fl!("clean-up-cannot-stop")).into()
+    } else {
+        widget::button::standard(fl!("cancel"))
+            .on_press_maybe(running.handle.as_ref().map(|_| Message::CancelBackup))
+            .into()
     };
-    widget::column::with_capacity(6)
-        .spacing(spacing.space_xs)
-        .push(widget::text::title4(label))
-        .push(bar)
-        .push(widget::text::caption(detail))
-        .push(widget::text::caption(elapsed))
-        .push_maybe(waiting.map(widget::text::caption))
-        .push(if running.work == Work::CleanUp {
-            // Pruning deletes data as it goes; it is left to finish.
-            widget::text::caption(fl!("clean-up-cannot-stop")).into()
-        } else {
-            Element::from(
-                widget::button::standard(fl!("cancel"))
-                    .on_press_maybe(running.handle.as_ref().map(|_| Message::CancelBackup)),
-            )
-        })
-        .into()
+    progress_body(label, running.progress.as_ref(), &running.timing, action)
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

@@ -17,6 +17,7 @@ use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
+use crate::app::pages::{Timing, progress_body};
 use crate::constants::DELETED_WINDOW_DAYS;
 use crate::constants::RESTORE_RESULT_LIMIT as RESULT_LIMIT;
 use crate::constants::{LIST_ICON_SIZE, RESTORE_MAX_WIDTH};
@@ -125,6 +126,7 @@ impl Sheet {
 struct Running {
     handle: Option<ChildHandle>,
     progress: Option<ProgressEvent>,
+    timing: Timing,
     /// Requests still to run after this one.
     queue: VecDeque<RestoreRequest>,
     /// What the parts finished so far restored, added up: one restore of
@@ -854,6 +856,7 @@ impl RestorePage {
                 self.running = Some(Running {
                     handle: None,
                     progress: None,
+                    timing: Timing::new(),
                     queue,
                     total: RestorePreview::default(),
                 });
@@ -911,6 +914,7 @@ impl RestorePage {
                 Vec::new()
             }
             ChildEvent::Event(Event::Progress { progress }) => {
+                running.timing.observe(running.progress.as_ref(), &progress);
                 running.progress = Some(progress);
                 Vec::new()
             }
@@ -1675,40 +1679,20 @@ fn group_diff(entries: &[DiffEntry]) -> Vec<(PathBuf, Vec<&DiffEntry>)> {
 
 fn progress(running: &Running) -> Element<'_, Message> {
     let spacing = theme::active().cosmic().spacing;
-    let (fraction, detail) = match &running.progress {
-        Some(progress) => {
-            let fraction = progress
-                .total
-                .filter(|total| *total > 0)
-                .map_or(0.0, |total| progress.done as f32 / total as f32);
-            let detail = progress.total.map_or_else(
-                || format::bytes(progress.done),
-                |total| {
-                    fl!(
-                        "progress-amount",
-                        done = format::bytes(progress.done),
-                        total = format::bytes(total)
-                    )
-                },
-            );
-            (fraction, detail)
-        }
-        None => (0.0, String::new()),
-    };
-    widget::column::with_capacity(4)
-        .spacing(spacing.space_xs)
-        .push(widget::text::title4(fl!("progress-restoring")))
-        .push(widget::progress_bar::determinate_linear(fraction))
-        .push(widget::text::caption(detail))
-        .push(
-            widget::button::standard(fl!("cancel"))
-                .on_press_maybe(running.handle.as_ref().map(|_| Message::CancelRestore)),
-        )
-        .apply(widget::container)
-        .padding(spacing.space_m)
-        .class(theme::Container::Card)
-        .width(Length::Fill)
-        .into()
+    let cancel = widget::button::standard(fl!("cancel"))
+        .on_press_maybe(running.handle.as_ref().map(|_| Message::CancelRestore))
+        .into();
+    progress_body(
+        fl!("progress-restoring"),
+        running.progress.as_ref(),
+        &running.timing,
+        cancel,
+    )
+    .apply(widget::container)
+    .padding(spacing.space_m)
+    .class(theme::Container::Card)
+    .width(Length::Fill)
+    .into()
 }
 
 #[cfg(test)]
@@ -1948,6 +1932,7 @@ mod tests {
         page.running = Some(Running {
             handle: None,
             progress: None,
+            timing: Timing::new(),
             total: RestorePreview::default(),
             queue: VecDeque::new(),
         });
@@ -1967,6 +1952,7 @@ mod tests {
         page.running = Some(Running {
             handle: None,
             progress: None,
+            timing: Timing::new(),
             total: RestorePreview::default(),
             queue: VecDeque::from(vec![RestoreRequest {
                 snapshot: "aaaaaaaa".into(),

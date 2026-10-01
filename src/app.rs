@@ -505,6 +505,11 @@ impl App {
     fn waiting(&self) -> bool {
         self.wizard.as_ref().is_some_and(Wizard::waiting)
             || self.pages.values().any(ProfileState::is_busy)
+            // A restore's running time counts up too.
+            || self
+                .restore
+                .as_ref()
+                .is_some_and(|(page, _)| page.is_restoring())
     }
 
     fn show_error(&mut self, context: &str, error: &EngineError) {

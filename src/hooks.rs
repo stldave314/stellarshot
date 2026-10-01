@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 use crate::constants::{
     CHILD_STDERR_DETAIL, CHILD_STDERR_TAIL, DRAIN_AFTER_EXIT, HOOK_TIMEOUT, PROCESS_POLL_INTERVAL,
 };
+use crate::debug::HOOKS;
+use crate::debug_log;
 use crate::profile::{Hook, HookTiming};
 
 /// The process group of the hook running right now, if any, so a SIGTERM
@@ -83,7 +85,22 @@ pub fn run_after(hooks: &[Hook], succeeded: bool) -> Vec<HookResult> {
 }
 
 fn run_one(hook: &Hook) -> HookResult {
-    match run_command(&hook.command) {
+    // The name only: a command line can carry a credential.
+    debug_log!(HOOKS, "running hook {:?} ({:?})", hook.name, hook.timing);
+    let started = Instant::now();
+    let result = run_command(&hook.command);
+    debug_log!(
+        HOOKS,
+        "hook {:?} {} after {:.1}s",
+        hook.name,
+        if result.is_ok() {
+            "succeeded"
+        } else {
+            "failed"
+        },
+        started.elapsed().as_secs_f64()
+    );
+    match result {
         Ok(()) => HookResult {
             name: hook.name.clone(),
             ok: true,
@@ -175,6 +192,10 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     kill_group(&child);
+                    // And the child itself, in case it does not lead a
+                    // group of its own; not yet reaped, so its PID is
+                    // still its own.
+                    let _ = child.kill();
                     let _ = child.wait();
                     break Err(format!("timed out after {}s", timeout.as_secs()));
                 }

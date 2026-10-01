@@ -193,10 +193,7 @@ impl App {
                     });
                     cosmic::iced::widget::operation::focus(new_password_input_id())
                 }
-                profile::Effect::LogEvent(kind) => {
-                    event_log::record(&id, format::now(), kind, event_log::Source::Desktop);
-                    Task::none()
-                }
+                profile::Effect::LogEvent(kind) => record_event(id.clone(), kind),
                 profile::Effect::FetchHistory => {
                     Task::perform(tasks::history(id.clone()), move |history| {
                         app(Message::Profile(
@@ -266,7 +263,7 @@ impl App {
                         }
                     };
                     let now = format::now();
-                    self.record_run(&id, |run| {
+                    let recorded = self.record_run(&id, move |run| {
                         run.last_check = Some(now);
                         run.damaged = damaged;
                         if !damaged
@@ -287,7 +284,7 @@ impl App {
                         }
                         Err(err) => self.show_error(&fl!("check-failed"), &err),
                     }
-                    Task::none()
+                    recorded
                 }
                 profile::Effect::CleanUp(secret) => {
                     let job = match profile.location() {
@@ -316,7 +313,7 @@ impl App {
                     })
                 }
                 profile::Effect::CleanedUp { forgotten, freed } => {
-                    self.record_run(&id, |run| {
+                    let recorded = self.record_run(&id, move |run| {
                         if run
                             .failure
                             .as_ref()
@@ -334,7 +331,7 @@ impl App {
                             size = format::bytes(freed)
                         ),
                     ));
-                    Task::none()
+                    recorded
                 }
                 profile::Effect::Remove => {
                     self.dialogs.open(Dialog::Remove {

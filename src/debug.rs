@@ -58,6 +58,35 @@ pub const SCHED: &str = "SCHED";
 /// A snapshot mounted as a filesystem: FUSE calls and the engine errors
 /// behind whichever `Errno` they turn into.
 pub const MOUNT: &str = "MOUNT";
+/// Before and After hooks: start, outcome, how long they took.
+pub const HOOKS: &str = "HOOKS";
+/// The cross-process repository lock: acquired, contended, released.
+pub const LOCK: &str = "LOCK";
+/// The Secret Service keyring and the password command.
+pub const KEYRING: &str = "KEYRING";
+/// rclone run by Stellarshot: listings, sign-in, `serve restic`.
+pub const RCLONE: &str = "RCLONE";
+
+/// Where rustic's and rclone's own diagnostics go, in addition to stderr.
+/// Stellarshot is normally launched from the desktop, not a terminal, so
+/// stderr alone is not somewhere a person having a backup fail can actually
+/// go looking — the same reason this module logs to a file rather than
+/// stderr. Truncated once per launch, like that file.
+///
+/// Unlike the developer log above (off by default, and stripped
+/// from release builds entirely), this one is always on, so it cannot live
+/// at a fixed, predictable path under `/tmp`: on a shared machine, two real
+/// users of Stellarshot would otherwise collide on the exact same file, and
+/// whichever one didn't create it inherits whatever permissions the other
+/// left it with. `$XDG_STATE_HOME` (falling back to `~/.local/state`) is
+/// already private to this user by XDG's own convention, and
+/// `crate::engine::lock::create_private_dir` additionally verifies that
+/// (rather than trusting it), the same way it does for the lock directory.
+pub fn backend_log_path() -> Option<PathBuf> {
+    let dir = crate::paths::state_root()?.join("stellarshot");
+    crate::engine::lock::create_private_dir(&dir).ok()?;
+    Some(dir.join("backend.log"))
+}
 
 /// Opens (or creates) `path` as a private log file: `0600`, and refusing to
 /// follow a symlink already at that name. Truncated if `truncate`, appended

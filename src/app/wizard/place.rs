@@ -15,6 +15,7 @@ use cosmic::iced::Length;
 use cosmic::{Element, theme, widget};
 
 use crate::app::format;
+use crate::constants::BANDWIDTH_FIELD_WIDTH;
 use crate::constants::SSH_DEFAULT_PORT as SSH_PORT;
 use crate::drives::Drive;
 use crate::engine::{EngineError, Probe};
@@ -538,7 +539,7 @@ impl Place {
                                     &self.bandwidth_limit,
                                 )
                                 .on_input(Message::BandwidthLimit)
-                                .width(Length::Fixed(120.0)),
+                                .width(Length::Fixed(BANDWIDTH_FIELD_WIDTH)),
                             ),
                     ),
             );

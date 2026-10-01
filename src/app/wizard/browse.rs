@@ -24,6 +24,7 @@ use cosmic::{Element, theme, widget};
 
 use crate::app::format;
 use crate::constants::BROWSE_ROW_LIMIT;
+use crate::constants::{FOLDER_LIST_HEIGHT, FOLDER_LIST_INDENT};
 use crate::engine::{DiskEntry, EngineError};
 use crate::fl;
 
@@ -206,7 +207,7 @@ impl Browse {
                             // it sits on top of each row's own checkbox.
                             .padding([0.0, f32::from(spacing.space_m), 0.0, 0.0]),
                     )
-                    .height(Length::Fixed(320.0)),
+                    .height(Length::Fixed(FOLDER_LIST_HEIGHT)),
                 )
                 .into(),
         )
@@ -319,7 +320,7 @@ impl Browse {
                 .on_press(Message::Toggle(path.to_path_buf())),
             );
         } else {
-            row = row.push(widget::Space::new().width(Length::Fixed(24.0)));
+            row = row.push(widget::Space::new().width(Length::Fixed(FOLDER_LIST_INDENT)));
         }
         row = row.push(widget::text::body(name).width(Length::Fill));
         if let Some(size) = node.size {

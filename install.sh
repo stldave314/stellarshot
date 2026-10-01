@@ -55,7 +55,12 @@ as_root() {
     fi
 }
 
+# Set once `cmd_build` has run, so `package` builds once rather than once
+# per format.
+BUILT=0
+
 cmd_build() {
+    [[ "$BUILT" -eq 0 ]] || return 0
     need cargo "install a Rust toolchain from https://rustup.rs"
     info "Building (features: $FEATURES)"
     # `cargo auditable` embeds the exact dependency tree into the binary
@@ -81,6 +86,7 @@ cmd_build() {
             ${CARGO_JOBS:+-j "$CARGO_JOBS"}
     fi
     info "Built target/release/$BIN_APP and target/release/$BIN_APPLET"
+    BUILT=1
 }
 
 # Install into $1 (a staging root, possibly empty for a real install).
@@ -218,7 +224,6 @@ cmd_tarball() {
 }
 
 cmd_package() {
-    cmd_build
     cmd_deb
     cmd_rpm
     cmd_tarball

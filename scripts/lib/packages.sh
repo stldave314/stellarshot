@@ -41,9 +41,14 @@ _pkg_check_dir() {
 }
 
 check_packaged_binaries() {
-    local purpose="$1" check="$2"
+    local purpose="$1" check="$2" previous
     pkg_workdir=$(mktemp -d)
-    trap 'rm -rf "$pkg_workdir"' EXIT
+    # Added to the caller's own EXIT trap rather than replacing it, which
+    # would leak whatever that one cleans up. `trap -p` prints the command
+    # quoted for reuse; `eval set --` unquotes it again.
+    eval "set -- $(trap -p EXIT)"
+    previous="${3-}"
+    trap "rm -rf \"\$pkg_workdir\"${previous:+; $previous}" EXIT
     pkg_checked=0
     pkg_failed=0
 

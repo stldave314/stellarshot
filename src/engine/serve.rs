@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use super::error::{EngineError, ErrorKind};
 use crate::constants::{CHILD_STDERR_DETAIL, RCLONE_SERVE_START_TIMEOUT};
-use crate::debug::ENGINE;
+use crate::debug::RCLONE;
 use crate::debug_log;
 
 /// What rclone prints on stderr once the REST server is listening, followed
@@ -53,7 +53,7 @@ impl Serve {
         // machine can use it while it runs.
         let user = uuid::Uuid::new_v4().simple().to_string();
         let password = uuid::Uuid::new_v4().simple().to_string();
-        debug_log!(ENGINE, "starting {program} for {target}");
+        debug_log!(RCLONE, "starting {program} for {target}");
         // Against Stellarshot's own configuration only: see
         // `rclone::command` on why the user's `RCLONE_*` is left out.
         let mut base = if program == "rclone" {
@@ -162,7 +162,7 @@ impl Serve {
 
 impl Drop for Serve {
     fn drop(&mut self) {
-        debug_log!(ENGINE, "stopping rclone serve");
+        debug_log!(RCLONE, "stopping rclone serve");
         let _ = self.child.kill();
         // Without this the process stays a zombie until the program exits.
         let _ = self.child.wait();
@@ -202,7 +202,7 @@ pub fn stop_orphans(config: &Path) -> usize {
         if let Some(pid) = rustix::process::Pid::from_raw(pid)
             && rustix::process::kill_process(pid, rustix::process::Signal::TERM).is_ok()
         {
-            debug_log!(ENGINE, "stopped a left-over rclone serve ({pid:?})");
+            debug_log!(RCLONE, "stopped a left-over rclone serve ({pid:?})");
             stopped += 1;
         }
     }

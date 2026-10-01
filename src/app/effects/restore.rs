@@ -18,16 +18,25 @@ impl App {
             // able to close: the sidebar is hidden while it is showing, so
             // returning here without handling Back left it the only way
             // out to be quitting the application.
+            let mut tasks = Vec::new();
             for effect in effects {
                 match effect {
                     restore::Effect::Close => self.restore = None,
                     restore::Effect::ShowError(context, error) => {
                         self.show_error(&context, &error);
                     }
+                    // Unmounting waits for the mount to end: off this thread.
+                    restore::Effect::Unmount(handle) => tasks.push(Task::perform(
+                        tasks::blocking(move || {
+                            drop(handle);
+                            Ok(())
+                        }),
+                        |_| app(Message::Noop),
+                    )),
                     _ => {}
                 }
             }
-            return Task::none();
+            return Task::batch(tasks);
         };
         let secret = secret.clone();
         let browser = page.browser();
@@ -228,19 +237,18 @@ impl App {
                     Task::perform(
                         tasks::blocking(move || {
                             let browser = browsing(browser)?;
-                            Ok(engine::mount::mount(browser, snapshot, &point)?.into())
+                            let mounted = engine::mount::mount(browser, snapshot, &point)?;
+                            event_log::record(
+                                &profile_id,
+                                format::now(),
+                                event_log::EventKind::Mounted {
+                                    snapshot: logged_snapshot,
+                                },
+                                event_log::Source::Desktop,
+                            );
+                            Ok(mounted.into())
                         }),
                         move |result: Result<restore::MountHandle, EngineError>| {
-                            if result.is_ok() {
-                                event_log::record(
-                                    &profile_id,
-                                    format::now(),
-                                    event_log::EventKind::Mounted {
-                                        snapshot: logged_snapshot.clone(),
-                                    },
-                                    event_log::Source::Desktop,
-                                );
-                            }
                             to_page(restore::Message::Mounted(result))
                         },
                     )
@@ -257,19 +265,15 @@ impl App {
                     Task::perform(
                         tasks::blocking(move || {
                             drop(handle);
-                            Ok(())
-                        }),
-                        move |_: Result<(), EngineError>| {
                             event_log::record(
                                 &profile_id,
                                 format::now(),
-                                event_log::EventKind::Unmounted {
-                                    snapshot: snapshot.clone(),
-                                },
+                                event_log::EventKind::Unmounted { snapshot },
                                 event_log::Source::Desktop,
                             );
-                            app(Message::Noop)
-                        },
+                            Ok(())
+                        }),
+                        move |_: Result<(), EngineError>| app(Message::Noop),
                     )
                 }
                 restore::Effect::ShowError(context, error) => {
@@ -277,14 +281,12 @@ impl App {
                     Task::none()
                 }
                 restore::Effect::Restored(done) => {
-                    event_log::record(
-                        &profile.id,
-                        format::now(),
+                    let logged = record_event(
+                        profile.id.clone(),
                         event_log::EventKind::Restored {
                             files: done.files,
                             bytes: done.bytes,
                         },
-                        event_log::Source::Desktop,
                     );
                     self.dialogs.notify(Dialog::Info(
                         fl!("restore-done-title"),
@@ -295,7 +297,7 @@ impl App {
                             conflicts = (done.conflicts as i64)
                         ),
                     ));
-                    Task::none()
+                    logged
                 }
                 restore::Effect::Close => {
                     self.restore = None;

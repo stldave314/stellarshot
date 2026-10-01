@@ -4,11 +4,12 @@
 //! backup, across every profile rather than one at a time.
 
 use cosmic::iced::{Alignment, Length};
-use cosmic::{Element, theme, widget};
+use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::Message;
 use crate::app::format;
 use crate::constants::HISTORY_LIMIT as LIMIT;
+use crate::constants::PAGE_MAX_WIDTH;
 use crate::event_log::{self, Event, Source};
 use crate::fl;
 use crate::profile::Profile;
@@ -46,6 +47,8 @@ pub fn view<'a>(entries: &'a [(String, Event)], profiles: &'a [Profile]) -> Elem
         list = list.push(row(name, event));
     }
     page.push(widget::scrollable(list).height(Length::Fill))
+        .apply(widget::container)
+        .max_width(PAGE_MAX_WIDTH)
         .into()
 }
 

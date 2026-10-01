@@ -70,6 +70,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An exported settings file is private from the moment it is written**
   (it can hold a hook's command line, and so a credential), not after a
   permission change that left a window in which others could read it.
+- **Restored files never keep setuid or setgid**, so restoring from a
+  repository someone else wrote cannot plant a privileged program.
+- **A crafted repository can no longer crash or mislead a restore.** A
+  folder whose contents were never recorded is refused, comparing snapshots
+  stops at a sane folder depth, and a restore's recorded choices are
+  checked again against the snapshot as each item is written.
+- **rclone is only ever reached on a loopback address**, and the job handed
+  to a background backup is read into memory that is wiped afterward,
+  without stray copies.
 - **The portable tarball's installer no longer re-owns `/usr`.** Installed
   as root from an archive extracted by an ordinary user, it copied that
   user's ownership onto `/usr` and `/usr/bin`. It now installs each file
@@ -228,11 +237,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   umask**, and a removed package makes them skip quietly instead of failing
   at every slot.
 
+- **Restoring hard-linked files over ones still on disk no longer aborts
+  at the end** with "file exists", and Keep both no longer picks a name
+  the same restore also writes.
+- **Failures show up when they should.** A clean-up or check failing in the
+  same second as the backup succeeded was hidden; a time in the future (a
+  wrong clock) no longer hides failures or postpones checks; a check that
+  cannot run waits a day instead of trying at every slot.
+- **An unplugged drive no longer pushes real history out of the log**:
+  repeated "skipped" entries collapse into one.
+- **A keyring that is not ready yet (a timer firing at login) skips the
+  backup quietly** instead of reporting that no password was remembered.
+- **The window and a scheduled run no longer lose each other's changes** to
+  the run state and history: both are updated under a lock every
+  Stellarshot process shares.
+- **A failed password change no longer leaves the new key behind**, and a
+  backup stops uploading as soon as one upload fails.
+- **An rclone left running by a crash is stopped** the next time the window
+  starts.
+- **Removing a backup deletes its history and status too**, instead of
+  leaving them in the state folder for good.
+- **The window no longer reads and writes the status files on its own
+  thread** every 30 seconds and after every action, which could stutter
+  while a scheduled run held them.
+- **Settings that cannot be saved say so** (theme, exclusions, cache):
+  before, only profile changes did.
+- **Canceling the setup wizard for your first backup** no longer offers to
+  finish it later, which led to an empty window.
+- **The restore page no longer shows "Searching…" for good** after you
+  clear the search or move to another folder while one runs, and an
+  unmount whose backup was removed meanwhile is still done, off the
+  window's thread.
+- **An SFTP backup with no home directory in the environment** fails with a
+  clear error instead of looking for `known_hosts` in whatever folder it was
+  started from.
+
 ### Changed
 
 - The History page labels an entry recorded by another program "Other
   program". Entries written by earlier versions with a source this version
   does not know still load.
+- The restore page's Browse, Deleted, Compare and Search are real tabs, and
+  each backup on the home screen has a name screen readers announce.
+- Page widths and the folder-size list follow one set of sizes, the History
+  page is as wide as the others, and the "Browse…" hint is wide enough for
+  its translations.
+- Menu ellipses and quotation marks are consistent across locales; Swiss
+  German uses the product name "Stellarshot", and Swedish says "Radera" for
+  a permanent delete.
+- The REST server tests run against `rclone serve restic` and run in CI
+  again; a coverage report is produced on every CI run.
+- The release is built with a fixed Rust toolchain, `./install.sh package`
+  builds once rather than once per format, and re-running an older
+  release's build no longer fails on tags made after it.
 - Packages are installed, started and removed in clean containers in CI,
   the release is checked against the version in `Cargo.toml` and re-runs
   the lint and advisory checks, and every shipped binary is verified to

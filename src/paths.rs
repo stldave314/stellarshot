@@ -172,6 +172,46 @@ pub fn with_state_lock<T>(change: impl FnOnce() -> T) -> T {
     result
 }
 
+/// Delete `key` from the state store, which cosmic-config cannot do: it has
+/// `get` and `set` and nothing else. The key's file is found by saving a
+/// marker under it and then looking for that marker where cosmic-config
+/// keeps state (`<state>/cosmic/<app>/v<version>/<key>`). If the file there
+/// does not hold it, the layout is not what this expects, and nothing is
+/// deleted: the marker is left, under a key nothing reads again. Call under
+/// [`with_state_lock`].
+pub fn remove_state_key(key: &str) -> Result<(), String> {
+    use cosmic::cosmic_config::{Config, ConfigSet};
+    let store = Config::new_state(crate::app::APP_ID, crate::app::config::CONFIG_VERSION)
+        .map_err(|err| err.to_string())?;
+    let path = state_root()
+        .ok_or("no state directory")?
+        .join("cosmic")
+        .join(crate::app::APP_ID)
+        .join(format!("v{}", crate::app::config::CONFIG_VERSION))
+        .join(key);
+    if std::fs::symlink_metadata(&path).is_err() {
+        // Never saved, or already gone.
+        return Ok(());
+    }
+    let marker = format!(
+        "removed-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    store.set(key, &marker).map_err(|err| err.to_string())?;
+    let saved = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    if saved.trim() != format!("\"{marker}\"") {
+        return Err(format!(
+            "{} is not where the state store keeps {key}",
+            path.display()
+        ));
+    }
+    std::fs::remove_file(&path).map_err(|err| err.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -70,30 +70,9 @@ pub fn get_app_settings() -> Settings {
         .exit_on_close(false)
 }
 
-/// Where rustic's and rclone's own diagnostics go, in addition to stderr.
-/// Stellarshot is normally launched from the desktop, not a terminal, so
-/// stderr alone is not somewhere a person having a backup fail can actually
-/// go looking — the same reason `crate::debug` logs to a file rather than
-/// stderr. Truncated once per launch, like that file.
-///
-/// Unlike `crate::debug`'s own developer log (off by default, and stripped
-/// from release builds entirely), this one is always on, so it cannot live
-/// at a fixed, predictable path under `/tmp`: on a shared machine, two real
-/// users of Stellarshot would otherwise collide on the exact same file, and
-/// whichever one didn't create it inherits whatever permissions the other
-/// left it with. `$XDG_STATE_HOME` (falling back to `~/.local/state`) is
-/// already private to this user by XDG's own convention, and
-/// `crate::engine::lock::create_private_dir` additionally verifies that
-/// (rather than trusting it), the same way it does for the lock directory.
-fn rustic_log_path() -> Option<std::path::PathBuf> {
-    let dir = crate::paths::state_root()?.join("stellarshot");
-    crate::engine::lock::create_private_dir(&dir).ok()?;
-    Some(dir.join("backend.log"))
-}
-
 /// Route `log` output (what rustic_core, rustic_backend and the rclone
 /// process they run all use) into `tracing`, then to stderr and
-/// [`rustic_log_path`], at `warn` unless `RUST_LOG` says otherwise. Call once
+/// [`crate::debug::backend_log_path`], at `warn` unless `RUST_LOG` says otherwise. Call once
 /// from the window's own startup, which owns the file for its whole run and
 /// truncates it fresh; see [`set_logger_for_child`] for everything else that
 /// can write to the same repository.
@@ -105,7 +84,7 @@ fn rustic_log_path() -> Option<std::path::PathBuf> {
 /// backup to it fails, went nowhere: an error dialog could say "check the
 /// logs" while there were none to check.
 pub fn set_logger() {
-    init_tracing(rustic_log_path(), true);
+    init_tracing(crate::debug::backend_log_path(), true);
 }
 
 /// [`set_logger`], for a `--run` child or a `--scheduled` run: every real
@@ -116,11 +95,11 @@ pub fn set_logger() {
 /// window's lifetime, or with no window open at all, and none of them owns
 /// the file the way the window does.
 pub fn set_logger_for_child() {
-    init_tracing(rustic_log_path(), false);
+    init_tracing(crate::debug::backend_log_path(), false);
 }
 
 /// The actual setup, taking the log path as an argument so a test can point
-/// it somewhere private instead of [`rustic_log_path`]. `log_path` of `None`
+/// it somewhere private instead of [`crate::debug::backend_log_path`]. `log_path` of `None`
 /// (the private state directory could not be created or verified) still
 /// bridges `log` into `tracing` and reaches stderr — the log-to-file part of
 /// the fix is best-effort, not something that should silently take the

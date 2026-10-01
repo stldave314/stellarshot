@@ -77,6 +77,9 @@ done
 # release. A release's section was once folded into its successor's,
 # leaving two published versions with no entry in either place. Needs the
 # tags: a shallow checkout has none, and finding none must not pass.
+# Tags newer than this checkout's version are skipped, so re-running an
+# older release's build does not fail on releases made after it.
+cargo_version=$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)
 tags=$(git tag -l 'v*')
 if [[ -z "$tags" ]]; then
     echo "FAIL: no v* tags found, so the changelog could not be checked against releases (fetch them: git fetch --tags, or fetch-depth: 0 in CI)" >&2
@@ -84,6 +87,8 @@ if [[ -z "$tags" ]]; then
 fi
 for tag in $tags; do
     version="${tag#v}"
+    newest=$(printf '%s\n%s\n' "$version" "$cargo_version" | sort -V | tail -1)
+    [[ "$newest" == "$cargo_version" ]] || continue
     if ! grep -q "^## \[$version\]" CHANGELOG.md; then
         echo "FAIL: $tag has no '## [$version]' section in CHANGELOG.md"
         fail=1
@@ -123,7 +128,6 @@ check "default screenshot" "$(grep -c 'screenshot type="default"' "$METAINFO" ||
 
 # The newest release must be the version being shipped. A stale entry here is
 # what makes a store page advertise an old version indefinitely.
-cargo_version=$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)
 metainfo_version=$(sed -n 's/.*<release version="\([^"]*\)".*/\1/p' "$METAINFO" | head -1)
 check "release version matches Cargo.toml" "$metainfo_version" "$cargo_version"
 

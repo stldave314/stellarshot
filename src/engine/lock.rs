@@ -19,6 +19,8 @@
 //! acquiring anything.
 
 use crate::constants::STATUS_KEY_MAX_AGE;
+use crate::debug::LOCK;
+use crate::debug_log;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
@@ -119,6 +121,13 @@ pub fn progress_path(location: &Location) -> PathBuf {
 pub struct WriteLock {
     _file: File,
     _legacy: Option<File>,
+    key: String,
+}
+
+impl Drop for WriteLock {
+    fn drop(&mut self) {
+        debug_log!(LOCK, "released the write lock {}", self.key);
+    }
 }
 
 /// An exclusive OFD lock covering the whole file, non-blocking.
@@ -146,9 +155,11 @@ pub fn acquire_in(dir: &Path, location: &Location) -> Result<WriteLock, EngineEr
         Some(key) => Some(lock_file(dir, &key, location)?),
         None => None,
     };
+    debug_log!(LOCK, "acquired the write lock {}", location.key());
     Ok(WriteLock {
         _file: file,
         _legacy: legacy,
+        key: location.key(),
     })
 }
 
@@ -175,6 +186,7 @@ fn lock_file(dir: &Path, key: &str, location: &Location) -> Result<File, EngineE
         err.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::PermissionDenied
     ) {
+        debug_log!(LOCK, "the write lock {key} is held by another process");
         Err(EngineError::new(ErrorKind::Locked, location.describe()))
     } else {
         Err(err.into())

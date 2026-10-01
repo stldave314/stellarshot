@@ -191,6 +191,11 @@ fn push(log: &mut Vec<Event>, event: Event) {
 }
 
 /// Add `kind` at `time` to `profile_id`'s log, from `source`.
+/// Forget a removed backup's history entirely.
+pub fn remove(profile_id: &str) -> Result<(), String> {
+    crate::paths::with_state_lock(|| crate::paths::remove_state_key(&key(profile_id)))
+}
+
 pub fn record(profile_id: &str, time: i64, kind: EventKind, source: Source) {
     push_event(profile_id, Event { time, kind, source });
 }

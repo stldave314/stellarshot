@@ -56,6 +56,12 @@ impl Drop for Mount {
         // to immediately drop it here is just documenting that this is the
         // moment it happens, for whoever reads this next.
         drop(self.session.take());
+        debug_log!(
+            MOUNT,
+            "unmounted {} from {}",
+            self.snapshot,
+            self.point.display()
+        );
     }
 }
 
@@ -78,7 +84,9 @@ pub fn mount(
         MountOption::RO,
         MountOption::FSName("stellarshot".to_owned()),
     ];
-    let session = fuser::spawn_mount(fs, mount_point, &config)?;
+    let session = fuser::spawn_mount(fs, mount_point, &config)
+        .inspect_err(|err| debug_log!(MOUNT, "mounting {snapshot} failed: {err}"))?;
+    debug_log!(MOUNT, "mounted {snapshot} at {}", mount_point.display());
     Ok(Mount {
         session: Some(session),
         point: mount_point.to_path_buf(),

@@ -13,6 +13,7 @@ use crate::app::Message;
 use crate::app::format;
 use crate::app::pages::profile::ProfileState;
 use crate::app::pages::row;
+use crate::constants::{LIST_ICON_SIZE, PAGE_MAX_WIDTH};
 use crate::fl;
 use crate::profile::Profile;
 use crate::run_state::{self, RunState};
@@ -43,7 +44,7 @@ pub fn view<'a>(
             widget::row::with_capacity(3)
                 .spacing(spacing.space_xs)
                 .align_y(Alignment::Center)
-                .push(widget::icon::from_name(status.icon()).size(16))
+                .push(widget::icon::from_name(status.icon()).size(LIST_ICON_SIZE))
                 .push(
                     widget::column::with_capacity(2)
                         .push(widget::text::body(profile.name.clone()))
@@ -52,6 +53,7 @@ pub fn view<'a>(
                 )
                 .push(
                     widget::button::standard(fl!("home-view"))
+                        .name(fl!("home-view-named", name = profile.name.clone()))
                         .on_press(Message::SelectProfile(profile.id.clone())),
                 ),
         );
@@ -80,7 +82,7 @@ pub fn view<'a>(
                 widget::row::with_capacity(2)
                     .spacing(spacing.space_xs)
                     .align_y(Alignment::Center)
-                    .push(widget::icon::from_name(location.icon).size(16))
+                    .push(widget::icon::from_name(location.icon).size(LIST_ICON_SIZE))
                     .push(
                         widget::column::with_capacity(2)
                             .push(widget::text::body(location.description))
@@ -95,7 +97,7 @@ pub fn view<'a>(
         page = page.push(section);
     }
 
-    widget::scrollable(page.apply(widget::container).max_width(900))
+    widget::scrollable(page.apply(widget::container).max_width(PAGE_MAX_WIDTH))
         .height(Length::Fill)
         .into()
 }

@@ -47,15 +47,17 @@ On a machine with limited memory, limit parallel jobs: `cargo build -j 4`, or
 The suite uses real programs and services instead of mocks, and a missing one
 fails the test that needs it rather than skipping it:
 
-- `rclone` (`tests/rclone.rs`) and `fuse3` (the mount tests).
+- `rclone` (`tests/rclone.rs`, and `tests/rest_server.rs`, which uses
+  `rclone serve restic` as its REST server) and `fuse3` (the mount tests).
 - `dbus-daemon` (`tests/scheduled_failures.rs` starts a private bus).
 - A running, unlocked Secret Service for `tests/keyring.rs`. CI provides one
   with `dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon
   --unlock --components=secrets > /dev/null; cargo test --all-features'`.
 
-The REST-server tests in `tests/rest_server.rs` are ignored by default; they
-need a `rustic-server` (`cargo install rustic_server`) and run with
-`cargo test --test rest_server -- --ignored`.
+A firewall that asks per program (OpenSnitch, for one) sees every rebuilt
+test binary as a new program: until it is allowed, its connections to
+`127.0.0.1` hang, and the rclone and REST-server tests fail with `Connect`
+errors after a long retry.
 
 `.cargo/config.toml` points `XDG_STATE_HOME` and `XDG_CACHE_HOME` at
 `target/test-xdg`, so tests — and anything else started through cargo, `cargo
@@ -78,6 +80,9 @@ and publishes it. Before tagging, in one commit:
 4. Turn `## [Unreleased]` in `CHANGELOG.md` into `## [<version>] - <date>`
    (the release notes are taken from it) and start a new empty
    `## [Unreleased]`.
+5. Set the `toolchain:` the release workflow builds with
+   (`.github/workflows/release.yml`) to the Rust version the release was
+   tested with (`rustc --version`).
 
 `scripts/validate-metadata.sh` checks every one of these and runs again in the
 release workflow, after the tag is pushed, so run it before tagging.

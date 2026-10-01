@@ -265,6 +265,11 @@ pub fn load(profile_id: &str) -> RunState {
     })
 }
 
+/// Forget a removed backup's state entirely.
+pub fn remove(profile_id: &str) -> Result<(), String> {
+    crate::paths::with_state_lock(|| crate::paths::remove_state_key(&key(profile_id)))
+}
+
 pub fn save(profile_id: &str, state: &RunState) -> Result<(), String> {
     let store = store().ok_or("no state directory")?;
     store

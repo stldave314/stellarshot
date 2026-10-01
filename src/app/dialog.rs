@@ -260,6 +260,20 @@ pub(super) fn view<'a>(dialog: &'a Dialog, config: &StellarshotConfig) -> Elemen
                 widget::button::standard(fl!("cancel"))
                     .on_press_maybe((!*busy).then_some(Message::Dialog(DialogMessage::Close))),
             ),
+        // With no backup set up yet the wizard fills the window wherever the
+        // sidebar points, so "finish later" would look like nothing happened:
+        // only Discard and Keep editing are offered then.
+        Dialog::WizardCancel if config.profiles.is_empty() => widget::dialog()
+            .title(fl!("wizard-cancel-title"))
+            .body(fl!("wizard-cancel-body-first"))
+            .primary_action(
+                widget::button::destructive(fl!("wizard-discard"))
+                    .on_press(Message::Dialog(DialogMessage::DiscardWizard)),
+            )
+            .secondary_action(
+                widget::button::standard(fl!("wizard-keep-editing"))
+                    .on_press(Message::Dialog(DialogMessage::Close)),
+            ),
         Dialog::WizardCancel => widget::dialog()
             .title(fl!("wizard-cancel-title"))
             .body(fl!("wizard-cancel-body"))

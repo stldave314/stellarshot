@@ -6,6 +6,7 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::{Element, theme, widget};
 
 use crate::app::Message;
+use crate::constants::{EMPTY_ICON_SIZE, EMPTY_MAX_WIDTH};
 use crate::fl;
 
 /// The application's own icon, bundled so it shows even before the app is
@@ -22,8 +23,8 @@ pub fn view<'a>(dejadup: bool) -> Element<'a, Message> {
         widget::column::with_capacity(5)
             .spacing(spacing.space_s)
             .align_x(Alignment::Center)
-            .max_width(460)
-            .push(widget::icon(app_icon()).size(96))
+            .max_width(EMPTY_MAX_WIDTH)
+            .push(widget::icon(app_icon()).size(EMPTY_ICON_SIZE))
             .push(widget::text::title2(fl!("empty-title")))
             .push(widget::text::body(fl!("empty-body")).align_x(Alignment::Center))
             .push(widget::button::suggested(fl!("create-backup")).on_press(Message::NewBackup))

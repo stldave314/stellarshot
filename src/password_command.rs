@@ -15,6 +15,8 @@ use zeroize::Zeroizing;
 use crate::constants::{
     CHILD_STDERR_DETAIL, DRAIN_AFTER_EXIT, PASSWORD_COMMAND_MAX_OUTPUT, PASSWORD_COMMAND_TIMEOUT,
 };
+use crate::debug::KEYRING;
+use crate::debug_log;
 use crate::engine::{EngineError, ErrorKind, Secret};
 
 /// Run `command` and use its standard output, with one trailing newline
@@ -22,7 +24,24 @@ use crate::engine::{EngineError, ErrorKind, Secret};
 /// as the password. Never logs the command's output, only whether it
 /// succeeded.
 pub async fn run(command: &str) -> Result<Secret, EngineError> {
-    run_with_timeout(command, PASSWORD_COMMAND_TIMEOUT).await
+    // Never the arguments, and never the output.
+    debug_log!(
+        KEYRING,
+        "running the password command {:?}",
+        command.split_whitespace().next().unwrap_or_default()
+    );
+    let started = std::time::Instant::now();
+    let result = run_with_timeout(command, PASSWORD_COMMAND_TIMEOUT).await;
+    debug_log!(
+        KEYRING,
+        "the password command {} after {:.1}s",
+        match &result {
+            Ok(_) => "succeeded".to_owned(),
+            Err(err) => format!("failed ({:?})", err.kind),
+        },
+        started.elapsed().as_secs_f64()
+    );
+    result
 }
 
 /// [`run`], with the timeout given explicitly so a test can use one far

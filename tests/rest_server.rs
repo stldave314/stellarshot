@@ -6,59 +6,41 @@
     reason = "tests and demos state their expectations by panicking"
 )]
 
-//! A real round trip against `rustic-server`, the REST server destination
-//! added in 0.4: `Location::Rest` reached directly, without rclone.
-//!
-//! `rustic-server`'s ACL defaults `private-repos` to true even when told
-//! otherwise on the command line or through its environment variables (a
-//! bug in the tool itself, confirmed by its own `-v` debug log showing the
-//! CLI override applied and then silently dropped again when the layers are
-//! merged); a repository-specific ACL section, rather than `[default]`,
-//! is the only way found to grant access to an anonymous, no-auth client.
+//! A real round trip against a REST server, the destination added in 0.4:
+//! `Location::Rest` reached directly, without Stellarshot starting rclone
+//! itself. The server here is `rclone serve restic`, which speaks the same
+//! protocol as rest-server and is already a dependency of the rclone
+//! destinations, so the tests need nothing installed that the app does not.
 
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use stellarshot::engine::{self, BackupRequest, Location, NoProgress, Secret};
 use tempfile::TempDir;
 
-/// The Rust test harness runs every test function in this file on its own
-/// thread by default, which means two or three real `rustic-server`
-/// processes competing for the CPU at once on a constrained machine. Locally
-/// that never mattered; in CI it was the actual cause of the `Connect`
-/// errors these tests kept failing with — confirmed by watching every one
-/// of a 3-attempt retry fail identically, which a genuine one-off race would
-/// not do. Held for a whole test's real work, so only one `rustic-server` is
-/// ever alive at a time.
+/// One server at a time, so the tests do not compete for the CPU on a busy
+/// machine; held for a whole test's real work.
 static ONLY_ONE_SERVER_AT_A_TIME: Mutex<()> = Mutex::new(());
 
-fn require_rustic_server() {
-    assert!(
-        Command::new("rustic-server")
-            .arg("--version")
-            .output()
-            .is_ok(),
-        "rustic-server must be installed for these tests (cargo install rustic_server)"
-    );
-}
+/// What rclone prints on stderr once it is listening, followed by its
+/// address.
+const READY_MARKER: &str = "Serving restic REST API on ";
 
-/// An unused local port, picked by the OS. A small race exists between
-/// dropping the listener and rustic-server binding the same port, which in
-/// practice never loses on a machine only this test suite is using.
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+fn require_rclone() {
+    assert!(
+        Command::new("rclone").arg("version").output().is_ok(),
+        "rclone must be installed for these tests"
+    );
 }
 
 struct Server {
     child: Child,
-    port: u16,
+    /// The server's root, ending in `/`.
+    url: String,
 }
 
 impl Drop for Server {
@@ -68,191 +50,112 @@ impl Drop for Server {
     }
 }
 
-/// Starts a real `rustic-server`, serving `repo_name` to an anonymous
-/// client, waiting until it actually accepts a connection.
-///
-/// Waiting for its own "Listening on" log line, read from a piped stderr,
-/// hung indefinitely instead: `rustic-server` (an abscissa app) fully
-/// buffers stderr once it is a pipe rather than a terminal, so the line
-/// only reaches this side once its buffer fills or the process exits,
-/// neither of which happens on a quiet local server. Polling the socket
-/// avoids depending on that buffering at all.
-fn spawn_server(data_dir: &Path, repo_name: &str) -> Server {
+/// Starts a real REST server over `data_dir`, on a port the OS picks, and
+/// waits until it says it is listening. The address is read from its own
+/// log, so no port is picked here and then raced for.
+fn spawn_server(data_dir: &Path) -> Server {
     std::fs::create_dir_all(data_dir).unwrap();
-    // A repository-specific section, not `[default]`: see the module doc.
-    std::fs::write(
-        data_dir.join("acl.toml"),
-        format!("[{repo_name}]\n\"\" = \"Modify\"\n"),
-    )
-    .unwrap();
-    let port = free_port();
-    // Captured to a file, not `Stdio::null()`, so a failure has something to
-    // show for it: every diagnosis attempt so far (a timing race, then CPU
-    // contention) turned out wrong once actually tried against CI, and
-    // neither could be checked against what rustic-server itself was doing
-    // at the time, because nothing kept it.
-    let log = std::fs::File::create(data_dir.join("rustic-server.log")).unwrap();
-    let child = Command::new("rustic-server")
+    let mut child = Command::new("rclone")
         .args([
             "serve",
-            "--listen",
-            &format!("127.0.0.1:{port}"),
-            "--path",
-            data_dir.to_str().unwrap(),
-            "--no-auth",
+            "restic",
+            "--addr",
+            "127.0.0.1:0",
+            "--config",
+            "/dev/null",
         ])
-        .stdout(Stdio::from(log.try_clone().unwrap()))
-        .stderr(Stdio::from(log))
+        .arg(data_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let mut server = Server { child, port };
-    // A bare TCP connect succeeds slightly before the application is
-    // actually serving requests (the OS accepts into its listen backlog
-    // first), which was still enough of a race to fail a real request
-    // right after; a real HTTP round trip does not have that gap.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        let request = format!(
-            "GET /{repo_name}/config HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-        );
-        if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", port)) {
-            use std::io::{Read, Write};
-            if stream.write_all(request.as_bytes()).is_ok() {
-                let mut response = [0u8; 16];
-                if stream.read(&mut response).is_ok_and(|n| n > 0) {
-                    return server;
+    let stderr = child.stderr.take().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    // Keeps draining after the address is found, echoing every line, so a
+    // failed request has the server's side of it in the test output.
+    std::thread::spawn(move || {
+        let mut sender = Some(sender);
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            eprintln!("rclone: {line}");
+            if let Some(at) = line.find(READY_MARKER) {
+                let url = line[at + READY_MARKER.len()..].trim().to_owned();
+                if let Some(sender) = sender.take() {
+                    let _ = sender.send(url);
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(50));
+    });
+    let mut server = Server {
+        child,
+        url: String::new(),
+    };
+    match receiver.recv_timeout(Duration::from_secs(30)) {
+        Ok(url) if url.ends_with('/') => server.url = url,
+        Ok(url) => server.url = format!("{url}/"),
+        Err(_) => panic!("rclone serve restic did not start listening in time"),
     }
-    let _ = server.child.kill();
-    let _ = server.child.wait();
-    panic!("rustic-server did not start listening on port {port} in time");
+    server
 }
 
 fn secret() -> Secret {
     Secret::new("correct horse battery staple")
 }
 
-/// Runs `scenario` against a freshly spawned server, retrying the whole
-/// thing (a new server process, a new empty data directory) a few times if
-/// it panics.
-///
-/// `spawn_server`'s own readiness probe cannot fully rule out a connection
-/// still being refused moments later: on a busier machine (CI, not this
-/// project's own local runs) the first real write after the server reports
-/// itself ready — several requests, not the one the probe makes — can hit a
-/// `Connect` error that rustic_core's own internal retry-with-backoff does
-/// not survive. Retrying `engine::init` itself in place was considered and
-/// rejected: it is not idempotent (a partial write from the failed attempt
-/// would make the retry see a non-empty, not-yet-valid location and fail a
-/// different way), so each attempt here starts over completely rather than
-/// resuming. This is resilience against a third-party test server's own
-/// timing, not a weakened assertion: every attempt still calls the exact
-/// same production code, unmodified, against a real server; a location that
-/// is not actually reachable at all still fails every attempt and panics.
-fn retrying(repo_name: &str, scenario: impl Fn(&Path, u16)) {
-    let _guard = ONLY_ONE_SERVER_AT_A_TIME
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut last = None;
-    for attempt in 0..3 {
-        let scratch = TempDir::new().unwrap();
-        let data_dir = scratch.path().join("data");
-        // `spawn_server` itself, not just `scenario`, inside the same
-        // `catch_unwind`: a server that never gets to "listening" in time
-        // used to panic straight out of this function, skipping both the
-        // log printed below and the retry the same failure in `scenario`
-        // already gets — exactly the gap that left a failed startup with
-        // nothing to show for it.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let server = spawn_server(&data_dir, repo_name);
-            scenario(scratch.path(), server.port);
-        }));
-        match result {
-            Ok(()) => return,
-            Err(panic) => {
-                let server_log =
-                    std::fs::read_to_string(data_dir.join("rustic-server.log")).unwrap_or_default();
-                eprintln!(
-                    "--- rustic-server's own output for attempt {} ---\n{server_log}",
-                    attempt + 1
-                );
-                last = Some(panic);
-                std::thread::sleep(Duration::from_millis(300 * (attempt + 1)));
-            }
-        }
-    }
-    std::panic::resume_unwind(last.unwrap());
-}
-
-// Every test below that starts a real `rustic-server` is marked `#[ignore]`:
-// each passes reliably against a real local server run by hand on this
-// project's own development machine, but fails in CI specifically, always
-// the same way — a `Connect` error on a write shortly after the readiness
-// probe reports the server ready. Two theories were tried and both
-// disproven by actually pushing and reading CI's own logs rather than
-// guessed from a local run: a one-off timing race (ruled out — a 3-attempt
-// retry, each a whole fresh server, failed identically every time, which a
-// genuine race would not do); CPU contention between this file's own tests
-// running concurrently (ruled out — serializing every one of them behind
-// `ONLY_ONE_SERVER_AT_A_TIME` changed nothing). `spawn_server` now captures
-// the server's own stdout and stderr to a file instead of discarding them,
-// so the next attempt at this has something real to read rather than a
-// third guess; not yet acted on.
-#[test]
-#[ignore = "fails in CI, not locally, the same way every one of these does; \
-            see the comment above this test for what has been tried"]
-fn backup_and_restore_round_trip_through_a_rest_server() {
-    require_rustic_server();
+/// Runs `scenario` against a freshly spawned server, with the server's
+/// root URL.
+fn with_server(scenario: impl FnOnce(&Path, &str)) {
+    require_rclone();
     let _guard = ONLY_ONE_SERVER_AT_A_TIME
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let scratch = TempDir::new().unwrap();
-    let server = spawn_server(&scratch.path().join("data"), "test-repo");
-    let location = Location::Rest {
-        url: format!("http://127.0.0.1:{}/test-repo/", server.port),
-    };
-
-    engine::init(&location, &secret()).unwrap();
-
-    let source = scratch.path().join("source");
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::write(source.join("report.txt"), b"quarterly numbers").unwrap();
-
-    let request = BackupRequest {
-        sources: vec![source.clone()],
-        ..BackupRequest::default()
-    };
-    let report = engine::open(&location, &secret())
-        .unwrap()
-        .backup(&request, Arc::new(NoProgress))
-        .unwrap();
-    assert!(report.snapshot.files_new >= 1);
-
-    let destination = scratch.path().join("restore");
-    engine::open(&location, &secret())
-        .unwrap()
-        .restore_all("latest", &destination, Arc::new(NoProgress))
-        .unwrap();
-
-    let restored = destination.join(source.strip_prefix("/").unwrap_or(&source));
-    assert_eq!(
-        std::fs::read(restored.join("report.txt")).unwrap(),
-        b"quarterly numbers"
-    );
+    let server = spawn_server(&scratch.path().join("data"));
+    scenario(scratch.path(), &server.url);
 }
 
 #[test]
-#[ignore = "fails in CI, not locally, the same way every one of these does; \
-            see the comment above backup_and_restore_round_trip_through_a_rest_server \
-            for what has been tried"]
-fn probe_finds_an_empty_location_then_the_repository_once_created() {
-    require_rustic_server();
-    retrying("probe-repo", |_scratch, port| {
+fn backup_and_restore_round_trip_through_a_rest_server() {
+    with_server(|scratch, url| {
         let location = Location::Rest {
-            url: format!("http://127.0.0.1:{port}/probe-repo/"),
+            url: format!("{url}test-repo/"),
+        };
+
+        engine::init(&location, &secret()).unwrap();
+
+        let source = scratch.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("report.txt"), b"quarterly numbers").unwrap();
+
+        let request = BackupRequest {
+            sources: vec![source.clone()],
+            ..BackupRequest::default()
+        };
+        let report = engine::open(&location, &secret())
+            .unwrap()
+            .backup(&request, Arc::new(NoProgress))
+            .unwrap();
+        assert!(report.snapshot.files_new >= 1);
+
+        let destination = scratch.join("restore");
+        engine::open(&location, &secret())
+            .unwrap()
+            .restore_all("latest", &destination, Arc::new(NoProgress))
+            .unwrap();
+
+        let restored = destination.join(source.strip_prefix("/").unwrap_or(&source));
+        assert_eq!(
+            std::fs::read(restored.join("report.txt")).unwrap(),
+            b"quarterly numbers"
+        );
+    });
+}
+
+#[test]
+fn probe_finds_an_empty_location_then_the_repository_once_created() {
+    with_server(|_scratch, url| {
+        let location = Location::Rest {
+            url: format!("{url}probe-repo/"),
         };
 
         assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Empty);
@@ -262,14 +165,10 @@ fn probe_finds_an_empty_location_then_the_repository_once_created() {
 }
 
 #[test]
-#[ignore = "fails in CI, not locally, the same way every one of these does; \
-            see the comment above backup_and_restore_round_trip_through_a_rest_server \
-            for what has been tried"]
 fn deleting_a_rest_repository_is_refused_rather_than_attempted() {
-    require_rustic_server();
-    retrying("delete-repo", |_scratch, port| {
+    with_server(|_scratch, url| {
         let location = Location::Rest {
-            url: format!("http://127.0.0.1:{port}/delete-repo/"),
+            url: format!("{url}delete-repo/"),
         };
         engine::init(&location, &secret()).unwrap();
 

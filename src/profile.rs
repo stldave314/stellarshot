@@ -168,9 +168,12 @@ impl Destination {
                 port,
                 path,
             } => {
-                let known_hosts = std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_default()
+                // Never a relative path, which rclone would look for in
+                // whatever directory it was started from.
+                let known_hosts = crate::paths::home_dir()
+                    .ok_or_else(|| {
+                        EngineError::new(ErrorKind::Internal, "no home directory for known_hosts")
+                    })?
                     .join(".ssh/known_hosts");
                 Ok(Location::rclone(
                     rclone::sftp_remote(host, user, *port, &known_hosts),

@@ -18,6 +18,7 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::{errors, format};
+use crate::constants::{HINT_MAX_WIDTH, WIZARD_MAX_WIDTH};
 use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secret, SizeEstimate};
 use crate::fl;
 use crate::profile::{
@@ -1128,7 +1129,7 @@ impl Wizard {
             )
             .push(footer)
             .apply(widget::container)
-            .max_width(760)
+            .max_width(WIZARD_MAX_WIDTH)
             .apply(widget::container)
             .center_x(Length::Fill)
             .into()
@@ -1660,7 +1661,10 @@ fn browse_hint_bubble() -> Element<'static, Message> {
         widget::row::with_capacity(2)
             .spacing(spacing.space_xs)
             .align_y(Alignment::Center)
-            .push(widget::text::body(fl!("wizard-browse-hint")).width(Length::Fixed(220.0)))
+            .push(
+                widget::container(widget::text::body(fl!("wizard-browse-hint")))
+                    .max_width(HINT_MAX_WIDTH),
+            )
             .push(
                 widget::button::icon(widget::icon::from_name("window-close-symbolic"))
                     .tooltip(fl!("dismiss"))

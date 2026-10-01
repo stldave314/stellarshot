@@ -26,7 +26,6 @@ use crate::constants::{
     CHILD_STDERR_TAIL, PROBE_TIMEOUT, PROCESS_POLL_INTERVAL, RCLONE_CHANGE_TIMEOUT,
     RCLONE_LISTING_LIMIT, RCLONE_LOOK_FLAGS, SIGN_IN_TIMEOUT,
 };
-use crate::debug::ENGINE;
 use crate::debug_log;
 
 /// The rclone executable.
@@ -171,7 +170,7 @@ fn run_bounded(
 ) -> Result<Output, EngineError> {
     let limit = limits.limit;
     debug_log!(
-        ENGINE,
+        crate::debug::RCLONE,
         "rclone {} (within {limit:?})",
         redact(args).join(" ")
     );
@@ -221,7 +220,7 @@ fn run_bounded(
             let _ = child.kill();
             let _ = child.wait();
             debug_log!(
-                ENGINE,
+                crate::debug::RCLONE,
                 "rclone {} {}",
                 redact(args).join(" "),
                 if canceled { "canceled" } else { "timed out" }

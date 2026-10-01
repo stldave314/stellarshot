@@ -49,12 +49,6 @@ jobs:
         with:
           tool: cargo-deb,cargo-generate-rpm,cargo-auditable
 
-      # tests/rest_server.rs needs a real rustic-server; no prebuilt binary
-      # is published, so this builds it from source like any other tool
-      # this project tests against for real rather than mocking.
-      - name: Install rustic-server
-        run: cargo install rustic_server
-
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -118,7 +112,7 @@ jobs:
           - kind: deb
             image: ubuntu:24.04
           - kind: rpm
-            image: fedora:latest
+            image: fedora:44
     container:
       image: ${{ matrix.image }}
 
@@ -226,6 +220,49 @@ jobs:
       - name: Validate desktop entry and AppStream metadata
         run: ./scripts/validate-metadata.sh
 
+  # What the suite actually exercises, as a report to read, not a gate: a
+  # line covered by a test that asserts nothing still counts. Same services
+  # as `test`, so the numbers include the keyring and rclone tests.
+  coverage:
+    name: Test coverage
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libxkbcommon-dev libwayland-dev \
+            dbus gnome-keyring rclone fuse3
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Measure
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            cargo llvm-cov --all-features --locked --lcov --output-path lcov.info
+          '
+          cargo llvm-cov report --summary-only | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: lcov.info
+          if-no-files-found: error
+
   lint-workflows:
     name: Lint GitHub Actions workflows
     runs-on: ubuntu-24.04
@@ -239,7 +276,7 @@ jobs:
       # access are for public-repo posture checks this private-by-default
       # workflow set does not need.
       - name: Install zizmor
-        run: pipx install zizmor
+        run: pipx install zizmor==1.30.1
 
       - name: zizmor
         run: zizmor --min-severity medium .github/workflows

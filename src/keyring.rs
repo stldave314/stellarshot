@@ -15,7 +15,7 @@ use std::future::Future;
 
 use crate::app::APP_ID;
 use crate::constants::KEYRING_TIMEOUT;
-use crate::debug::CONFIG;
+use crate::debug::KEYRING;
 use crate::engine::Secret;
 use crate::{debug_log, error_log};
 
@@ -48,8 +48,8 @@ async fn store_item(
     let keyring = bounded(oo7::Keyring::new()).await?;
     bounded(keyring.create_item(label, attrs, secret.expose(), true))
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not store {what} in the keyring: {err}"))?;
-    debug_log!(CONFIG, "stored {what}");
+        .inspect_err(|err| error_log!(KEYRING, "could not store {what} in the keyring: {err}"))?;
+    debug_log!(KEYRING, "stored {what}");
     Ok(())
 }
 
@@ -60,24 +60,24 @@ async fn store_item(
 async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Result<Option<Secret>, String> {
     let keyring = bounded(oo7::Keyring::new())
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not open the keyring for {what}: {err}"))?;
+        .inspect_err(|err| error_log!(KEYRING, "could not open the keyring for {what}: {err}"))?;
     let items = bounded(keyring.search_items(attrs))
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not search the keyring for {what}: {err}"))?;
+        .inspect_err(|err| error_log!(KEYRING, "could not search the keyring for {what}: {err}"))?;
     let Some(item) = items.first() else {
-        debug_log!(CONFIG, "no {what} remembered");
+        debug_log!(KEYRING, "no {what} remembered");
         return Ok(None);
     };
     let secret = bounded(item.secret())
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not read {what} from the keyring: {err}"))?;
+        .inspect_err(|err| error_log!(KEYRING, "could not read {what} from the keyring: {err}"))?;
     match String::from_utf8(secret.as_bytes().to_vec()) {
         Ok(password) => {
-            debug_log!(CONFIG, "loaded {what}");
+            debug_log!(KEYRING, "loaded {what}");
             Ok(Some(Secret::new(password)))
         }
         Err(err) => {
-            error_log!(CONFIG, "{what} in the keyring was not valid UTF-8");
+            error_log!(KEYRING, "{what} in the keyring was not valid UTF-8");
             // The bytes are the password, or most of it: wiped, not just
             // dropped.
             zeroize::Zeroize::zeroize(&mut err.into_bytes());
@@ -90,7 +90,7 @@ async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Result<Option<Secre
 async fn forget_item(attrs: &[(&str, &str); 2], what: &str) -> Result<(), String> {
     let keyring = bounded(oo7::Keyring::new()).await?;
     bounded(keyring.delete(attrs)).await?;
-    debug_log!(CONFIG, "forgot {what}");
+    debug_log!(KEYRING, "forgot {what}");
     Ok(())
 }
 

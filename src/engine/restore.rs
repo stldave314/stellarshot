@@ -509,9 +509,7 @@ fn shape(
         ConflictPolicy::KeepBoth => {
             let renamed = keep_both_name_with(&on_disk, date, |candidate| {
                 candidate.symlink_metadata().is_ok()
-                    || candidate
-                        .strip_prefix(destination)
-                        .is_ok_and(|relative| in_snapshot(relative))
+                    || candidate.strip_prefix(destination).is_ok_and(in_snapshot)
             });
             Decision::Rename(
                 renamed

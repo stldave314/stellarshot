@@ -23,12 +23,23 @@ fn runtime() -> tokio::runtime::Runtime {
         .unwrap()
 }
 
+/// Forgets the test's entry however the test ends, so a failed assertion
+/// does not leave a stray item in the developer's real keyring.
+struct Forget(String);
+
+impl Drop for Forget {
+    fn drop(&mut self) {
+        let _ = runtime().block_on(keyring::forget(&self.0));
+    }
+}
+
 #[test]
 fn keyring_round_trip() {
     let runtime = runtime();
     // A profile ID no real profile will ever have, so the test cannot touch
     // the user's own saved passwords.
     let profile = format!("test-{}", uuid::Uuid::new_v4());
+    let _cleanup = Forget(profile.clone());
 
     runtime.block_on(async {
         assert!(

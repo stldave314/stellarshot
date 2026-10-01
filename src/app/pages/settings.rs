@@ -75,9 +75,18 @@ impl Default for SettingsPage {
 
 /// Save one setting, reporting (not failing) if it cannot be written: the new
 /// value still applies for this run.
-fn saved<T, E: std::fmt::Display>(what: &str, result: Result<T, E>) {
-    if let Err(err) = result {
-        error_log!(CONFIG, "failed to save {what}: {err}");
+/// Nothing if `result` saved, else the error to show: a setting that
+/// silently reverts at the next launch looks like it worked.
+fn saved<T, E: std::fmt::Display>(what: &str, result: Result<T, E>) -> Vec<Effect> {
+    match result {
+        Ok(_) => Vec::new(),
+        Err(err) => {
+            error_log!(CONFIG, "failed to save {what}: {err}");
+            vec![Effect::Error(errors::describe(
+                &fl!("error-settings-not-saved"),
+                &EngineError::new(engine::ErrorKind::Io, err.to_string()),
+            ))]
+        }
     }
 }
 
@@ -90,13 +99,14 @@ impl SettingsPage {
     ) -> Vec<Effect> {
         match message {
             Message::AppTheme(index) => {
+                let mut effects = vec![Effect::ThemeChanged];
                 if let Some(handler) = handler {
-                    saved(
+                    effects.extend(saved(
                         "the theme",
                         config.set_app_theme(handler, AppTheme::from_index(index)),
-                    );
+                    ));
                 }
-                vec![Effect::ThemeChanged]
+                effects
             }
             Message::Export => vec![Effect::ChooseExportPath],
             Message::ExportChosen(Some(path)) => {
@@ -124,58 +134,63 @@ impl SettingsPage {
                 Vec::new()
             }
             Message::AddPattern => {
+                let mut effects = Vec::new();
                 let pattern = self.pattern_input.trim().to_owned();
                 if !pattern.is_empty() && !config.global_exclude_patterns.contains(&pattern) {
                     let mut patterns = config.global_exclude_patterns.clone();
                     patterns.push(pattern);
                     if let Some(handler) = handler {
-                        saved(
+                        effects = saved(
                             "the global exclusions",
                             config.set_global_exclude_patterns(handler, patterns),
                         );
                     }
                 }
                 self.pattern_input.clear();
-                Vec::new()
+                effects
             }
             Message::RemovePattern(index) => {
                 let mut patterns = config.global_exclude_patterns.clone();
-                if index < patterns.len() {
+                if index < patterns.len()
+                    && let Some(handler) = handler
+                {
                     patterns.remove(index);
-                    if let Some(handler) = handler {
-                        saved(
-                            "the global exclusions",
-                            config.set_global_exclude_patterns(handler, patterns),
-                        );
-                    }
+                    return saved(
+                        "the global exclusions",
+                        config.set_global_exclude_patterns(handler, patterns),
+                    );
                 }
                 Vec::new()
             }
             Message::ChooseCacheDir => vec![Effect::PickCacheDir],
             Message::CacheDirChosen(Some(path)) => {
                 engine::cache_settings::set(Some(path.clone()), config.no_cache);
-                if let Some(handler) = handler {
-                    saved(
+                match handler {
+                    Some(handler) => saved(
                         "the cache location",
                         config.set_cache_dir(handler, Some(path)),
-                    );
+                    ),
+                    None => Vec::new(),
                 }
-                Vec::new()
             }
             Message::CacheDirChosen(None) => Vec::new(),
             Message::ClearCacheDir => {
                 engine::cache_settings::set(None, config.no_cache);
-                if let Some(handler) = handler {
-                    saved("the cache location", config.set_cache_dir(handler, None));
+                match handler {
+                    Some(handler) => {
+                        saved("the cache location", config.set_cache_dir(handler, None))
+                    }
+                    None => Vec::new(),
                 }
-                Vec::new()
             }
             Message::NoCache(no_cache) => {
                 engine::cache_settings::set(config.cache_dir.clone(), no_cache);
-                if let Some(handler) = handler {
-                    saved("the cache setting", config.set_no_cache(handler, no_cache));
+                match handler {
+                    Some(handler) => {
+                        saved("the cache setting", config.set_no_cache(handler, no_cache))
+                    }
+                    None => Vec::new(),
                 }
-                Vec::new()
             }
         }
     }

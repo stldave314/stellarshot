@@ -19,6 +19,7 @@ use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
 use crate::constants::DELETED_WINDOW_DAYS;
 use crate::constants::RESTORE_RESULT_LIMIT as RESULT_LIMIT;
+use crate::constants::{LIST_ICON_SIZE, RESTORE_MAX_WIDTH};
 use crate::engine::mount::Mount;
 use crate::engine::{
     Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, GlobalMatch,
@@ -34,6 +35,43 @@ pub enum Tab {
     Deleted,
     Compare,
     Search,
+}
+
+/// The tab bar's model, which has no `Debug` of its own.
+pub struct TabModel(widget::segmented_button::SingleSelectModel);
+
+impl fmt::Debug for TabModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TabModel")
+    }
+}
+
+impl TabModel {
+    fn new() -> Self {
+        let tab = |model: widget::segmented_button::ModelBuilder<_>, label: String, tab: Tab| {
+            model.insert(move |entity| entity.text(label).data(tab))
+        };
+        let mut model = widget::segmented_button::SingleSelectModel::builder();
+        model = tab(model, fl!("tab-browse"), Tab::Browse);
+        model = tab(model, fl!("tab-deleted"), Tab::Deleted);
+        model = tab(model, fl!("tab-compare"), Tab::Compare);
+        model = tab(model, fl!("tab-search"), Tab::Search);
+        let mut model = Self(model.build());
+        model.show(Tab::Browse);
+        model
+    }
+
+    fn tab(&self, entity: widget::segmented_button::Entity) -> Option<Tab> {
+        self.0.data::<Tab>(entity).copied()
+    }
+
+    /// Mark `tab` as the one showing.
+    fn show(&mut self, tab: Tab) {
+        let entity = self.0.iter().find(|&e| self.tab(e) == Some(tab));
+        if let Some(entity) = entity {
+            self.0.activate(entity);
+        }
+    }
 }
 
 /// Where the restore goes, as chosen in the sheet.
@@ -129,6 +167,7 @@ pub struct RestorePage {
     browser: Option<Arc<Browser>>,
     snapshots: Vec<SnapshotSummary>,
     tab: Tab,
+    tabs: TabModel,
     // Browse
     snapshot: Option<usize>,
     dir: PathBuf,
@@ -176,7 +215,7 @@ pub struct RestorePage {
 #[derive(Debug, Clone)]
 pub enum Message {
     Loaded(Result<Arc<Browser>, EngineError>),
-    Tab(Tab),
+    Tab(widget::segmented_button::Entity),
     PickSnapshot(usize),
     Open(PathBuf),
     Up,
@@ -291,6 +330,11 @@ pub enum Effect {
 }
 
 impl RestorePage {
+    fn show_tab(&mut self, tab: Tab) {
+        self.tab = tab;
+        self.tabs.show(tab);
+    }
+
     /// `root` is where browsing starts: the profile's first folder.
     pub fn new(profile_id: String, root: PathBuf) -> (Self, Vec<Effect>) {
         let page = Self {
@@ -298,6 +342,7 @@ impl RestorePage {
             browser: None,
             snapshots: Vec::new(),
             tab: Tab::Browse,
+            tabs: TabModel::new(),
             snapshot: None,
             dir: root.clone(),
             root: root.clone(),
@@ -469,8 +514,10 @@ impl RestorePage {
                 Effect::ShowError(fl!("open-repo-failed"), err),
                 Effect::Close,
             ],
-            Message::Tab(tab) => {
-                self.tab = tab;
+            Message::Tab(entity) => {
+                if let Some(tab) = self.tabs.tab(entity) {
+                    self.show_tab(tab);
+                }
                 Vec::new()
             }
             Message::PickSnapshot(index) => {
@@ -484,6 +531,8 @@ impl RestorePage {
             Message::Open(dir) => {
                 self.dir = dir;
                 self.results = None;
+                // A search still running answers for a view the user left.
+                self.searching = None;
                 self.list()
             }
             Message::Up => {
@@ -522,6 +571,7 @@ impl RestorePage {
                 self.search = text;
                 if self.search.is_empty() {
                     self.results = None;
+                    self.searching = None;
                 }
                 Vec::new()
             }
@@ -694,7 +744,7 @@ impl RestorePage {
                 let Some(index) = self.snapshots.iter().position(|s| s.id == snapshot) else {
                     return Vec::new();
                 };
-                self.tab = Tab::Browse;
+                self.show_tab(Tab::Browse);
                 self.snapshot = Some(index);
                 self.selection.clear();
                 self.results = None;
@@ -915,12 +965,8 @@ impl RestorePage {
         } else if self.snapshots.is_empty() {
             widget::text::body(fl!("no-snapshots-yet")).into()
         } else {
-            let tabs = widget::row::with_capacity(4)
-                .spacing(spacing.space_xs)
-                .push(tab_button(fl!("tab-browse"), Tab::Browse, self.tab))
-                .push(tab_button(fl!("tab-deleted"), Tab::Deleted, self.tab))
-                .push(tab_button(fl!("tab-compare"), Tab::Compare, self.tab))
-                .push(tab_button(fl!("tab-search"), Tab::Search, self.tab));
+            let tabs =
+                widget::segmented_control::horizontal(&self.tabs.0).on_activate(Message::Tab);
             let content = match self.tab {
                 Tab::Browse => self.browse_view(),
                 Tab::Deleted => self.deleted_view(),
@@ -959,7 +1005,7 @@ impl RestorePage {
             .push(header)
             .push(body)
             .apply(widget::container)
-            .max_width(960)
+            .max_width(RESTORE_MAX_WIDTH)
             .apply(widget::container)
             .center_x(Length::Fill)
             .into()
@@ -1083,7 +1129,7 @@ impl RestorePage {
                     .name(entry.name.clone())
                     .on_toggle(move |on| Message::Toggle(path.clone(), on)),
             )
-            .push(widget::icon::from_name(icon).size(16))
+            .push(widget::icon::from_name(icon).size(LIST_ICON_SIZE))
             .push(widget::container(name).width(Length::Fill))
             .push(widget::text::caption(detail))
             .push(widget::text::caption(modified))
@@ -1216,7 +1262,7 @@ impl RestorePage {
             .spacing(spacing.space_s)
             .align_y(Alignment::Center)
             .push(widget::dropdown(&self.labels, self.from, Message::PickFrom))
-            .push(widget::icon::from_name("go-next-symbolic").size(16))
+            .push(widget::icon::from_name("go-next-symbolic").size(LIST_ICON_SIZE))
             .push(widget::dropdown(&self.labels, self.to, Message::PickTo))
             .push(
                 widget::button::suggested(fl!("compare-button"))
@@ -1384,7 +1430,7 @@ impl RestorePage {
                 widget::row::with_capacity(3)
                     .spacing(spacing.space_s)
                     .align_y(Alignment::Center)
-                    .push(widget::icon::from_name(icon).size(16))
+                    .push(widget::icon::from_name(icon).size(LIST_ICON_SIZE))
                     .push(widget::text::body(format::path(&found.path)).width(Length::Fill))
                     .push(widget::text::caption(format::bytes(found.size))),
             )
@@ -1546,18 +1592,6 @@ fn files_replaced_in_place(sheet: &Sheet) -> Option<u64> {
             Some(preview.conflicts)
         }
         _ => None,
-    }
-}
-
-fn tab_button<'a>(label: String, tab: Tab, current: Tab) -> Element<'a, Message> {
-    if tab == current {
-        widget::button::suggested(label)
-            .on_press(Message::Tab(tab))
-            .into()
-    } else {
-        widget::button::standard(label)
-            .on_press(Message::Tab(tab))
-            .into()
     }
 }
 
@@ -2080,6 +2114,27 @@ mod tests {
 
         assert!(page.diff.is_none());
         assert!(page.comparing.is_none(), "and Compare can be pressed again");
+    }
+
+    #[test]
+    fn a_search_answered_after_the_field_was_cleared_or_a_folder_opened_is_dropped() {
+        for leave in [
+            Message::Search(String::new()),
+            Message::Open("/home/alex/Documents".into()),
+        ] {
+            let mut page = page_with_snapshots();
+            page.search = "notes".into();
+            page.update(Message::SearchNow);
+            page.update(leave);
+
+            page.update(Message::Found(
+                "bbbbbbbb".into(),
+                "notes".into(),
+                Ok(vec![entry("/home/alex/notes.txt")]),
+            ));
+
+            assert!(page.results.is_none());
+        }
     }
 
     #[test]

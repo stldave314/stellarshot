@@ -231,23 +231,69 @@ impl App {
     /// Re-read every backup's run state; rebuild the sidebar if a warning
     /// appeared or went away.
     pub(super) fn reload_runs(&mut self) {
-        let runs: HashMap<String, RunState> = self
-            .config
-            .profiles
-            .iter()
-            .map(|profile| (profile.id.clone(), run_state::load(&profile.id)))
-            .collect();
+        let runs = read_runs(&self.profile_ids());
+        self.apply_runs(runs);
+    }
+
+    /// [`Self::reload_runs`], off the window's thread: the state store is
+    /// read under a lock scheduled runs also take.
+    pub(super) fn load_runs(&self) -> Task<Message> {
+        let ids = self.profile_ids();
+        Task::perform(
+            tasks::blocking(move || Ok(read_runs(&ids))),
+            |result: Result<_, EngineError>| match result {
+                Ok(runs) => app(Message::RunsLoaded(runs)),
+                Err(_) => app(Message::Noop),
+            },
+        )
+    }
+
+    pub(super) fn apply_runs(&mut self, runs: HashMap<String, RunState>) {
+        // Read before a backup was removed or added: the next tick has it.
+        if runs.len() != self.config.profiles.len()
+            || self
+                .config
+                .profiles
+                .iter()
+                .any(|p| !runs.contains_key(&p.id))
+        {
+            return;
+        }
         if runs != self.runs {
             self.runs = runs;
             self.rebuild_nav(None);
         }
     }
 
-    /// Change one backup's run state, and show the change.
-    pub(super) fn record_run(&mut self, id: &str, change: impl FnOnce(&mut RunState)) {
-        if let Err(err) = run_state::update(id, change) {
-            error_log!(CONFIG, "could not record a run of {id}: {err}");
-        }
-        self.reload_runs();
+    fn profile_ids(&self) -> Vec<String> {
+        self.config.profiles.iter().map(|p| p.id.clone()).collect()
     }
+
+    /// Change one backup's run state, and show the change.
+    pub(super) fn record_run(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut RunState) + Send + 'static,
+    ) -> Task<Message> {
+        let id = id.to_owned();
+        let ids = self.profile_ids();
+        Task::perform(
+            tasks::blocking(move || {
+                if let Err(err) = run_state::update(&id, change) {
+                    error_log!(CONFIG, "could not record a run of {id}: {err}");
+                }
+                Ok(read_runs(&ids))
+            }),
+            |result: Result<_, EngineError>| match result {
+                Ok(runs) => app(Message::RunsLoaded(runs)),
+                Err(_) => app(Message::Noop),
+            },
+        )
+    }
+}
+
+fn read_runs(ids: &[String]) -> HashMap<String, RunState> {
+    ids.iter()
+        .map(|id| (id.clone(), run_state::load(id)))
+        .collect()
 }

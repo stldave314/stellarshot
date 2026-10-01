@@ -197,20 +197,15 @@ impl App {
                         page.set_secret(new_password.clone());
                     }
                     debug_log!(ENGINE, "changed the password of profile {id}");
-                    event_log::record(
-                        &id,
-                        format::now(),
-                        event_log::EventKind::PasswordChanged,
-                        event_log::Source::Desktop,
-                    );
+                    let logged = record_event(id.clone(), event_log::EventKind::PasswordChanged);
                     let Some(profile) = self.config.profile(&id).cloned() else {
-                        return Task::none();
+                        return logged;
                     };
                     // The repository itself is already changed at this
                     // point; a keyring failure here does not undo that, so
                     // it is reported separately rather than as this whole
                     // operation having failed.
-                    Task::perform(
+                    let keyring = Task::perform(
                         async move {
                             if crate::keyring::load(&profile.id).await.is_some() {
                                 crate::keyring::store(&profile.id, &profile.name, &new_password)
@@ -224,7 +219,8 @@ impl App {
                                 result.err(),
                             )))
                         },
-                    )
+                    );
+                    Task::batch([logged, keyring])
                 }
                 child::ChildEvent::Event(RunnerEvent::Error { error })
                 | child::ChildEvent::Ended(error) => {

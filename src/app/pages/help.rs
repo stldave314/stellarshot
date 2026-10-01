@@ -6,6 +6,7 @@ use cosmic::iced::Alignment;
 use cosmic::widget;
 use cosmic::{Element, theme};
 
+use crate::constants::LIST_ICON_SIZE;
 use crate::fl;
 use crate::run_state;
 
@@ -19,7 +20,7 @@ pub fn view<M: Clone + 'static>() -> Element<'static, M> {
                 .spacing(spacing.space_xs)
                 .align_y(Alignment::Center)
                 .padding([spacing.space_xxs, spacing.space_none])
-                .push(widget::icon::from_name(status.icon()).size(16))
+                .push(widget::icon::from_name(status.icon()).size(LIST_ICON_SIZE))
                 .push(widget::text::body(status.label())),
         );
     }

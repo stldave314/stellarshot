@@ -27,6 +27,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{IMPORT_NAME_MAX_CHARS, RETENTION_MAX_DAYS};
+use crate::debug::CONFIG;
+use crate::debug_log;
 use crate::engine::redact_url;
 use crate::event_log::{self, Event};
 use crate::profile::{self, Destination, Profile, Retention, Schedule};
@@ -209,12 +211,20 @@ pub fn merge(existing: &[Profile], export: &Export) -> Merged {
         added.push(profile);
         counts.added += 1;
     }
-    let history = export
+    let history: Vec<(String, Vec<Event>)> = export
         .history
         .iter()
         .filter(|(id, _)| kept_ids.contains(id))
         .cloned()
         .collect();
+    debug_log!(
+        CONFIG,
+        "import: {} added, {} skipped, {} refused, {} with history, review needed: {needs_review}",
+        counts.added,
+        counts.skipped,
+        counts.rejected,
+        history.len()
+    );
     Merged {
         profiles,
         added,

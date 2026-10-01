@@ -165,6 +165,8 @@ pub enum Message {
     ScheduleFailed(String),
     Dialog(DialogMessage),
     Noop,
+    /// Every backup's run state, read off the window's thread.
+    RunsLoaded(HashMap<String, RunState>),
     Settings(pages::settings::Message),
     /// The home screen's own way to switch to one backup's page.
     SelectProfile(String),
@@ -235,7 +237,7 @@ fn app(message: Message) -> cosmic::Action<Message> {
 /// resolves that same path internally) to have succeeded.
 fn backup_unreadable_profiles() -> String {
     let Some(original) = profiles_key_path() else {
-        return "the settings directory".to_owned();
+        return fl!("settings-directory");
     };
     if !original.exists() {
         // Nothing to copy; still tell the user which file to look at.
@@ -392,7 +394,14 @@ impl App {
             let id = id.clone();
             Task::perform(
                 tasks::blocking(move || {
-                    let _ = run_state::save(&id, &RunState::default());
+                    // Profile IDs are never reused, so what is left behind
+                    // is never read again; failing to remove it is logged,
+                    // not shown.
+                    for result in [run_state::remove(&id), event_log::remove(&id)] {
+                        if let Err(err) = result {
+                            error_log!(CONFIG, "could not forget the state of {id}: {err}");
+                        }
+                    }
                     schedule::remove(&id)
                         .map_err(|err| EngineError::new(engine::ErrorKind::Internal, err))
                 }),
@@ -497,6 +506,34 @@ async fn spawn_new_window() {
 /// The user's home folder, the default thing to back up.
 fn home_dir() -> Option<PathBuf> {
     crate::paths::home_dir()
+}
+
+/// Add `kind` to backup `id`'s history, off the window's thread: it reads
+/// and writes the state store under a lock other processes share.
+fn record_event(id: String, kind: event_log::EventKind) -> Task<Message> {
+    Task::perform(
+        tasks::blocking(move || {
+            event_log::record(&id, format::now(), kind, event_log::Source::Desktop);
+            Ok(())
+        }),
+        |_| cosmic::Action::App(Message::Noop),
+    )
+}
+
+/// A snapshot mounted for a restore page that has since closed: unmounting
+/// waits for the mount's session to end, so the handle is dropped on a
+/// blocking thread, never on the window's.
+fn unmount_off_thread(message: restore::Message) -> Task<Message> {
+    let restore::Message::Mounted(Ok(handle)) = message else {
+        return Task::none();
+    };
+    Task::perform(
+        tasks::blocking(move || {
+            drop(handle);
+            Ok(())
+        }),
+        |_| cosmic::Action::App(Message::Noop),
+    )
 }
 
 /// Remove "Open a copy" folders left in the runtime folder for more than a
@@ -940,12 +977,13 @@ impl Application for App {
                 return self.run_wizard_effects(effects);
             }
             Message::WizardFinished(_, result) => return self.on_wizard_finished(*result),
-            Message::RestorePage(session, _) if session != self.restore_session => {
+            Message::RestorePage(session, message) if session != self.restore_session => {
                 debug_log!(UI, "dropped a result for a restore page that is gone");
+                return unmount_off_thread(message);
             }
             Message::RestorePage(_, message) => {
                 let Some((page, _)) = self.restore.as_mut() else {
-                    return Task::none();
+                    return unmount_off_thread(message);
                 };
                 let effects = page.update(message);
                 return self.run_restore_effects(effects);
@@ -1012,7 +1050,7 @@ impl Application for App {
             }
             Message::Tick => {
                 self.now = format::now();
-                self.reload_runs();
+                return self.load_runs();
             }
             // Only redraws, so running times count up.
             Message::WaitingTick => {}
@@ -1163,6 +1201,7 @@ impl Application for App {
             }
             Message::SystemThemeModeChange => return self.update_theme(),
             Message::Noop => {}
+            Message::RunsLoaded(runs) => self.apply_runs(runs),
         }
         Task::none()
     }

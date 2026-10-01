@@ -62,8 +62,13 @@ jobs:
             exit 1
           fi
 
+      # A fixed toolchain, not whatever stable is on the day of the tag: the
+      # release is built with the compiler it was tested with. CI stays on
+      # stable, to hear about a new one early. Raise this with each release
+      # (see CONTRIBUTING.md, "Releasing").
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: 1.98.1
           components: clippy
 
       # No build cache, deliberately: a release build that restores one
@@ -164,9 +169,6 @@ jobs:
           path: release-notes.md
           if-no-files-found: error
 
-  # The only job with `contents: write`, and the only one that touches
-  # anything outside this run: it does not build anything itself, only
-  # downloads what `build` already produced and tested.
   # The same advisory, license and source checks CI runs, repeated for the
   # tagged commit: a new advisory may have landed since CI last passed.
   deny:
@@ -179,6 +181,9 @@ jobs:
           persist-credentials: false
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
+  # The only job with `contents: write`, and the only one that touches
+  # anything outside this run: it does not build anything itself, only
+  # downloads what `build` already produced and tested.
   publish:
     name: Publish release
     needs: [build, deny]

@@ -19,6 +19,43 @@ pub const WINDOW_MIN_WIDTH: f32 = 400.0;
 /// Smallest height the window may be resized to.
 pub const WINDOW_MIN_HEIGHT: f32 = 180.0;
 
+/// Widest a page's content grows (home, a backup's page, history), in
+/// logical pixels: lines of text any longer are hard to read.
+pub const PAGE_MAX_WIDTH: f32 = 900.0;
+
+/// Widest the restore page grows: wider than other pages, for its file
+/// lists' extra columns.
+pub const RESTORE_MAX_WIDTH: f32 = 960.0;
+
+/// Widest the new-backup wizard grows.
+pub const WIZARD_MAX_WIDTH: f32 = 760.0;
+
+/// Widest the first-run page's text grows.
+pub const EMPTY_MAX_WIDTH: f32 = 460.0;
+
+/// Size of the app icon on the first-run page.
+pub const EMPTY_ICON_SIZE: u16 = 96;
+
+/// Size of the status and file-type icons in lists.
+pub const LIST_ICON_SIZE: u16 = 16;
+
+/// Size of the warning icon beside a backup page's notices.
+pub const NOTICE_ICON_SIZE: u16 = 20;
+
+/// Height of the wizard's folder-size list.
+pub const FOLDER_LIST_HEIGHT: f32 = 320.0;
+
+/// Indent of a folder with nothing to expand in the folder-size list: the
+/// width of the expand button the others have.
+pub const FOLDER_LIST_INDENT: f32 = 24.0;
+
+/// Width of the bandwidth limit field.
+pub const BANDWIDTH_FIELD_WIDTH: f32 = 120.0;
+
+/// Widest the "Browse…" hint's text grows before it wraps. Wide enough for
+/// its longest translation to wrap onto a few lines rather than many.
+pub const HINT_MAX_WIDTH: f32 = 300.0;
+
 /// Shortest interval between two progress reports from one operation. rustic
 /// reports per blob; anything faster than this only costs redraws.
 pub const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);

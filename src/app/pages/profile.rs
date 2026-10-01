@@ -15,6 +15,7 @@ use crate::app::errors;
 use crate::app::format;
 use crate::app::pages::row;
 use crate::app::wizard::retention_label;
+use crate::constants::{NOTICE_ICON_SIZE, PAGE_MAX_WIDTH};
 use crate::constants::{PROFILE_RECENT_ROWS as RECENT, STALL_NOTICE};
 use crate::engine::{
     EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SizeEstimate,
@@ -859,7 +860,7 @@ impl ProfileState {
                 ),
         );
 
-        widget::scrollable(page.apply(widget::container).max_width(900))
+        widget::scrollable(page.apply(widget::container).max_width(PAGE_MAX_WIDTH))
             .height(Length::Fill)
             .into()
     }
@@ -1183,7 +1184,7 @@ fn trouble<'a>(
             widget::row::with_capacity(2)
                 .spacing(spacing.space_xs)
                 .align_y(Alignment::Center)
-                .push(widget::icon::from_name("dialog-warning-symbolic").size(20))
+                .push(widget::icon::from_name("dialog-warning-symbolic").size(NOTICE_ICON_SIZE))
                 .push(widget::text::title4(title)),
         )
         .push(widget::text::body(body));

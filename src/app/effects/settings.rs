@@ -3,8 +3,9 @@
 //! The Settings page's effects: the file choosers, writing and reading an
 //! export, and merging an import into the backups.
 
-use super::super::*;
 use crate::app::pages::settings;
+use crate::app::{App, Dialog, Message, Task, app, settings_export, tasks};
+use crate::fl;
 
 impl App {
     pub(in crate::app) fn run_settings_effects(

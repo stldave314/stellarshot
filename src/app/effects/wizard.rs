@@ -3,7 +3,10 @@
 //! The wizard's effects: the steps' own requests, the destination checks, the
 //! folder browser, and what happens when it finishes.
 
-use super::super::*;
+use crate::app::{
+    App, Dialog, EngineError, Message, Mode, Task, app, engine, place, profile, tasks, wizard,
+};
+use crate::fl;
 
 impl App {
     pub(in crate::app) fn run_wizard_effects(

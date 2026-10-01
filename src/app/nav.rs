@@ -3,7 +3,13 @@
 //! The sidebar: its rows, which one is selected, and keeping each row's
 //! status in step with the backup it stands for.
 
-use super::*;
+use std::collections::HashMap;
+
+use crate::app::{
+    App, EngineError, Message, Profile, RunState, Task, app, profile, run_state, tasks, widget,
+};
+use crate::debug::CONFIG;
+use crate::{error_log, fl};
 
 /// What a sidebar entry leads to.
 #[derive(Debug, Clone, PartialEq, Eq)]

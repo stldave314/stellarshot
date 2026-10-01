@@ -2,7 +2,13 @@
 
 //! The restore page's effects.
 
-use super::super::*;
+use crate::app::{
+    App, Dialog, DialogMessage, EngineError, Job, Message, OPEN_COPY_MAX_BYTES, Operation, Profile,
+    RESTORE_RESULT_LIMIT, Task, app, child, engine, event_log, format, record_event,
+    remove_old_open_copies, restore, tasks,
+};
+use crate::debug::UI;
+use crate::{error_log, fl};
 
 impl App {
     pub(in crate::app) fn run_restore_effects(

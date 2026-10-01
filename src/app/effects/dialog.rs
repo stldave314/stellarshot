@@ -3,7 +3,12 @@
 //! What confirming, closing and answering a dialog does: the dialogs
 //! themselves are in `app::dialog`; this is what they act on.
 
-use super::super::*;
+use crate::app::{
+    App, Dialog, DialogMessage, EngineError, Job, Message, Operation, Profile, RunnerEvent, Task,
+    app, child, engine, event_log, record_event, tasks,
+};
+use crate::debug::{CONFIG, ENGINE};
+use crate::{debug_log, fl};
 
 impl App {
     pub(in crate::app) fn on_dialog(&mut self, message: DialogMessage) -> Task<Message> {

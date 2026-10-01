@@ -26,7 +26,7 @@ use crate::constants::{
     OPEN_COPY_MAX_AGE, OPEN_COPY_MAX_BYTES, RESTORE_RESULT_LIMIT, WINDOW_CLOCK_TICK, WINDOW_HEIGHT,
     WINDOW_WIDTH,
 };
-use crate::debug::{CONFIG, ENGINE, UI};
+use crate::debug::{CONFIG, UI};
 use crate::engine::{self, EngineError, Secret};
 use crate::event_log;
 use crate::profile::{Destination, Profile};

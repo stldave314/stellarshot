@@ -2758,3 +2758,67 @@ fn lock_keys_are_stable_across_versions() {
         "556651669569762a"
     );
 }
+
+/// The nearest to a crafted snapshot rustic's public API can write: its
+/// own stdin backup takes the file name from an option, here `../escaped`.
+/// rustic drops the `..` when it builds the tree, so the snapshot holds a
+/// plain `escaped` at its root; restoring it puts the file inside the
+/// target and nothing beside it. A tree that really holds a `..` node
+/// cannot be written without rustic's private pack and encryption code;
+/// [`check_walked`]'s own tests cover that case in memory.
+#[test]
+fn a_parent_folder_in_a_stdin_backups_name_stays_inside_the_target() {
+    use std::str::FromStr;
+
+    let fixture = fixture();
+    let crafted = {
+        let repo = open(&fixture.repo, &secret()).unwrap();
+        let mut options = rustic_core::BackupOptions::default();
+        options.stdin_filename = "../escaped".to_owned();
+        options.stdin_command = Some(rustic_core::CommandInput::from_str("echo pwned").unwrap());
+        let snapshot = rustic_core::SnapshotOptions::default()
+            .to_snapshot()
+            .unwrap();
+        repo.inner
+            .to_indexed_ids()
+            .unwrap()
+            .backup(
+                &options,
+                &rustic_core::PathList::from_string("-").unwrap(),
+                snapshot,
+            )
+            .unwrap()
+    };
+    let snapshot = crafted.id.to_string();
+    let browser = open(&fixture.repo, &secret()).unwrap().browse().unwrap();
+    let names: Vec<String> = browser
+        .list(&snapshot, Path::new("/"))
+        .unwrap()
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect();
+    assert_eq!(names, vec!["escaped".to_owned()]);
+
+    let outside = fixture.work.join("inside");
+    let target = outside.join("target");
+    fs::create_dir_all(&target).unwrap();
+    let request = RestoreRequest {
+        snapshot,
+        paths: vec![PathBuf::from("/")],
+        target: Target::Folder(target.clone()),
+        policy: ConflictPolicy::Overwrite,
+        ..RestoreRequest::default()
+    };
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(&request, Arc::new(NoProgress))
+        .unwrap();
+
+    assert_eq!(fs::read(target.join("escaped")).unwrap(), b"pwned\n");
+    let beside: Vec<_> = fs::read_dir(&outside)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(beside, vec![std::ffi::OsString::from("target")]);
+    assert!(!fixture.work.join("escaped").exists());
+}

@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::constants::OVERDUE_FACTOR;
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind};
-use crate::profile::Profile;
 use crate::error_log;
+use crate::profile::Profile;
 
 /// A backup's state, for the sidebar icon and its legend. See [`status`] for
 /// how the fields it is drawn from combine into one of these.

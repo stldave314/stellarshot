@@ -32,6 +32,18 @@ decided on 2026-09-30:
 | TST-2 | The keyring test cleans up through a drop guard (`08942ed`) |
 | TST-3 | REST tests run against `rclone serve restic` and are no longer ignored (`08942ed`) |
 
+Also finished, from notes that still said "not done" lower down:
+
+| Task | Resolution |
+|---|---|
+| ARC-2 | Every row: `HOME` and `XDG_RUNTIME_DIR` read only in `paths`, one state-store opener, one status precedence (`BackupStatus::from_facts`), one spawn-error mapping (`fa40176`, `7fc0b39`) |
+| TST-4 | `is_running` and the `is_running_in` its tests call share one probe (`fa40176`) |
+| UI-8 | The password dialogs focus their field and submit with Enter (readiness UI-43) |
+| CI-5 | Its fifth item followed TST-3, now done |
+| SEC-8 | Nothing left: the keyring's bytes move into the `Secret` (an exact-size `Vec` becomes the `String`, then the boxed secret) without a second copy |
+| SEC-2 | A test restores the nearest to a crafted snapshot rustic's public API can write; rustic normalizes a `..` in a path away when it builds the tree. A tree that really holds one needs rustic's private pack and encryption code, so `check_walked`'s in-memory tests remain the proof for that case |
+| REL-10 | `ErrorKind` and `Source` fall back to `Unknown`; `EventKind`'s variants carry data, which `serde(other)` cannot absorb, so an unknown one makes the history unreadable, which Reset Status now handles with the original kept aside |
+
 Decided against, with the reason:
 
 - **ARC-6, an enum per operation for `runner::Job`, and folding `Outcome`
@@ -45,6 +57,9 @@ Decided against, with the reason:
 - **ARC-8, pinning `libcosmic` by `rev`.** `cosmic-panel-config` names the
   same repository without a rev, so a pin builds two copies of the toolkit;
   `Cargo.lock` with `--locked` everywhere already makes builds reproducible.
+- **REL-2's "consider": open the repository before the Before hooks.** A
+  Before hook is often what makes the destination reachable (mounting a
+  share, waking a server), so the repository has to be opened after it.
 - **REL-4, one process helper for hooks and the password command.** One is
   synchronous and reads with `bounded`; the other runs on tokio and has to
   wipe what it read (it is a password), so its capped reader zeroizes. Both

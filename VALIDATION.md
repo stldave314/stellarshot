@@ -767,10 +767,31 @@ own, so the change is checked against every rule this project's own
 script enforces (screenshot captions, the release-version match, the ID
 agreement across component/launchable/desktop-file/icon, and the rest),
 not only the generic validator's. Still one pedantic finding, the same
-pre-existing one above — nothing new introduced. Not done: the
-localized `Name[xx]`/`Comment[xx]` half of I18N-3, which needs a
-build-time generator this project does not have yet; see the review
-plan's own status note for why that was not rushed in alongside this.
+pre-existing one above — nothing new introduced. The localized half
+landed in 0.9.0 without a generator: the translations live in the locale
+files, and `tests/desktop_l10n.rs` fails if `res/` disagrees with them.
+
+### Added for 0.9.0
+
+| Test | What it proves |
+| --- | --- |
+| `a_session_keeps_the_lock_between_operations` (`tests/runner.rs`) | A scheduled run's backup, clean-up and check share one hold of the lock: a real second `--run` process is told the repository is locked between them, and the later stages work on the repository the backup left open |
+| `a_killed_backups_leftovers_do_not_harm_the_next_backup_or_clean_up` (`tests/runner.rs`) | A backup killed once a pack is on disk leaves data behind; the next backup and a clean-up succeed and the repository checks clean. The leftovers are not reused (rustic indexes every five minutes) and are removed by a clean-up a day later, in rustic's two steps |
+| `a_rest_password_moves_to_the_keyring_and_still_logs_in` (`tests/rest_server.rs`) | Against an `rclone serve restic` that requires a login and the real Secret Service: the password leaves the saved address, is read back from the keyring, and lets a repository be created; the same address without it is refused |
+| The rest of `tests/rest_server.rs` | Backup, restore, probe and the refused delete against a real REST server, no longer ignored |
+| `a_removed_backups_state_and_history_are_deleted`, `an_unreadable_status_can_be_reset`, `an_unreadable_history_can_be_set_aside_and_started_again` (`tests/state_removal.rs`) | Against cosmic-config's real state store in a temporary `XDG_STATE_HOME`: removal deletes only that backup's files, an unreadable value refuses updates until reset, and the original is kept as `<key>.unreadable` |
+| `tests/desktop_l10n.rs` | The desktop entries' and the store summary's translations match the locale files, for every locale |
+| `several_previews_from_one_index_add_up_to_each_on_its_own` (`src/engine/tests.rs`) | A multi-item preview read from one index equals the sum of separate previews |
+| `a_parent_folder_in_a_stdin_backups_name_stays_inside_the_target` (`src/engine/tests.rs`) | The nearest to a crafted snapshot rustic's public API can write (a stdin backup named `../escaped`) restores inside the target and nothing beside it |
+| `only_this_users_own_snapshot_mounts_are_candidates_for_cleanup` (`src/engine/mount.rs`) | The startup cleanup only ever considers this user's own Stellarshot FUSE mounts |
+| `an_unreadable_mount_list_is_not_shown_as_no_drives` (`src/app/wizard/place.rs`) | The wizard tells an unreadable mount list apart from no drive |
+| `starting_a_run_by_hand_needs_a_real_backup_id_and_unit` (`src/timers.rs`) | Run Now refuses a malformed ID before systemctl, and fails for a unit that does not exist |
+| `a_rest_password_is_split_out_of_its_address_as_typed`, `a_remembered_rest_password_goes_back_into_the_location` (`src/profile.rs`) | Percent-encoded REST passwords survive the split and the re-insertion; one typed into the address wins |
+
+Checked by hand rather than by a test: the notification waiter
+(`stellarshot --await-notification`) against a stand-in notification server
+on a private D-Bus — it exits as soon as its own notification closes, keeps
+waiting through another one's, and refuses malformed arguments.
 
 ### Packages (`./install.sh package`, CI)
 
@@ -801,6 +822,8 @@ Things a test cannot reach yet, and how they were confirmed.
 | The wizard no longer clips fields or hides rows under the scrollbar | `scripts/screenshots.sh wizard` before and after: the scrollbar now sits beside the cards instead of over them; a focused SFTP field under Xwayland shows its whole focus ring at the left edge | 0.1.x |
 | One press of Next checks an SFTP destination | Under Xwayland with `xdotool`: one press ran the check (a closed port on 127.0.0.1), which failed at once, stayed on the step and left Next ready to try again | 0.1.x |
 | Déjà Dup's rclone settings | The running Déjà Dup's rclone environment (names and non-secret values only): its own `RCLONE_DRIVE_CLIENT_ID`, `RCLONE_DRIVE_SCOPE=drive.file`, `RCLONE_DRIVE_USE_TRASH=false`, run by restic as `rclone serve restic --stdio` | 0.1.x |
+| The screenshots match 0.9.0 | `scripts/screenshots.sh`, every image inspected: the restore page's new tab bar, the wizard hint at its new width | 0.9.0 |
+| The new on-connect units are valid | `systemd-analyze --user verify` on generated units, and real transient units with a stand-in device: one run per connection | 0.9.0 |
 | Déjà Dup's schedule defaults | Read from the installed Flatpak's `org.gnome.DejaDup.gschema.xml`: `periodic` false, `periodic-period` 7, `delete-after` 0 (forever) | M5 |
 
 ### Not yet verified end to end
@@ -829,6 +852,8 @@ Things a test cannot reach yet, and how they were confirmed.
   arrive and read correctly; the decision to send it moved to a pure,
   unit-tested function (`overdue_notification_due`) and no automated test
   may call `notify::failure` again — see `tests/scheduled.rs`'s doc comment.
+- **Run Now and Reset Status on a real backup** (0.9.0). Both are unit and
+  store tested; neither has been pressed in the real window yet.
 - **A timer firing on its own at its calendar time.** The timer's schedule and
   its service were each confirmed, and systemd starts one from the other.
 - **Restoring with numeric or no ownership actually changing a file's owner**

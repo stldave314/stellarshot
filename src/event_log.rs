@@ -16,9 +16,9 @@ use crate::constants::EVENT_LOG_CAPACITY;
 use crate::core::{errors, format};
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind, short_id};
+use crate::error_log;
 use crate::fl;
 use crate::run_state::Stage;
-use crate::error_log;
 
 /// What happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

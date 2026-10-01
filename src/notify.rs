@@ -9,7 +9,7 @@ use futures_util::StreamExt;
 use tokio::process::Command;
 use zbus::zvariant::Value;
 
-use crate::app::APP_ID;
+use crate::constants::APP_ID;
 use crate::constants::NOTIFICATION_WAIT;
 use crate::debug::SCHED;
 use crate::{debug_log, error_log};
@@ -105,7 +105,7 @@ async fn show(
 /// unit of its own: started from the scheduled run's service directly, it
 /// would be stopped with it. Whether it started.
 async fn hand_off(id: u32, profile_id: &str) -> bool {
-    let Ok(program) = crate::schedule::executable() else {
+    let Ok(program) = crate::timers::executable() else {
         return false;
     };
     let started = Command::new("systemd-run")
@@ -200,7 +200,7 @@ pub fn await_main(args: &[String]) -> std::process::ExitCode {
 /// as a unit of its own: a scheduled run is a service, and systemd stops
 /// everything a service started when the service ends.
 async fn open_profile(profile_id: &str) {
-    let Ok(program) = crate::schedule::executable() else {
+    let Ok(program) = crate::timers::executable() else {
         return;
     };
     let launched = Command::new("systemd-run")

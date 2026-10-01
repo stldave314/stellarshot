@@ -12,10 +12,10 @@
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 use serde::{Deserialize, Serialize};
 
-use crate::app::APP_ID;
-use crate::app::config::CONFIG_VERSION;
-use crate::app::{errors, format};
+use crate::constants::APP_ID;
+use crate::constants::CONFIG_VERSION;
 use crate::constants::EVENT_LOG_CAPACITY;
+use crate::core::{errors, format};
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind, short_id};
 use crate::fl;

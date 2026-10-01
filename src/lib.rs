@@ -7,29 +7,29 @@
 //! drive the engine and the child process directly.
 
 pub mod app;
-pub mod bounded;
-pub mod conditions;
-pub mod constants;
-pub mod core;
-pub mod debug;
-pub mod dejadup;
-pub mod drives;
+pub(crate) mod bounded;
+pub(crate) mod conditions;
+pub(crate) mod constants;
+pub(crate) mod core;
+pub(crate) mod debug;
+pub(crate) mod dejadup;
+pub(crate) mod drives;
 pub mod engine;
 pub mod event_log;
-pub mod exe;
-pub mod hooks;
+pub(crate) mod exe;
+pub(crate) mod hooks;
 pub mod keyring;
 pub mod notify;
-pub mod password_command;
-pub mod paths;
-pub mod proc_signal;
+pub(crate) mod password_command;
+pub(crate) mod paths;
+pub(crate) mod proc_signal;
 pub mod profile;
 pub mod run_state;
 pub mod runner;
-pub mod schedule;
 pub mod scheduled;
 pub mod settings_export;
-pub mod status;
+pub(crate) mod status;
+pub(crate) mod timers;
 
 /// Make this process's memory unreadable through a core dump, for a process
 /// that holds a repository password (a `--run` child, a `--scheduled` run).

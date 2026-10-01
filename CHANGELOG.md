@@ -268,6 +268,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of claiming no drive is plugged in.
 - **Previewing a restore of several items reads the backup's index once**,
   not once per item, which on cloud storage was a download each.
+- **A snapshot left mounted by a crash is unmounted** the next time the
+  window starts, instead of its folder answering "Transport endpoint is not
+  connected" until you ran `fusermount -u` yourself.
+- **A scheduled run holds its backup's lock from the backup through the
+  clean-up and check**, and opens the repository once for all of them: a
+  backup started from the window in between used to make the clean-up fail
+  as locked.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**
@@ -300,9 +307,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Page widths and the folder-size list follow one set of sizes, the History
   page is as wide as the others, and the "Browse…" hint is wide enough for
   its translations.
+- The launcher entry, its New Backup and Restore Files actions, and the
+  store listing's summary are translated, and a test keeps them in step
+  with the locale files.
 - Menu ellipses and quotation marks are consistent across locales; Swiss
   German uses the product name "Stellarshot", and Swedish says "Radera" for
   a permanent delete.
+- The code the background processes share with the window (settings,
+  formatting, error text, logging) moved out of the window's module, most
+  modules are private to the crate, and the systemd unit module is now
+  `timers`, to tell it apart from `scheduled`.
 - The REST server tests run against `rclone serve restic` and run in CI
   again; a coverage report is produced on every CI run.
 - The release is built with a fixed Rust toolchain, `./install.sh package`

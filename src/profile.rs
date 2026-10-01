@@ -108,7 +108,7 @@ impl Destination {
     /// A short human-readable description, for the status card.
     pub fn describe(&self) -> String {
         match self {
-            Self::Local { path } => crate::app::format::path(path),
+            Self::Local { path } => crate::core::format::path(path),
             Self::Removable {
                 label,
                 relative_path,

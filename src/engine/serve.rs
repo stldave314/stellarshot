@@ -70,13 +70,7 @@ impl Serve {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|err| {
-                if err.kind() == std::io::ErrorKind::NotFound {
-                    EngineError::new(ErrorKind::RcloneMissing, program.as_str())
-                } else {
-                    EngineError::from(err)
-                }
-            })?;
+            .map_err(|err| super::rclone::spawn_error(program, err))?;
         let Some(stderr) = child.stderr.take() else {
             let _ = child.kill();
             let _ = child.wait();

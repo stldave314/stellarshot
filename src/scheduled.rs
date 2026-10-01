@@ -16,10 +16,10 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use crate::app::config::StellarshotConfig;
-use crate::app::errors;
-use crate::app::format::now;
 use crate::constants::{CHECK_INTERVAL, CHECK_RETRY};
+use crate::core::config::StellarshotConfig;
+use crate::core::errors;
+use crate::core::format::now;
 use crate::debug::SCHED;
 use crate::engine::{EngineError, ErrorKind, KeepRules, Location, Secret, profile_tag};
 use crate::event_log;
@@ -100,7 +100,7 @@ fn notify_if_overdue(profile: &Profile, runtime: &tokio::runtime::Runtime) {
     let summary = fl!("notify-overdue", name = profile.name.clone());
     let body = fl!(
         "notify-overdue-body",
-        schedule = crate::app::pages::profile::schedule_summary(profile.schedule)
+        schedule = crate::core::format::schedule_summary(profile.schedule)
     );
     // Recorded only once the notification was actually shown — not merely
     // attempted — so a transient failure to show it (the notification
@@ -137,11 +137,15 @@ fn record(profile: &Profile, change: impl FnOnce(&mut RunState)) {
 
 struct Failed(Stage, EngineError);
 
-/// Run one of the runner's operations, reporting progress only to the
-/// progress file a window follows.
-fn operation(operation: Operation, job: Job) -> Result<runner::Outcome, EngineError> {
+/// Run one of the runner's operations in `session`, reporting progress only
+/// to the progress file a window follows.
+fn operation(
+    session: &mut runner::Session,
+    operation: Operation,
+    job: Job,
+) -> Result<runner::Outcome, EngineError> {
     let output = Arc::new(Output::progress_file_only(&job.repository));
-    let result = runner::run(operation, job, output);
+    let result = session.run(operation, job, output);
     // Stopped by `systemctl --user stop` or logout: the signal thread runs
     // the After hooks and ends the process; nothing here may record its
     // result as a failure first.
@@ -149,19 +153,23 @@ fn operation(operation: Operation, job: Job) -> Result<runner::Outcome, EngineEr
     result
 }
 
-/// Back up, then forget, check and prune as the plan says.
+/// Back up, then forget, check and prune as the plan says, all under one
+/// hold of the repository's lock (see [`runner::Session`]).
 fn run(
     profile: &Profile,
     global_exclude_patterns: &[String],
     location: Location,
     secret: Secret,
 ) -> Result<(), Failed> {
+    let mut session =
+        runner::Session::start(&location).map_err(|err| Failed(Stage::Backup, err))?;
     let job = || Job {
         profile_tag: profile_tag(&profile.id),
         profile_sources: profile.sources.clone(),
         ..Job::new(location.clone(), secret.clone())
     };
     operation(
+        &mut session,
         Operation::Backup,
         Job {
             request: Some(profile.backup_request(global_exclude_patterns)),
@@ -187,6 +195,7 @@ fn run(
     let plan = Plan::new(profile, &run_state::load(&profile.id), finished);
     let removed = match plan.forget {
         Some(rules) => operation(
+            &mut session,
             Operation::Maintain,
             Job {
                 keep: Some(rules),
@@ -200,7 +209,7 @@ fn run(
     };
 
     if plan.check {
-        let result = operation(Operation::Check, job());
+        let result = operation(&mut session, Operation::Check, job());
         let damaged = matches!(&result, Err(err) if err.kind == ErrorKind::RepositoryDamaged);
         if result.is_err() && !damaged {
             let attempted = now();
@@ -227,6 +236,7 @@ fn run(
     let mut freed = 0;
     if plan.prune_now(removed, damaged) {
         freed = operation(
+            &mut session,
             Operation::Maintain,
             Job {
                 prune: true,
@@ -269,7 +279,7 @@ pub fn main(args: &[String]) -> ExitCode {
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing
     // them for in-process reads.
-    crate::app::startup::set_logger_for_child();
+    crate::core::logging::set_logger_for_child();
     crate::core::localization::init();
     let (config, profiles_unreadable) = StellarshotConfig::load();
     if profiles_unreadable {

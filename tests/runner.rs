@@ -666,3 +666,143 @@ fn an_after_success_hook_does_not_run_after_a_failed_backup() {
         "an AfterFailure hook should have run"
     );
 }
+
+/// A scheduled run's stages share one hold of the lock: between them,
+/// another process (a window starting a backup) is told the repository is
+/// busy, and the later stages work on the repository the backup left open.
+#[test]
+fn a_session_keeps_the_lock_between_operations() {
+    use std::sync::Arc;
+    use stellarshot::runner::{Operation, Session};
+
+    let fixture = Fixture::new();
+    let lock_dir = fixture.runtime_dir().join("stellarshot");
+    let mut session = Session::start_in(&lock_dir, &fixture.location).unwrap();
+    for _ in 0..2 {
+        session
+            .run(
+                Operation::Backup,
+                fixture.backup_job(PASSWORD),
+                Arc::new(engine::NoProgress),
+            )
+            .unwrap();
+    }
+    // Between operations, as a window would see it.
+    assert!(lock::is_running_in(&lock_dir, &fixture.location));
+    let (events, status) = fixture.run("backup", &fixture.backup_job(PASSWORD));
+    assert_eq!(status.code(), Some(1));
+    match events.last() {
+        Some(Event::Error { error }) => assert_eq!(error.kind, ErrorKind::Locked),
+        other => panic!("expected a locked error, got {other:?}"),
+    }
+
+    let maintained = session
+        .run(
+            Operation::Maintain,
+            Job {
+                request: None,
+                keep: Some(KeepRules {
+                    last: Some(1),
+                    ..KeepRules::default()
+                }),
+                prune: true,
+                ..fixture.backup_job(PASSWORD)
+            },
+            Arc::new(engine::NoProgress),
+        )
+        .unwrap();
+    assert_eq!(maintained.forgotten.map(|f| f.removed), Some(1));
+    session
+        .run(
+            Operation::Check,
+            Job {
+                request: None,
+                ..fixture.backup_job(PASSWORD)
+            },
+            Arc::new(engine::NoProgress),
+        )
+        .unwrap();
+    drop(session);
+
+    assert!(!lock::is_running_in(&lock_dir, &fixture.location));
+    assert_eq!(fixture.snapshot_count(), 1);
+}
+
+/// The total size of the repository's pack files.
+fn pack_bytes(repo: &Path) -> u64 {
+    fn walk(dir: &Path) -> u64 {
+        std::fs::read_dir(dir).map_or(0, |entries| {
+            entries
+                .map(|entry| entry.unwrap())
+                .map(|entry| {
+                    let meta = entry.metadata().unwrap();
+                    if meta.is_dir() {
+                        walk(&entry.path())
+                    } else {
+                        meta.len()
+                    }
+                })
+                .sum()
+        })
+    }
+    walk(&repo.join("data"))
+}
+
+/// What an interrupted backup leaves behind: packs no index refers to yet
+/// (rustic indexes what it has uploaded every few minutes). The next backup
+/// sends that data again, and must succeed; a clean-up must leave the
+/// repository sound. rustic deletes such leftovers in two steps, so the
+/// space returns at a clean-up at least a day later, not at once: one
+/// marks them, a later one removes them.
+#[test]
+fn a_killed_backups_leftovers_do_not_harm_the_next_backup_or_clean_up() {
+    let fixture = Fixture::new();
+    bulky_source(&fixture.source, 96);
+    let repo = fixture.dir.path().join("repo");
+
+    let mut child = fixture.spawn("backup", &fixture.backup_job(PASSWORD));
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    for line in stdout.lines() {
+        let event: Event = serde_json::from_str(&line.unwrap()).unwrap();
+        match event {
+            // Once a pack is on disk: packs are written whole, so before
+            // that there is nothing to leave behind.
+            Event::Progress { .. } if pack_bytes(&repo) > 0 => {
+                child.kill().unwrap();
+                break;
+            }
+            Event::Done { .. } => panic!("the backup finished before it could be interrupted"),
+            _ => {}
+        }
+    }
+    child.wait().unwrap();
+    let left = pack_bytes(&repo);
+
+    let (events, status) = fixture.run("backup", &fixture.backup_job(PASSWORD));
+    assert!(status.success(), "events: {events:?}");
+    let after_backup = pack_bytes(&repo);
+
+    let job = Job {
+        request: None,
+        prune: true,
+        ..fixture.backup_job(PASSWORD)
+    };
+    let (events, status) = fixture.run("maintain", &job);
+    assert!(status.success(), "events: {events:?}");
+    let after_clean_up = pack_bytes(&repo);
+
+    assert!(
+        left > 0,
+        "the interrupted backup must have written something"
+    );
+    assert!(after_backup > left, "the next backup must store its data");
+    assert!(
+        after_clean_up <= after_backup,
+        "a clean-up must never add data: {after_backup} -> {after_clean_up} bytes"
+    );
+    engine::open(&fixture.location, &Secret::new(PASSWORD))
+        .unwrap()
+        .check()
+        .unwrap();
+    assert_eq!(fixture.snapshot_count(), 1);
+}

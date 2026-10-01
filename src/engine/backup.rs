@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytesize::ByteSize;
-use rustic_core::{BackupOptions, PathList, SnapshotOptions};
+use rustic_core::{BackupOptions, IndexedIdsStatus, PathList, Repository, SnapshotOptions};
 use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
@@ -208,28 +208,71 @@ impl Repo {
         request: &BackupRequest,
         progress: Arc<dyn ProgressSink>,
     ) -> Result<BackupReport, EngineError> {
+        self.backup_keeping(request, progress).0
+    }
+
+    /// [`Self::backup`], handing the repository back still open, for a run
+    /// that does more under the same lock (see `runner::Session`). `None`
+    /// if reading the index failed, which leaves nothing to hand back.
+    pub fn backup_keeping(
+        self,
+        request: &BackupRequest,
+        progress: Arc<dyn ProgressSink>,
+    ) -> (Result<BackupReport, EngineError>, Option<Self>) {
         if request.sources.is_empty() {
-            return Err(EngineError::new(ErrorKind::Internal, "nothing to back up"));
+            return (
+                Err(EngineError::new(ErrorKind::Internal, "nothing to back up")),
+                Some(self),
+            );
         }
         let _reporting = self.report_to(progress);
-        let sources = request.path_list()?;
+        let sources = match request.path_list() {
+            Ok(sources) => sources,
+            Err(err) => return (Err(err), Some(self)),
+        };
         debug_log!(ENGINE, "backup of {} sources", sources.len());
 
-        let repo = self.inner.to_indexed_ids()?;
-        let mut options = SnapshotOptions::default();
-        if let Some(time) = request.time {
-            let time = jiff::Timestamp::from_second(time)
-                .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
-            options.time = Some(time.to_zoned(jiff::tz::TimeZone::system()));
-        }
-        if !request.profile_tag.is_empty() {
-            options = options.add_tags(&request.profile_tag)?;
-        }
-        let snapshot = options.to_snapshot()?;
-        let snapshot = repo.backup(&request.options()?, &sources, snapshot)?;
-        debug_log!(ENGINE, "created snapshot {}", snapshot.id);
-        Ok(BackupReport {
-            snapshot: SnapshotSummary::from(&snapshot),
-        })
+        let Self {
+            location,
+            bars,
+            inner,
+            serve,
+        } = self;
+        let repo = match inner.to_indexed_ids() {
+            Ok(repo) => repo,
+            Err(err) => return (Err(err.into()), None),
+        };
+        let result = new_snapshot(&repo, request, &sources);
+        // The index this read is only what a backup needs; what runs next
+        // reads its own.
+        let open = Self {
+            location,
+            bars,
+            inner: repo.drop_index(),
+            serve,
+        };
+        (result, Some(open))
     }
+}
+
+fn new_snapshot(
+    repo: &Repository<IndexedIdsStatus>,
+    request: &BackupRequest,
+    sources: &PathList,
+) -> Result<BackupReport, EngineError> {
+    let mut options = SnapshotOptions::default();
+    if let Some(time) = request.time {
+        let time = jiff::Timestamp::from_second(time)
+            .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
+        options.time = Some(time.to_zoned(jiff::tz::TimeZone::system()));
+    }
+    if !request.profile_tag.is_empty() {
+        options = options.add_tags(&request.profile_tag)?;
+    }
+    let snapshot = options.to_snapshot()?;
+    let snapshot = repo.backup(&request.options()?, sources, snapshot)?;
+    debug_log!(ENGINE, "created snapshot {}", snapshot.id);
+    Ok(BackupReport {
+        snapshot: SnapshotSummary::from(&snapshot),
+    })
 }

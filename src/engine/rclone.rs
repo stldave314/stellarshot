@@ -76,8 +76,7 @@ pub fn target(remote: &str, path: &str) -> String {
 /// turning a delete into a no-op that still reports success, say. What a
 /// caller needs rclone to see it sets itself, after this.
 pub(super) fn command() -> Command {
-    let mut command = Command::new(RCLONE);
-    command.env("LC_ALL", "C");
+    let mut command = user_command();
     for (name, _) in std::env::vars_os() {
         if name.to_string_lossy().starts_with("RCLONE_") {
             command.env_remove(name);
@@ -86,10 +85,20 @@ pub(super) fn command() -> Command {
     command
 }
 
-/// `err` from starting rclone: only "not found" means it is not installed.
-fn spawn_error(err: std::io::Error) -> EngineError {
+/// rclone against the user's own configuration, for reading their remotes:
+/// their `RCLONE_*` environment (an encrypted configuration's password, say)
+/// is theirs to keep. Output untranslated, as for [`command`].
+fn user_command() -> Command {
+    let mut command = Command::new(RCLONE);
+    command.env("LC_ALL", "C");
+    command
+}
+
+/// `err` from starting `program`: only "not found" means it is not
+/// installed.
+pub(super) fn spawn_error(program: &str, err: std::io::Error) -> EngineError {
     if err.kind() == std::io::ErrorKind::NotFound {
-        EngineError::new(ErrorKind::RcloneMissing, RCLONE)
+        EngineError::new(ErrorKind::RcloneMissing, program)
     } else {
         EngineError::from(err)
     }
@@ -182,7 +191,7 @@ fn run_bounded(
         // Its own group, so a timeout reaches anything rclone started too.
         command.process_group(0);
     }
-    let mut child = command.spawn().map_err(spawn_error)?;
+    let mut child = command.spawn().map_err(|err| spawn_error(RCLONE, err))?;
     // Read both pipes as they fill, so a long listing cannot block rclone,
     // but keep only what is used: a folder with millions of entries must not
     // fill memory. Only the start of a listing matters (see [`classify`]),
@@ -380,10 +389,8 @@ pub(crate) fn remote_exists(config: &Path, name: &str) -> bool {
 
 /// The remotes in the user's own rclone configuration.
 pub fn user_remotes() -> Result<Vec<String>, EngineError> {
-    // The user's own configuration, so their own `RCLONE_*` environment
-    // (an encrypted config's password, say) is left as it is.
-    let mut command = Command::new(RCLONE);
-    command.env("LC_ALL", "C").arg("listremotes");
+    let mut command = user_command();
+    command.arg("listremotes");
     let output = run_bounded(command, &["listremotes"], &RunLimits::new(PROBE_TIMEOUT))?;
     if !output.status.success() {
         return Err(EngineError::new(ErrorKind::Internal, stderr(&output)));
@@ -399,9 +406,9 @@ pub fn user_remotes() -> Result<Vec<String>, EngineError> {
 /// `name`, so Stellarshot keeps working even if the user later changes or
 /// removes their own copy.
 pub fn copy_user_remote(config: &Path, user_remote: &str, name: &str) -> Result<(), EngineError> {
-    let mut command = Command::new(RCLONE);
+    let mut command = user_command();
     let args = ["config", "show", "--", user_remote];
-    command.env("LC_ALL", "C").args(args);
+    command.args(args);
     let output = run_bounded(command, &args, &RunLimits::new(PROBE_TIMEOUT))?;
     if !output.status.success() {
         return Err(EngineError::new(ErrorKind::Internal, stderr(&output)));

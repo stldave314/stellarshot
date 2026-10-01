@@ -94,6 +94,62 @@ pub fn mount(
     })
 }
 
+/// Unmount snapshots a Stellarshot that crashed or was killed left
+/// mounted. Its mount point then answers every access with "Transport
+/// endpoint is not connected" until unmounted. A live mount (another
+/// window's) answers normally and is left alone, as is anyone else's.
+///
+/// fuser's `AutoUnmount` would do this as the process dies, but only for a
+/// mount other users may see, which a decrypted snapshot must not be.
+pub fn unmount_dead() {
+    let Ok(mountinfo) = std::fs::read("/proc/self/mountinfo") else {
+        return;
+    };
+    let uid = rustix::process::getuid().as_raw();
+    for point in ours(&crate::drives::mounts(&mountinfo), uid) {
+        let dead =
+            std::fs::metadata(&point).is_err_and(|err| err.raw_os_error() == Some(libc::ENOTCONN));
+        if !dead {
+            continue;
+        }
+        let unmounted = ["fusermount3", "fusermount"].iter().any(|program| {
+            std::process::Command::new(program)
+                .arg("-u")
+                .arg("--")
+                .arg(&point)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        });
+        debug_log!(
+            MOUNT,
+            "left-over mount at {}: unmounted {unmounted}",
+            point.display()
+        );
+    }
+}
+
+/// The mount points of Stellarshot's own snapshot mounts belonging to
+/// `uid`.
+fn ours(mounts: &[crate::drives::Mount], uid: u32) -> Vec<PathBuf> {
+    let owner = format!("user_id={uid}");
+    mounts
+        .iter()
+        .filter(|mount| {
+            mount.source == "stellarshot"
+                && mount.fstype.as_encoded_bytes().starts_with(b"fuse")
+                && mount
+                    .super_options
+                    .to_string_lossy()
+                    .split(',')
+                    .any(|option| option == owner)
+        })
+        .map(|mount| mount.mount_point.clone())
+        .collect()
+}
+
 /// Run one FUSE callback's body, turning a panic inside it into an I/O error
 /// for that one request instead of the end of the whole mount.
 ///
@@ -491,5 +547,22 @@ mod tests {
     fn attr_reports_the_mounting_user_as_owner() {
         let attr = attr(INodeNo(2), &entry(EntryKind::File, 1), 1000, 1000);
         assert_eq!((attr.uid, attr.gid), (1000, 1000));
+    }
+
+    #[test]
+    fn only_this_users_own_snapshot_mounts_are_candidates_for_cleanup() {
+        let mountinfo = b"\
+36 25 0:50 / /home/alex/Old\\040snapshot rw,nosuid,nodev - fuse stellarshot ro,user_id=1000,group_id=1000\n\
+37 25 0:51 / /home/sam/theirs rw,nosuid,nodev - fuse stellarshot ro,user_id=1001,group_id=1001\n\
+38 25 0:52 / /home/alex/sshfs rw,nosuid,nodev - fuse.sshfs alex@host: rw,user_id=1000,group_id=1000\n\
+39 25 0:53 / /home/alex/user_id=1000 rw - fuse other rw,user_id=10000\n\
+40 25 8:1 / /media/alex/stellarshot rw - ext4 /dev/sdb1 rw\n";
+        let mounts = crate::drives::mounts(mountinfo);
+        assert_eq!(mounts.len(), 5);
+        assert_eq!(
+            ours(&mounts, 1000),
+            vec![PathBuf::from("/home/alex/Old snapshot")]
+        );
+        assert!(ours(&mounts, 0).is_empty());
     }
 }

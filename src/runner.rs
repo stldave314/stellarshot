@@ -13,7 +13,7 @@
 //! stdout. The exit status is 0 on success and 1 when an error was reported.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
@@ -358,97 +358,159 @@ pub fn run(
     job: Job,
     sink: Arc<dyn ProgressSink>,
 ) -> Result<Outcome, EngineError> {
-    let _lock = lock::acquire(&job.repository)?;
-    // Declared after the lock, so it is dropped (and the file removed) while
-    // the lock is still held. A process that failed to get the lock never
-    // reaches this line, and so never removes the holder's progress file.
-    let _progress_file = RemoveOnDrop(lock::progress_path(&job.repository));
-    debug_log!(ENGINE, "--run {} holds the lock", operation.as_arg());
-    // Checked before `Before` hooks run, so a malformed job (never produced
-    // by the window itself) cannot leave them run with no matching `After`:
-    // every other way this function can fail before reaching the explicit
-    // `run_after` call is instead covered by `AfterHookGuard` below.
-    if operation == Operation::Backup && job.request.is_none() {
-        return Err(missing("backup request"));
+    Session::start(&job.repository)?.run(operation, job, sink)
+}
+
+/// Several operations on one repository under one hold of its write lock,
+/// opening it once: a scheduled run's backup, clean-up and check. Nothing
+/// else can take the lock between them (a window's action slipping in
+/// would make the next stage fail as locked), and the repository is not
+/// read again from scratch for each.
+pub struct Session {
+    /// Opened by the first operation that needs it, after that operation's
+    /// Before hooks (which may be what makes the destination reachable).
+    /// Dropped first of the fields: the repository, then the progress
+    /// file, then the lock.
+    repo: Option<engine::Repo>,
+    _progress_file: RemoveOnDrop,
+    _lock: lock::WriteLock,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("open", &self.repo.is_some())
+            .finish_non_exhaustive()
     }
-    // Armed before the first Before hook, and for every operation, not only
-    // a backup: a SIGTERM (Cancel, `systemctl --user stop`, logout) then
-    // always reports the run canceled, and a backup's After hooks run
-    // whatever stage it is stopped at. A non-backup has no hooks to run.
-    let backup_hooks: &[Hook] = if operation == Operation::Backup {
-        &job.hooks
-    } else {
-        &[]
-    };
-    let report_sink = sink.clone();
-    let ticket = crate::proc_signal::arm(crate::proc_signal::Armed {
-        hooks: backup_hooks.to_vec(),
-        report: Box::new(move || report_sink.canceled()),
-    });
-    // Dropped without `run` (any early return below, including a Before hook
-    // failing), it runs the After hooks as a failure: a Before hook that
-    // already stopped a service must see it started again.
-    let after_hooks = AfterHookGuard::new(backup_hooks, ticket);
-    if operation == Operation::Backup {
-        hooks::run_before(&job.hooks).map_err(|results| hook_failure(&results))?;
+}
+
+impl Session {
+    /// Take `repository`'s write lock, or fail with `Locked` at once.
+    pub fn start(repository: &engine::Location) -> Result<Self, EngineError> {
+        Self::start_in(&lock::runtime_dir(), repository)
     }
-    let repo = engine::open(&job.repository, &job.password)?;
-    match operation {
-        Operation::Backup => {
-            let request = job.request.ok_or_else(|| missing("backup request"))?;
-            let result = repo.backup(&request, sink);
-            log_after_hooks(&after_hooks.run(result.is_ok()));
-            result.map(|report| Outcome {
-                report: Some(report),
-                ..Outcome::default()
-            })
+
+    /// [`Self::start`], with the lock directory given explicitly.
+    pub fn start_in(dir: &Path, repository: &engine::Location) -> Result<Self, EngineError> {
+        let lock = lock::acquire_in(dir, repository)?;
+        Ok(Self {
+            repo: None,
+            // Created after the lock, and dropped before it, so the file is
+            // removed while the lock is still held. A process that failed to
+            // get the lock never gets here, and so never removes the
+            // holder's progress file.
+            _progress_file: RemoveOnDrop(lock::progress_path_in(dir, repository)),
+            _lock: lock,
+        })
+    }
+
+    /// Run `operation` for `job`, which must name the repository this
+    /// session holds.
+    pub fn run(
+        &mut self,
+        operation: Operation,
+        job: Job,
+        sink: Arc<dyn ProgressSink>,
+    ) -> Result<Outcome, EngineError> {
+        debug_log!(ENGINE, "{} holds the lock", operation.as_arg());
+        // Checked before `Before` hooks run, so a malformed job (never produced
+        // by the window itself) cannot leave them run with no matching `After`:
+        // every other way this function can fail before reaching the explicit
+        // `run_after` call is instead covered by `AfterHookGuard` below.
+        if operation == Operation::Backup && job.request.is_none() {
+            return Err(missing("backup request"));
         }
-        Operation::Restore => match job.restore {
-            Some(request) => repo.restore(&request, sink).map(|restored| Outcome {
-                restored: Some(restored),
-                ..Outcome::default()
-            }),
-            None => {
-                let snapshot = job.snapshot.ok_or_else(|| missing("snapshot"))?;
-                let destination = job.destination.ok_or_else(|| missing("destination"))?;
-                repo.restore_all(&snapshot, &destination, sink)
+        // Armed before the first Before hook, and for every operation, not only
+        // a backup: a SIGTERM (Cancel, `systemctl --user stop`, logout) then
+        // always reports the run canceled, and a backup's After hooks run
+        // whatever stage it is stopped at. A non-backup has no hooks to run.
+        let backup_hooks: &[Hook] = if operation == Operation::Backup {
+            &job.hooks
+        } else {
+            &[]
+        };
+        let report_sink = sink.clone();
+        let ticket = crate::proc_signal::arm(crate::proc_signal::Armed {
+            hooks: backup_hooks.to_vec(),
+            report: Box::new(move || report_sink.canceled()),
+        });
+        // Dropped without `run` (any early return below, including a Before hook
+        // failing), it runs the After hooks as a failure: a Before hook that
+        // already stopped a service must see it started again.
+        let after_hooks = AfterHookGuard::new(backup_hooks, ticket);
+        if operation == Operation::Backup {
+            hooks::run_before(&job.hooks).map_err(|results| hook_failure(&results))?;
+        }
+        let repo = match self.repo.take() {
+            Some(repo) => repo,
+            None => engine::open(&job.repository, &job.password)?,
+        };
+        // Every arm but a restore leaves it open for the next operation; a
+        // restore consumes it, and a later operation opens it again.
+        let result = match operation {
+            Operation::Backup => {
+                let request = job.request.ok_or_else(|| missing("backup request"))?;
+                let (result, open) = repo.backup_keeping(&request, sink);
+                self.repo = open;
+                log_after_hooks(&after_hooks.run(result.is_ok()));
+                return result.map(|report| Outcome {
+                    report: Some(report),
+                    ..Outcome::default()
+                });
+            }
+            Operation::Restore => {
+                return match job.restore {
+                    Some(request) => repo.restore(&request, sink).map(|restored| Outcome {
+                        restored: Some(restored),
+                        ..Outcome::default()
+                    }),
+                    None => {
+                        let snapshot = job.snapshot.ok_or_else(|| missing("snapshot"))?;
+                        let destination = job.destination.ok_or_else(|| missing("destination"))?;
+                        repo.restore_all(&snapshot, &destination, sink)
+                            .map(|()| Outcome::default())
+                    }
+                };
+            }
+            Operation::Check => repo.check().map(|()| Outcome::default()),
+            Operation::DeleteSnapshots => {
+                repo.delete_snapshots(&job.ids).map(|()| Outcome::default())
+            }
+            Operation::SetPinned => {
+                let id = job.ids.first().ok_or_else(|| missing("snapshot ID"))?;
+                let pinned = job.pinned.ok_or_else(|| missing("pinned state"))?;
+                repo.set_pinned(id, pinned).map(|summary| Outcome {
+                    pinned: Some(summary),
+                    ..Outcome::default()
+                })
+            }
+            Operation::Maintain => {
+                let forgotten = job
+                    .keep
+                    .map(|rules| {
+                        repo.forget(
+                            &rules,
+                            &engine::hostname(),
+                            &job.profile_tag,
+                            &job.profile_sources,
+                        )
+                    })
+                    .transpose()?;
+                let pruned = job.prune.then(|| repo.prune()).transpose()?;
+                Ok(Outcome {
+                    forgotten,
+                    pruned,
+                    ..Outcome::default()
+                })
+            }
+            Operation::ChangePassword => {
+                let new_password = job.new_password.ok_or_else(|| missing("new password"))?;
+                repo.change_password(new_password.expose())
                     .map(|()| Outcome::default())
             }
-        },
-        Operation::Check => repo.check().map(|()| Outcome::default()),
-        Operation::DeleteSnapshots => repo.delete_snapshots(&job.ids).map(|()| Outcome::default()),
-        Operation::SetPinned => {
-            let id = job.ids.first().ok_or_else(|| missing("snapshot ID"))?;
-            let pinned = job.pinned.ok_or_else(|| missing("pinned state"))?;
-            repo.set_pinned(id, pinned).map(|summary| Outcome {
-                pinned: Some(summary),
-                ..Outcome::default()
-            })
-        }
-        Operation::Maintain => {
-            let forgotten = job
-                .keep
-                .map(|rules| {
-                    repo.forget(
-                        &rules,
-                        &engine::hostname(),
-                        &job.profile_tag,
-                        &job.profile_sources,
-                    )
-                })
-                .transpose()?;
-            let pruned = job.prune.then(|| repo.prune()).transpose()?;
-            Ok(Outcome {
-                forgotten,
-                pruned,
-                ..Outcome::default()
-            })
-        }
-        Operation::ChangePassword => {
-            let new_password = job.new_password.ok_or_else(|| missing("new password"))?;
-            repo.change_password(new_password.expose())
-                .map(|()| Outcome::default())
-        }
+        };
+        self.repo = Some(repo);
+        result
     }
 }
 
@@ -473,10 +535,10 @@ pub fn main(args: &[String]) -> ExitCode {
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing
     // them for in-process reads.
-    crate::app::startup::set_logger_for_child();
+    crate::core::logging::set_logger_for_child();
     // Applies the cache location preference to every repository this
     // process opens; the rest of the app's settings go unused here.
-    let _ = crate::app::config::StellarshotConfig::config();
+    let _ = crate::core::config::StellarshotConfig::config();
 
     let Some(operation) = args.first().and_then(|arg| Operation::from_arg(arg)) else {
         eprintln!(

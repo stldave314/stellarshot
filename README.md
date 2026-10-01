@@ -318,7 +318,7 @@ soon as it is unlocked).
 
 | Tab | What it is for |
 | --- | --- |
-| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly, with **Open Folder** and **Unmount** while it is live. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
+| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly, with **Open Folder** and **Unmount** while it is live; one left behind by a crash is unmounted the next time Stellarshot starts. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
 | **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
 | **Compare** | Choose two snapshots to list what was added, removed and changed between them, grouped by folder behind a count and expanded on request (a folder with only one change is shown directly). Ticking a changed or removed item restores it as it was in the snapshot on the left |
 | **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match shows every snapshot it was found in; clicking one jumps straight to Browse at that snapshot and folder |
@@ -629,7 +629,10 @@ stored there, only in the keyring when you ask.
   and the rclone connection under it, runs its "after" hooks first (also when
   a scheduled run is stopped, or you log out), a canceled or interrupted
   backup never leaves a half-written snapshot, and closing the window lets a
-  running backup finish.
+  running backup finish. What an interrupted backup had already stored is
+  sent again by the next one; the space it took returns at a clean-up a day
+  or more later (rustic deletes such leftovers in two steps, so a clean-up
+  never removes data a backup is still writing).
 - **"Estimate Size" next to "Back Up Now"** shows how much an existing
   backup would cover right now, without opening it or asking for its
   password: the same folder walk the setup wizard's own live estimate uses.
@@ -1045,7 +1048,7 @@ running as you can read.
 | `exe` | This program's own installed path, still right after a package upgrade replaced the binary |
 | `settings_export` | Exporting every backup's settings and history to a file, and the checks an imported one has to pass |
 | `engine::maintenance` | Checks, forgetting by retention rules (this computer's snapshots only) and pruning |
-| `schedule` | Writing, enabling and removing each scheduled backup's systemd timer or path unit, and keeping them in line with the settings |
+| `timers` | Writing, enabling and removing each scheduled backup's systemd timer or path unit, and keeping them in line with the settings |
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
 | `conditions` | Whether a laptop's power, battery and network state satisfy a scheduled backup's conditions; reading the real state (UPower, NetworkManager) and deciding are kept apart |
 | `run_state` | What happened when each backup last ran on its own, in cosmic-config's state store |
@@ -1053,6 +1056,7 @@ running as you can read.
 | `status` | Each backup's status from what any process can see on disk: run history, and whether its repository lock is currently held. Shared by the window (a run it did not itself start) and the applet |
 | `notify` | Desktop notifications, and opening the backup when one is clicked |
 | `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
+| `core` | What the window and the background processes share: the settings (`core::config`), formatting times and sizes, explaining errors, and log setup |
 | `app` | The window: sidebar, menus, dialogs, settings |
 | `app::applet` | The panel applet: `stellarshot-applet`'s own window, sharing the library but nothing else with the main window |
 | `app::pages` | The first-launch screen, each backup's page, the restore page, Settings and Help |

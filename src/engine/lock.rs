@@ -109,7 +109,12 @@ fn cache_dir() -> PathBuf {
 /// Where the latest progress of a write to `location` is published, for a
 /// window that did not start it.
 pub fn progress_path(location: &Location) -> PathBuf {
-    runtime_dir().join(format!("{}.progress", location.key()))
+    progress_path_in(&runtime_dir(), location)
+}
+
+/// [`progress_path`], with the lock directory given explicitly.
+pub fn progress_path_in(dir: &Path, location: &Location) -> PathBuf {
+    dir.join(format!("{}.progress", location.key()))
 }
 
 /// Held for the duration of a write; released when dropped (closing the

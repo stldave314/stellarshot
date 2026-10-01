@@ -32,17 +32,14 @@ use crate::event_log;
 use crate::profile::{Destination, Profile};
 use crate::run_state::{self, RunState};
 use crate::runner::{Event as RunnerEvent, Job, Operation};
-use crate::schedule;
 use crate::settings_export;
+use crate::timers;
 use crate::{debug_log, error_log, fl};
 
 pub mod applet;
 pub mod child;
-pub mod config;
 mod dialog;
 mod effects;
-pub mod errors;
-pub mod format;
 mod key_bind;
 mod launch;
 pub mod menu;
@@ -59,8 +56,10 @@ use dialog::{delete_all_input_id, new_password_input_id, password_command_input_
 pub use launch::{Flags, Launch};
 use nav::NavItem;
 
-/// The application ID: desktop entry, icon, settings and keyring items.
-pub const APP_ID: &str = "io.github.stldave314.Stellarshot";
+pub use crate::constants::APP_ID;
+// Shared with the code that runs without a window (`--run`, `--scheduled`,
+// the applet), so they live outside `app`; reachable here as before.
+pub use crate::core::{config, errors, format};
 
 pub struct App {
     core: Core,
@@ -117,7 +116,7 @@ pub struct App {
     /// empty stand-in for a list this binary simply could not parse,
     /// rather than a real absence of backups. While this is set: no
     /// timer is added or removed to match it (`init` skips its own
-    /// `schedule::reconcile` call), and `save_profiles` refuses to write
+    /// `timers::reconcile` call), and `save_profiles` refuses to write
     /// anything, so the original file survives for a later Stellarshot
     /// version, or the user, to recover — rather than the in-memory empty
     /// list being written over it the next time anything would normally
@@ -291,7 +290,7 @@ impl App {
     fn apply_schedule(profile: Profile) -> Task<Message> {
         Task::perform(
             tasks::blocking(move || {
-                schedule::apply(&profile)
+                timers::apply(&profile)
                     .map_err(|err| EngineError::new(engine::ErrorKind::Internal, err))
             }),
             |result| match result {
@@ -405,7 +404,7 @@ impl App {
                             error_log!(CONFIG, "could not forget the state of {id}: {err}");
                         }
                     }
-                    schedule::remove(&id)
+                    timers::remove(&id)
                         .map_err(|err| EngineError::new(engine::ErrorKind::Internal, err))
                 }),
                 |result| match result {
@@ -589,6 +588,8 @@ fn remove_old_open_copies() -> Task<Message> {
             engine::lock::remove_stale_open_copies(OPEN_COPY_MAX_AGE);
             // And any rclone a crashed run or window left connected.
             engine::stop_orphan_rclones();
+            // And any snapshot it left mounted, now answering nothing.
+            engine::mount::unmount_dead();
             Ok(())
         }),
         |_| cosmic::Action::App(Message::Noop),
@@ -800,7 +801,7 @@ impl Application for App {
         } else {
             let profiles = app.config.profiles.clone();
             Task::perform(
-                tasks::blocking(move || Ok(schedule::reconcile(&profiles))),
+                tasks::blocking(move || Ok(timers::reconcile(&profiles))),
                 |errors: Result<Vec<String>, EngineError>| match errors
                     .ok()
                     .and_then(|e| e.into_iter().next())

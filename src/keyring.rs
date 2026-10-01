@@ -13,7 +13,7 @@
 
 use std::future::Future;
 
-use crate::app::APP_ID;
+use crate::constants::APP_ID;
 use crate::constants::KEYRING_TIMEOUT;
 use crate::debug::KEYRING;
 use crate::engine::Secret;

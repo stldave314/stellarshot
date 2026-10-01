@@ -7,6 +7,17 @@
 //! settings belong in `cosmic-config` instead. Add a value here only when code
 //! uses it.
 
+/// The application ID: desktop entry, icon, settings and keyring items.
+pub const APP_ID: &str = "io.github.stldave314.Stellarshot";
+
+/// The upstream application ID, before this app's own settings existed
+/// under its own.
+pub const OLD_APP_ID: &str = "com.github.cosmic-utils.Stellarshot";
+
+/// The settings' version: 2 replaced the `repositories` list with backup
+/// profiles.
+pub const CONFIG_VERSION: u64 = 2;
+
 /// Initial window width, in logical pixels.
 pub const WINDOW_WIDTH: f32 = 800.0;
 

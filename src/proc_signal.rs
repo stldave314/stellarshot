@@ -23,7 +23,7 @@
 //! The window and systemd both send SIGTERM first now and SIGKILL only
 //! after `constants::TERM_GRACE`, which is what makes any of this
 //! reachable: see `app::child::ChildHandle::cancel` and
-//! `schedule::service_text`.
+//! `timers::service_text`.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};

@@ -150,7 +150,7 @@ pub async fn choose_import_path(title: String) -> Option<PathBuf> {
 }
 
 /// Write `text` to `path`, off the UI thread. Atomic and fsynced (see
-/// `schedule::write_if_changed`'s own doc comment for why a plain
+/// `timers::write_if_changed`'s own doc comment for why a plain
 /// `fs::write` is not enough), so an interrupted export leaves either the
 /// old file or the new one, never an empty one.
 ///

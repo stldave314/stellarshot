@@ -11,8 +11,8 @@
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 use serde::{Deserialize, Serialize};
 
-use crate::app::APP_ID;
-use crate::app::config::CONFIG_VERSION;
+use crate::constants::APP_ID;
+use crate::constants::CONFIG_VERSION;
 use crate::constants::OVERDUE_FACTOR;
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind};
@@ -79,7 +79,7 @@ impl BackupStatus {
 /// its own record of the last success, this computer's run facts, and
 /// whether the window has work running for it right now.
 pub fn status(profile: &Profile, run: &RunState, running: bool) -> BackupStatus {
-    status_at(profile, run, running, crate::app::format::now())
+    status_at(profile, run, running, crate::core::format::now())
 }
 
 fn status_at(profile: &Profile, run: &RunState, running: bool, now: i64) -> BackupStatus {

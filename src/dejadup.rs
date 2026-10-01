@@ -323,7 +323,7 @@ impl UserDirs {
 
 /// `$HOSTNAME` in Déjà Dup's folder settings.
 fn with_hostname(folder: &str) -> String {
-    folder.replace("$HOSTNAME", &crate::app::wizard::place::hostname())
+    folder.replace("$HOSTNAME", &crate::core::format::hostname())
 }
 
 /// Turn Déjà Dup's settings into a Stellarshot backup.

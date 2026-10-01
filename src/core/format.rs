@@ -4,6 +4,8 @@
 
 use jiff::{Timestamp, tz::TimeZone};
 
+use crate::fl;
+
 /// A byte count in decimal (SI) units, as the COSMIC and GNOME file managers
 /// show sizes: `1.2 GB` is 1,200,000,000 bytes.
 pub fn bytes(count: u64) -> String {
@@ -116,6 +118,27 @@ pub fn list(items: impl IntoIterator<Item = String>) -> String {
         .into_iter()
         .collect::<Vec<_>>()
         .join(&crate::fl!("list-separator"))
+}
+
+/// How often a backup runs, as a sentence.
+pub fn schedule_summary(schedule: crate::profile::Schedule) -> String {
+    match schedule {
+        crate::profile::Schedule::Manual => fl!("schedule-manual"),
+        crate::profile::Schedule::Hourly => fl!("schedule-hourly"),
+        crate::profile::Schedule::Daily => fl!("schedule-daily"),
+        crate::profile::Schedule::Weekly => fl!("schedule-weekly"),
+        crate::profile::Schedule::OnConnect => fl!("schedule-on-connect"),
+    }
+}
+
+/// This computer's name for showing and for folder names, never empty.
+pub fn hostname() -> String {
+    let name = crate::engine::hostname();
+    if name.trim().is_empty() {
+        "computer".to_owned()
+    } else {
+        name.trim().to_owned()
+    }
 }
 
 #[cfg(test)]

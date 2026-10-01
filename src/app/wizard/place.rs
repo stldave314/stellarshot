@@ -35,14 +35,7 @@ pub enum Kind {
 
 /// The machine's name, used for default folder names so two computers
 /// backing up to the same drive do not collide.
-pub fn hostname() -> String {
-    let name = crate::engine::hostname();
-    if name.trim().is_empty() {
-        "computer".to_owned()
-    } else {
-        name.trim().to_owned()
-    }
-}
+pub use crate::core::format::hostname;
 
 /// The folder a new backup gets inside a drive or cloud account.
 fn default_folder() -> String {

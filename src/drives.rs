@@ -115,23 +115,12 @@ fn drives_from(
         .collect();
 
     let mut drives = Vec::new();
-    for line in mountinfo.split(|&byte| byte == b'\n') {
-        let Some(separator) = line.windows(3).position(|window| window == b" - ") else {
-            continue;
-        };
-        let (before, after) = (&line[..separator], &line[separator + 3..]);
-        let mut fields = before.split(|&byte| byte == b' ').filter(|f| !f.is_empty());
-        let Some(mount_point) = fields.nth(4) else {
-            continue;
-        };
-        let Some(source) = after
-            .split(|&byte| byte == b' ')
-            .filter(|f| !f.is_empty())
-            .nth(1)
-        else {
-            continue;
-        };
-        let mount_point = PathBuf::from(unescape(mount_point));
+    for Mount {
+        mount_point,
+        source,
+        ..
+    } in mounts(mountinfo)
+    {
         let removable = REMOVABLE_ROOTS.iter().any(|root| {
             mount_point
                 .as_os_str()
@@ -141,7 +130,7 @@ fn drives_from(
         if !removable {
             continue;
         }
-        let device = resolve(Path::new(&unescape(source)));
+        let device = resolve(Path::new(&source));
         let Some(uuid) = uuids.get(device.as_path()) else {
             continue;
         };
@@ -161,6 +150,44 @@ fn drives_from(
         });
     }
     drives
+}
+
+/// One line of `/proc/self/mountinfo`, the parts read here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Mount {
+    pub mount_point: PathBuf,
+    pub fstype: OsString,
+    pub source: OsString,
+    pub super_options: OsString,
+}
+
+/// Every mount in `mountinfo` (the bytes of `/proc/self/mountinfo`). A line
+/// that does not have the expected shape is skipped.
+pub(crate) fn mounts(mountinfo: &[u8]) -> Vec<Mount> {
+    let mut mounts = Vec::new();
+    for line in mountinfo.split(|&byte| byte == b'\n') {
+        let Some(separator) = line.windows(3).position(|window| window == b" - ") else {
+            continue;
+        };
+        let (before, after) = (&line[..separator], &line[separator + 3..]);
+        let mut fields = before.split(|&byte| byte == b' ').filter(|f| !f.is_empty());
+        let Some(mount_point) = fields.nth(4) else {
+            continue;
+        };
+        let mut after = after.split(|&byte| byte == b' ').filter(|f| !f.is_empty());
+        let (Some(fstype), Some(source), Some(super_options)) =
+            (after.next(), after.next(), after.next())
+        else {
+            continue;
+        };
+        mounts.push(Mount {
+            mount_point: PathBuf::from(unescape(mount_point)),
+            fstype: unescape(fstype),
+            source: unescape(source),
+            super_options: unescape(super_options),
+        });
+    }
+    mounts
 }
 
 /// Undo the escaping the kernel and udev use: `\040` (octal) in mountinfo,

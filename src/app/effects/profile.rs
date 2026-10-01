@@ -239,7 +239,7 @@ impl App {
                 profile::Effect::FetchNextRun => {
                     let profile_id = id.clone();
                     Task::perform(
-                        async move { schedule::next_run(&profile_id).await },
+                        async move { timers::next_run(&profile_id).await },
                         move |next_run| {
                             app(Message::Profile(
                                 id.clone(),

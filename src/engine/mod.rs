@@ -8,17 +8,17 @@
 //! blocking thread, writes in a `--run` child process.
 
 mod backup;
-pub mod browse;
-pub mod cache_settings;
-pub mod disk_tree;
+pub(crate) mod browse;
+pub(crate) mod cache_settings;
+pub(crate) mod disk_tree;
 mod error;
 mod estimate;
 mod keys;
-pub mod location;
+pub(crate) mod location;
 pub mod lock;
 mod maintenance;
-pub mod mount;
-pub mod progress;
+pub(crate) mod mount;
+pub(crate) mod progress;
 pub mod rclone;
 mod repo;
 mod restore;

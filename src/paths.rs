@@ -14,7 +14,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use crate::app::APP_ID;
+use crate::constants::APP_ID;
 use crate::debug::CONFIG;
 use crate::error_log;
 
@@ -130,7 +130,7 @@ pub fn tighten_app_dirs() {
         // Settings from before the app ID changed, copied over once but
         // still there with whatever mode they had: the same hook commands
         // and password command. Tightened only if present, never created.
-        let old = root.join("cosmic").join(crate::app::migrate::OLD_APP_ID);
+        let old = root.join("cosmic").join(crate::constants::OLD_APP_ID);
         if old.is_dir()
             && let Err(err) = tighten_private(&old)
         {
@@ -181,13 +181,13 @@ pub fn with_state_lock<T>(change: impl FnOnce() -> T) -> T {
 /// [`with_state_lock`].
 pub fn remove_state_key(key: &str) -> Result<(), String> {
     use cosmic::cosmic_config::{Config, ConfigSet};
-    let store = Config::new_state(crate::app::APP_ID, crate::app::config::CONFIG_VERSION)
+    let store = Config::new_state(crate::constants::APP_ID, crate::constants::CONFIG_VERSION)
         .map_err(|err| err.to_string())?;
     let path = state_root()
         .ok_or("no state directory")?
         .join("cosmic")
-        .join(crate::app::APP_ID)
-        .join(format!("v{}", crate::app::config::CONFIG_VERSION))
+        .join(crate::constants::APP_ID)
+        .join(format!("v{}", crate::constants::CONFIG_VERSION))
         .join(key);
     if std::fs::symlink_metadata(&path).is_err() {
         // Never saved, or already gone.

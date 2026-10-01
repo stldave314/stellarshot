@@ -12,13 +12,12 @@ use cosmic::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::APP_ID;
+use crate::constants::APP_ID;
 use crate::debug::CONFIG;
 use crate::profile::Profile;
 use crate::{debug_log, error_log};
 
-/// Version 2 replaced the `repositories` list with backup profiles.
-pub const CONFIG_VERSION: u64 = 2;
+pub use crate::constants::CONFIG_VERSION;
 
 #[derive(Clone, Default, Debug, Eq, PartialEq, Deserialize, Serialize, CosmicConfigEntry)]
 #[version = 2]
@@ -228,7 +227,7 @@ mod tests {
     /// exactly the unreadable file above, the derived `get_entry` hands
     /// back an *empty* profile list — indistinguishable, to any caller
     /// that only looks at the config, from a machine with no backups.
-    /// That is what `schedule::reconcile` would then remove every timer
+    /// That is what `timers::reconcile` would then remove every timer
     /// against, and what the next save would write over the file. If
     /// cosmic-config ever changed to fail loudly instead, this test is
     /// what says the extra probe is no longer load-bearing.

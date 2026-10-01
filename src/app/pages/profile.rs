@@ -1133,16 +1133,7 @@ impl ProfileState {
     }
 }
 
-/// How often a backup runs, as a sentence.
-pub fn schedule_summary(schedule: Schedule) -> String {
-    match schedule {
-        Schedule::Manual => fl!("schedule-manual"),
-        Schedule::Hourly => fl!("schedule-hourly"),
-        Schedule::Daily => fl!("schedule-daily"),
-        Schedule::Weekly => fl!("schedule-weekly"),
-        Schedule::OnConnect => fl!("schedule-on-connect"),
-    }
-}
+pub use crate::core::format::schedule_summary;
 
 /// How many hooks are set up, as a sentence.
 fn hooks_summary(hooks: &[crate::profile::Hook]) -> String {

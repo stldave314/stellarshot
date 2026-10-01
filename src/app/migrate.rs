@@ -12,9 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::app::config::CONFIG_VERSION;
 use crate::profile::{Profile, profiles_from_v1};
 
-/// The upstream application ID, before this app's own settings existed
-/// under its own.
-pub const OLD_APP_ID: &str = "com.github.cosmic-utils.Stellarshot";
+pub use crate::constants::OLD_APP_ID;
 
 /// The directory `cosmic-config` resolves its per-user settings under.
 pub fn config_root() -> Option<PathBuf> {

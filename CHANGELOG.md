@@ -266,6 +266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setting also no longer says the opposite of what it does.
 - **The wizard says when it cannot read the list of mounted drives**,
   instead of claiming no drive is plugged in.
+- **Previewing a restore of several items reads the backup's index once**,
+  not once per item, which on cloud storage was a download each.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**

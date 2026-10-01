@@ -2318,6 +2318,38 @@ fn two_items_with_the_same_name_are_refused_before_anything_is_written() {
 }
 
 #[test]
+fn several_previews_from_one_index_add_up_to_each_on_its_own() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("plain.txt"), b"edited since").unwrap();
+    let requests = [
+        restore_request(
+            vec![fixture.source.join("nested")],
+            Target::Folder(fixture.work.join("out")),
+            ConflictPolicy::Overwrite,
+        ),
+        restore_request(
+            vec![fixture.source.clone()],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    ];
+
+    let together = open(&fixture.repo, &secret())
+        .unwrap()
+        .preview_restores(&requests)
+        .unwrap();
+
+    let mut each = RestorePreview::default();
+    for request in &requests {
+        each += preview(&fixture, request);
+    }
+    assert_eq!(together, each);
+    assert!(together.files > 0 && together.conflicts > 0, "{together:?}");
+}
+
+#[test]
 fn preview_creates_nothing() {
     let fixture = fixture();
     awkward_tree(&fixture.source);

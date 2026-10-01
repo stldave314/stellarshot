@@ -125,16 +125,7 @@ impl App {
                     Task::perform(
                         tasks::blocking(move || {
                             let location = profile.location()?;
-                            let mut total = engine::RestorePreview::default();
-                            for request in &requests {
-                                let part =
-                                    engine::open(&location, &secret)?.preview_restore(request)?;
-                                total.files += part.files;
-                                total.bytes += part.bytes;
-                                total.unchanged += part.unchanged;
-                                total.conflicts += part.conflicts;
-                            }
-                            Ok(total)
+                            engine::open(&location, &secret)?.preview_restores(&requests)
                         }),
                         move |result| to_page(restore::Message::Previewed(asked.clone(), result)),
                     )

@@ -193,6 +193,21 @@ impl Repo {
         run(self, request, None)
     }
 
+    /// [`Self::preview_restore`] for several requests, added up. The
+    /// repository's index is read once for all of them, not once each: on
+    /// cloud storage that is a download per request.
+    pub fn preview_restores(
+        self,
+        requests: &[RestoreRequest],
+    ) -> Result<RestorePreview, EngineError> {
+        let repo = self.inner.to_indexed()?;
+        let mut total = RestorePreview::default();
+        for request in requests {
+            total += run_indexed(&repo, request, true)?;
+        }
+        Ok(total)
+    }
+
     /// Restore `request`, reporting progress.
     pub fn restore(
         self,
@@ -229,6 +244,15 @@ fn run(
     let dry_run = progress.is_none();
     let _reporting = progress.map(|sink| repo.report_to(sink));
     let repo = repo.inner.to_indexed()?;
+    run_indexed(&repo, request, dry_run)
+}
+
+/// [`run`], on a repository whose index is already read.
+fn run_indexed(
+    repo: &Repository<IndexedFullStatus>,
+    request: &RestoreRequest,
+    dry_run: bool,
+) -> Result<RestorePreview, EngineError> {
     let snapshot = repo.get_snapshot_from_str(&request.snapshot, |_| true)?;
     let date = jiff::Zoned::now().strftime("%Y-%m-%d").to_string();
 
@@ -248,7 +272,7 @@ fn run(
 
     let mut total = RestorePreview::default();
     for path in &request.paths {
-        let preview = restore_one(&repo, &snapshot, path, request, &date, dry_run)?;
+        let preview = restore_one(repo, &snapshot, path, request, &date, dry_run)?;
         total += preview;
     }
     debug_log!(

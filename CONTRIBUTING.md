@@ -17,11 +17,14 @@ Please include:
 **Never include a repository password, and do not attach repository files.**
 They are encrypted, but they are still your data.
 
-If something is misbehaving rather than obviously broken, a debug log helps:
-set `DEVELOPER_LOGGING` to `true` in `src/debug.rs`, rebuild *without*
-`--features release-build`, reproduce, and attach
-`~/.local/state/stellarshot/developer-debug.log` (under `$XDG_STATE_HOME` if
-you set it). Look through it first: it contains file paths.
+If something is misbehaving rather than obviously broken, a log helps. Every
+build keeps the backup engine's own warnings (and rclone's) in
+`~/.local/state/stellarshot/backend.log`. For more, set `DEVELOPER_LOGGING` to
+`true` in `src/debug.rs`, rebuild *without* `--features release-build`,
+reproduce, and attach `~/.local/state/stellarshot/developer-debug.log` too. Both
+are under `$XDG_STATE_HOME` if you set it, and under
+`target/test-xdg/state/stellarshot/` for anything started with `cargo run` (see
+below). Look through them first: they contain file paths.
 
 ## Building and testing
 
@@ -45,15 +48,39 @@ The suite uses real programs and services instead of mocks, and a missing one
 fails the test that needs it rather than skipping it:
 
 - `rclone` (`tests/rclone.rs`) and `fuse3` (the mount tests).
+- `dbus-daemon` (`tests/scheduled_failures.rs` starts a private bus).
 - A running, unlocked Secret Service for `tests/keyring.rs`. CI provides one
   with `dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon
   --unlock --components=secrets > /dev/null; cargo test --all-features'`.
-- A `rustic-server` for `tests/rest_server.rs` (`cargo install rustic_server`).
+
+The REST-server tests in `tests/rest_server.rs` are ignored by default; they
+need a `rustic-server` (`cargo install rustic_server`) and run with
+`cargo test --test rest_server -- --ignored`.
 
 `.cargo/config.toml` points `XDG_STATE_HOME` and `XDG_CACHE_HOME` at
 `target/test-xdg`, so tests — and anything else started through cargo, `cargo
 run` included — never read or write your real history, run state or cache. A
 side effect: `cargo run` shows none of the installed app's history.
+
+## Releasing
+
+A release is a `v<version>` tag on `main`; the release workflow builds, tests
+and publishes it. Before tagging, in one commit:
+
+1. `cargo update`, then check for newer major versions held back by
+   `Cargo.toml` and take the ones that build; `cargo check` **and**
+   `cargo clippy --all-targets` must stay clean.
+2. Set `version` in `Cargo.toml` and let `Cargo.lock` follow (CI builds with
+   `--locked`).
+3. Add a `<release version="…" date="…">` entry at the top of
+   `res/io.github.stldave314.Stellarshot.metainfo.xml`, and move all five
+   screenshot `<image>` URLs to `/v<version>/`.
+4. Turn `## [Unreleased]` in `CHANGELOG.md` into `## [<version>] - <date>`
+   (the release notes are taken from it) and start a new empty
+   `## [Unreleased]`.
+
+`scripts/validate-metadata.sh` checks every one of these and runs again in the
+release workflow, after the tag is pushed, so run it before tagging.
 
 ## Translations
 

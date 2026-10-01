@@ -447,7 +447,7 @@ trait Timer {
     /// wall clock; `u64::MAX` if it has none scheduled (a manual backup's
     /// removed timer) or the unit does not exist. Named explicitly: zbus
     /// would otherwise derive `NextElapseUsecRealtime`, but systemd's
-    /// property capitalises the unit as `USec`.
+    /// property capitalizes the unit as `USec`.
     #[zbus(property, name = "NextElapseUSecRealtime")]
     fn next_elapse_usec_realtime(&self) -> zbus::Result<u64>;
 }

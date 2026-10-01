@@ -69,7 +69,7 @@ ron = "0.12"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 # The `log` output rustic and rclone produce, forwarded by
-# `app::settings::set_logger`; also what `engine::serve` reports rclone's
+# `app::startup::set_logger`; also what `engine::serve` reports rclone's
 # own output through.
 log = "0.4"
 gethostname = "1"
@@ -160,8 +160,9 @@ filetime = "0.2"
 # hand-written key scanner in tests/i18n.rs cannot see on its own.
 fluent-syntax = "0.12"
 
-# Packaging. `install.sh` drives both of these; the `release-build` feature has
-# to be passed to `cargo deb` explicitly because it runs its own build.
+# Packaging. `install.sh` drives both of these: it builds once with the
+# `release-build` feature, then runs `cargo deb --no-build` and
+# `cargo generate-rpm` on that build, so neither can rebuild without it.
 [package.metadata.deb]
 # Deliberately the GitHub no-reply address, not a personal one.
 maintainer = "stldave314 <stldave314@users.noreply.github.com>"

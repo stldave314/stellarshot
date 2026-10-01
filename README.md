@@ -104,6 +104,17 @@ cd stellarshot-*/
 `./install-tarball.sh uninstall`, from the same extracted folder, removes it
 again. Your settings and backups are kept.
 
+Removing Stellarshot (any way: package, tarball or `install.sh`) leaves the
+scheduled-backup units it wrote in your own systemd folder. They skip quietly
+once the program is gone; to remove them too:
+
+```sh
+systemctl --user list-unit-files --no-legend 'stellarshot-backup-*.timer' 'stellarshot-backup-*.path' \
+  | awk '{print $1}' | xargs -r systemctl --user disable --now
+rm -f ~/.config/systemd/user/stellarshot-backup-*.{service,timer,path}
+systemctl --user daemon-reload
+```
+
 ### From source
 
 Clone this repository, then:
@@ -118,7 +129,7 @@ installs, packages and CI:
 
 | Command | What it does |
 | --- | --- |
-| `./install.sh` | Build and install system-wide |
+| `./install.sh` or `./install.sh install` | Build and install system-wide |
 | `./install.sh build` | Build only |
 | `./install.sh uninstall` | Remove an installed copy (settings and backups are kept) |
 | `./install.sh deb` / `rpm` / `tarball` | Build one package into `dist/` |
@@ -339,10 +350,10 @@ Restoring never deletes anything: files that are on disk but not in the
 snapshot are left alone.
 
 **Open Copy** restores the one file into a private folder in your session's
-runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out),
-makes it read-only, and opens it with its usual application. That folder
-lives in memory, so a file larger than 512 MiB is refused with a pointer to a
-normal restore, and copies left behind for more than a day are removed the next
+runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out, or
+`~/.cache/stellarshot/run` when there is none), makes it read-only, and opens
+it with its usual application. That folder normally lives in memory, so a file
+larger than 512 MiB is refused with a pointer to a normal restore, and copies left behind for more than a day are removed the next
 time Stellarshot starts or the restore page closes.
 
 Overwriting files where they are is the one restore that destroys something, so
@@ -428,6 +439,12 @@ failure, so a stuck one cannot hang a backup forever.
 
 An **After** hook's own failure is recorded in the log but does not undo an
 already-finished backup or turn its success into a reported failure.
+
+Once a backup has started its **Before** hooks, its **After** hooks always run
+(as a failure, if it did not finish): when a later Before hook fails, when the
+repository cannot be opened, and when the backup is canceled or stopped (a
+Before hook still running then is stopped first). So a service the first
+Before hook stopped is always started again.
 
 </details>
 
@@ -580,6 +597,7 @@ run rustic's own `forget`/`prune`, never restic's.
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 | Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
 | Cache location | rustic's own default (`~/.cache/rustic`) | Another folder, or no local cache at all, for every repository this computer opens |
+| Export / Import settings | — | Save every backup's folders, exclusions, destination, schedule and history to a file, never a password, and read one back on another computer or after a reinstall. Imported backups start with their schedule off and their hooks disabled, for you to review |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in
@@ -890,12 +908,16 @@ the window can only stop what it started. Stop a timer's run with
 <details>
 <summary>Something else is wrong.</summary>
 
-Turn on developer logging: set `DEVELOPER_LOGGING` to `true` in
+First look at `~/.local/state/stellarshot/backend.log`: every build keeps the
+backup engine's warnings and rclone's own output there.
+
+For more, turn on developer logging: set `DEVELOPER_LOGGING` to `true` in
 `src/debug.rs`, rebuild *without* `--features release-build`, reproduce the
-problem, and read `~/.local/state/stellarshot/developer-debug.log` (under
-`$XDG_STATE_HOME` if you set it). Lines are tagged by category (`ENGINE`,
-`UI`, `CONFIG`) so you can `grep` a run. Genuine errors are always
-written to stderr too.
+problem, and read `~/.local/state/stellarshot/developer-debug.log`. Both logs
+are under `$XDG_STATE_HOME` if you set it, and under
+`target/test-xdg/state/stellarshot/` when started with `cargo run`. Lines are
+tagged by category (`ENGINE`, `UI`, `CONFIG`, `SCHED`, `MOUNT`) so you can
+`grep` a run. Genuine errors are always written to stderr too.
 
 </details>
 
@@ -995,13 +1017,18 @@ running as you can read.
 | `engine::restore` | Selected files to their original place or a folder, with the Keep both, Overwrite or Skip decision made before rustic sees the file list, and a dry run that counts the same way |
 | `engine::mount` | A snapshot mounted read-only through FUSE, reading through the same `Browser` the restore page uses |
 | `engine::estimate` | The size of a backup before it runs, from the same file list the backup reads |
+| `engine::disk_tree` | Folder sizes on disk for the wizard's folder browser, stoppable at any time |
 | `paths` | Where settings and state live, and keeping those folders owner-only at every start |
 | `bounded` | Reading a child's output with a cap, so a chatty hook, password command or rclone cannot fill memory |
 | `engine::serve` | Starts and stops the `rclone serve restic` behind SFTP and cloud backups, with a start-up timeout and no zombie left behind |
 | `drives` | Mounted removable drives, and where a drive with a given ID is mounted now |
 | `dejadup` | Reading Déjà Dup's settings (never its password) and turning them into a backup |
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
-| `hooks` | Runs a backup's hooks: a `Before` failure stops the backup, an `After` failure is only logged |
+| `hooks` | Runs a backup's hooks: a `Before` failure stops the backup (its `After` hooks still run), an `After` failure is only logged |
+| `password_command` | A repository password from a command (a password manager's CLI): no shell, a time limit, capped output |
+| `proc_signal` | What `--run` and `--scheduled` do on SIGTERM (Cancel, `systemctl --user stop`, logout): stop a running hook, run the `After` hooks, report canceled |
+| `exe` | This program's own installed path, still right after a package upgrade replaced the binary |
+| `settings_export` | Exporting every backup's settings and history to a file, and the checks an imported one has to pass |
 | `engine::maintenance` | Checks, forgetting by retention rules (this computer's snapshots only) and pruning |
 | `schedule` | Writing, enabling and removing each scheduled backup's systemd timer or path unit, and keeping them in line with the settings |
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
@@ -1020,6 +1047,7 @@ running as you can read.
 | `app::child` | Spawns `--run` in its own process group, streams its events into the UI, cancels it and everything it started |
 | `app::errors` | A localized explanation for every kind of engine error |
 | `app::migrate` | One-time moves of settings from older versions |
+| `app::startup` | Starting the window: logging, translations, settings migration, window size |
 
 </details>
 

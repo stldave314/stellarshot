@@ -201,6 +201,9 @@ impl App {
                     &fl!("edit-backup-removed"),
                     &EngineError::new(engine::ErrorKind::NotFound, finished.profile.name.clone()),
                 );
+                // The wizard has closed; its sidebar row must go too.
+                self.rebuild_nav(None);
+                self.go_home();
                 return close;
             }
             None => finished.profile,
@@ -213,6 +216,8 @@ impl App {
             // — its schedule, or a first backup starting on a repository
             // Stellarshot cannot actually find again next launch — should
             // run against a save that never happened.
+            self.rebuild_nav(None);
+            self.go_home();
             return close;
         }
         self.rebuild_nav(Some(&id));

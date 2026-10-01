@@ -31,7 +31,7 @@ attempt, not a single dropped packet a retry would routinely paper over.
 ## What could not be confirmed, and why
 
 The obvious next step was rclone's own log, since the dialog says to check
-it. There was none. Stellarshot's logging setup (`app::settings::set_logger`)
+it. There was none. Stellarshot's logging setup (`app::startup::set_logger`)
 built a `tracing` subscriber, but rustic_core, rustic_backend and the rclone
 process they run only ever log through the separate `log` crate, and nothing
 bridged the two — every line any of them ever logged went nowhere. The
@@ -53,7 +53,7 @@ surface locally exactly as rclone's bridge dropping the connection.
 ## What this changes
 
 - The logging gap is fixed, so a repeat of this failure will have rclone's
-  own explanation to read, at `/tmp/stellarshot-backend.log`.
+  own explanation to read, at `~/.local/state/stellarshot/backend.log`.
 - **Use my own Google API credentials…**, in the wizard's Google Drive step
   since 0.2, gives a way to sign in with a client that is not shared with
   every other rclone user, which would rule the quota out entirely if that

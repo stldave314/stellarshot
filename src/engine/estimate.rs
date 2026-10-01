@@ -27,7 +27,7 @@ pub struct SizeEstimate {
     pub files: u64,
     pub bytes: u64,
     /// Bytes under each of the request's sources, in the same order, after
-    /// exclusions. A file inside two overlapping sources counts towards both
+    /// exclusions. A file inside two overlapping sources counts toward both
     /// rows but only once in `bytes`.
     pub per_source: Vec<u64>,
 }

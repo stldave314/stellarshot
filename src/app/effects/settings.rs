@@ -80,10 +80,16 @@ impl App {
         }
         self.dialogs
             .notify(Dialog::Info(fl!("settings-import-done-title"), body));
+        // `save_profiles` already updated `self.config`, so the change
+        // notification that follows sees nothing new: show the new backups
+        // in the sidebar now.
+        self.rebuild_nav(None);
+        let activate = self.activate_selected();
         // Each newly added backup's own schedule, exactly as an
         // existing one gets it when the wizard creates or edits it.
         let mut tasks: Vec<Task<Message>> =
             merged.added.into_iter().map(Self::apply_schedule).collect();
+        tasks.push(activate);
         // Disk I/O for every backup's history: off the UI thread.
         tasks.push(Task::perform(
             tasks::blocking(move || {

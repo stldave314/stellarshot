@@ -12,7 +12,7 @@ repository, then **Report a vulnerability**. Only the maintainer can see the
 report.
 
 Include what you did, what happened, and what you expected. A proof of concept
-helps, but is not required. You will get an acknowledgement, and a fix or an
+helps, but is not required. You will get an acknowledgment, and a fix or an
 explanation, as promptly as circumstances allow. Credit is given in the
 changelog unless you would rather it was not.
 
@@ -70,18 +70,23 @@ note in the [README](README.md).
   snapshot are never deleted. **Open Copy** restores a single file into a
   folder only you can open (mode 0700) in your session's runtime directory
   (`$XDG_RUNTIME_DIR`, which a desktop login keeps in memory and clears at
-  logout), and makes the copy read-only. A file over 512 MiB is refused, and
-  copies older than a day are removed.
+  logout; `~/.cache/stellarshot/run` when there is none), and makes the copy
+  read-only. A file over 512 MiB is refused, and copies older than a day are
+  removed.
 - **Your settings and history are private to you.** The `profiles` file holds
   hook commands, a password command and SFTP details. Stellarshot's settings
   and state folders under `~/.config/cosmic/` and `~/.local/state/cosmic/` are
   made owner-only (mode 0700) every time the window, the applet or a backup
-  starts, and refused if they are a symlink or belong to someone else.
+  starts. One that is a symlink or belongs to someone else is left alone and
+  an error is reported.
 - **Scheduled backups add nothing to trust.** A timer runs Stellarshot as you,
-  with the password it reads from your keyring at run time; nothing is
-  stored in the systemd unit files, which contain only the program's path and
-  the backup's ID (letters, digits and dashes, checked before anything is
-  written). A backup scheduled without a remembered password does not run,
+  with the password it reads at run time from your keyring (or gets from the
+  backup's password command); nothing secret is stored in the systemd unit
+  files, which contain only the program's path, the backup's ID (letters,
+  digits and dashes, checked before anything is written) and, for a backup
+  that runs when its drive is connected, the drive's filesystem UUID. The
+  program's path must not be anywhere another user could write, `/tmp`
+  included. A backup scheduled without a remembered password does not run,
   and says so.
 - **Retention never reaches other computers' snapshots**, and space is freed
   automatically only where the repository is unlikely to be shared, with

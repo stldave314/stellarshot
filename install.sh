@@ -152,8 +152,10 @@ cmd_uninstall() {
         "running and installed, since it belongs to your user account, not this" \
         "prefix. Stopping and disabling a unit does not delete its file, so both" \
         "steps are needed to remove them yourself:"
-    warn "  systemctl --user disable --now 'stellarshot*'"
-    warn "  rm -f ~/.config/systemd/user/stellarshot*.service ~/.config/systemd/user/stellarshot*.timer"
+    warn "  systemctl --user list-unit-files --no-legend 'stellarshot-backup-*.timer' 'stellarshot-backup-*.path' \\"
+    warn "    | awk '{print \$1}' | xargs -r systemctl --user disable --now"
+    warn "  rm -f ~/.config/systemd/user/stellarshot-backup-*.{service,timer,path}"
+    warn "  systemctl --user daemon-reload"
 }
 
 cmd_deb() {

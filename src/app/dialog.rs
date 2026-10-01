@@ -80,6 +80,15 @@ pub enum Dialog {
 }
 
 impl Dialog {
+    /// An operation is running from this dialog: it cannot be dismissed
+    /// until that finishes.
+    pub fn is_busy(&self) -> bool {
+        matches!(
+            self,
+            Self::DeleteAll { busy: true, .. } | Self::ChangePassword { busy: true, .. }
+        )
+    }
+
     /// Deleting everything needs the profile's name typed exactly: not
     /// trimmed, not case-folded. A slip of the finger must not qualify.
     pub fn can_confirm(&self) -> bool {
@@ -233,7 +242,9 @@ pub(super) fn view<'a>(dialog: &'a Dialog, config: &StellarshotConfig) -> Elemen
             .body(fl!("remove-body"))
             .primary_action(widget::button::destructive(fl!("remove")).on_press_maybe(confirm))
             .secondary_action(cancel),
-        Dialog::DeleteAll { name, typed, .. } => widget::dialog()
+        Dialog::DeleteAll {
+            name, typed, busy, ..
+        } => widget::dialog()
             .title(fl!("delete-title", name = name.clone()))
             .body(fl!("delete-body", name = name.clone()))
             .control(
@@ -243,7 +254,12 @@ pub(super) fn view<'a>(dialog: &'a Dialog, config: &StellarshotConfig) -> Elemen
                     .on_submit(|_| Message::Dialog(DialogMessage::Confirm)),
             )
             .primary_action(widget::button::destructive(fl!("delete")).on_press_maybe(confirm))
-            .secondary_action(cancel),
+            .secondary_action(
+                // Not while it runs: the delete carries on regardless, and
+                // hiding it would let Quit leave half a repository behind.
+                widget::button::standard(fl!("cancel"))
+                    .on_press_maybe((!*busy).then_some(Message::Dialog(DialogMessage::Close))),
+            ),
         Dialog::WizardCancel => widget::dialog()
             .title(fl!("wizard-cancel-title"))
             .body(fl!("wizard-cancel-body"))
@@ -410,6 +426,20 @@ mod tests {
         assert!(matches!(dialogs.front(), Some(Dialog::Quit)), "Quit stays");
         dialogs.close();
         assert!(dialogs.front().is_none(), "nothing busy comes back");
+    }
+
+    #[test]
+    fn only_a_running_delete_or_password_change_is_busy() {
+        let delete = |busy| Dialog::DeleteAll {
+            id: "a".into(),
+            name: "Home".into(),
+            typed: "Home".into(),
+            busy,
+        };
+        assert!(delete(true).is_busy());
+        assert!(!delete(false).is_busy());
+        assert!(!Dialog::Quit.is_busy());
+        assert!(!Dialog::Error("x".into()).is_busy());
     }
 
     #[test]

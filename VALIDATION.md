@@ -19,8 +19,21 @@ cargo test --all-features
 ```
 
 CI runs the same commands on every push and pull request
-(`.github/workflows/ci.yml`), with `RUSTFLAGS=-D warnings`. A tag runs them
-again before publishing (`.github/workflows/release.yml`).
+(`.github/workflows/ci.yml`), with `RUSTFLAGS=-D warnings`, and also:
+
+- installs the built `.deb` and `.rpm` in clean containers, starts the
+  program, checks the installed files (and runs `lintian` on the `.deb`), then
+  removes them;
+- installs the tarball as root and checks that `/usr` keeps its ownership;
+- scans the packaged binaries with `scripts/verify-packaged-binaries-strip-logging.sh`
+  (no debug logging) and `scripts/verify-packaged-binaries-auditable.sh`
+  (dependency list embedded by `cargo auditable`);
+- runs `cargo deny check` (advisories, licenses, sources) and builds on the
+  minimum supported Rust version.
+
+A tag runs the build and tests again before publishing
+(`.github/workflows/release.yml`), checks the tag against `Cargo.toml`, and
+publishes `SHA256SUMS` and a build-provenance attestation with the packages.
 
 ## Automated checks
 
@@ -160,7 +173,7 @@ no test, only a correction.
 
 | Finding | Fix | Proven by |
 | --- | --- | --- |
-| The logging fix earlier in this release only reached the window's own process; every real backup runs in a `--run` child or a `--scheduled` run, neither of which ever installed it, so the original bug (a real Google Drive failure with nothing in the log) was still not actually fixed | Both entry points now call `set_logger_for_child()`, which appends rather than truncates — several such processes, and the window, can share the one log file without racing to clobber each other's lines | `a_child_process_appends_rather_than_truncating`-equivalent coverage split across `truncate_false_appends_instead_of_overwriting` (`src/debug.rs`, the file mechanics) and the existing `rustic_backend_output_reaches_the_log_file` (`src/app/settings.rs`, the `log`-to-file bridge); the two are not tested together on purpose — `tracing`'s global subscriber can only be installed once per process, so a second test calling `init_tracing` in the same binary would pass or fail depending on test order rather than proving anything |
+| The logging fix earlier in this release only reached the window's own process; every real backup runs in a `--run` child or a `--scheduled` run, neither of which ever installed it, so the original bug (a real Google Drive failure with nothing in the log) was still not actually fixed | Both entry points now call `set_logger_for_child()`, which appends rather than truncates — several such processes, and the window, can share the one log file without racing to clobber each other's lines | `a_child_process_appends_rather_than_truncating`-equivalent coverage split across `truncate_false_appends_instead_of_overwriting` (`src/debug.rs`, the file mechanics) and the existing `rustic_backend_output_reaches_the_log_file` (`src/app/startup.rs`, the `log`-to-file bridge); the two are not tested together on purpose — `tracing`'s global subscriber can only be installed once per process, so a second test calling `init_tracing` in the same binary would pass or fail depending on test order rather than proving anything |
 | A settings export left a REST destination's URL, credentials and all, in plain text, contradicting the export's own "never a password" promise | `Export::collect` redacts it with `redact_url`, the same function that already kept it out of messages and logs | `a_rest_destinations_credentials_are_stripped_on_export` (`src/settings_export.rs`) |
 | `redact_url` failed open: a URL whose password contains an unescaped `/`, `?` or `#` fails to parse at all, and the old code returned the original string, credentials and all, in that case | Returns a fixed, non-leaking placeholder instead when parsing fails, rather than guessing where credentials end | `redact_url_shows_nothing_of_a_url_it_cannot_parse`, plus `redact_url_removes_a_parseable_urls_credentials` and `redact_url_leaves_a_credential_free_url_alone` for the normal cases, none of which existed before (`src/engine/repo.rs`) |
 | A crafted or hand-edited settings export could carry a `password_command` through import even though a real export already clears it, and a bandwidth limit was hand-quoted into the rclone command string with a plain `'...'`, so a value containing a quote could end its own argument and start another — including `--password-command`, which rclone would then run | `merge` also clears `password_command` on import, not trusting the file; the rclone command is built with `shell_words::quote`, which cannot be broken out of | `a_password_command_from_an_untrusted_export_is_cleared_on_import` (`src/settings_export.rs`); `a_bandwidth_limit_cannot_inject_a_second_rclone_argument` (`src/engine/repo.rs`) |
@@ -467,7 +480,7 @@ REL-11: `run` used to spawn a raw `current_exe()`, detecting a package upgrade b
 | `estimate_matches_the_backup` | With an exclusion nested inside an include, an overlapping include, a pattern and a hard link, the estimate **equals** the byte total the backup then reports; per-folder totals are exact too. This is the regression Déjà Dup has |
 | `exclude_through_a_symlinked_path_still_applies` (`src/engine/tests.rs`) | An exclusion written through a symlinked path (`/home` → `/var/home`) still leaves the folder out |
 | `estimate_respects_cancel` | A canceled estimate stops and reports nothing, so a stale total never replaces a newer one |
-| `the_arithmetic_adds_up_to_the_estimate` | "Included − excluded = total" holds exactly; each excluded folder is sized, nested ones count once towards the total, and what only a pattern removes is reported apart |
+| `the_arithmetic_adds_up_to_the_estimate` | "Included − excluded = total" holds exactly; each excluded folder is sized, nested ones count once toward the total, and what only a pattern removes is reported apart |
 | `the_everything_baseline_ignores_every_kind_of_exclusion_not_just_two` | REL-13: the "everything" baseline used to clear only `excludes`/`exclude_patterns`, leaving `exclude_larger_than`, `exclude_caches`, pattern files and `git_ignore` active and undercounting what "everything" means. A fresh fixture with a real `CACHEDIR.TAG` file proves both `exclude_larger_than` and `exclude_caches` are now ignored for the baseline — writing it caught its own 43-byte arithmetic mistake first (the marker file's own signature line, forgotten from the expected total), a reminder that a check that passes on the first try without ever failing for the wrong reason has usually not been looked at hard enough |
 
 ### Storage through rclone (`tests/rclone.rs`, `src/engine/rclone.rs`)
@@ -595,7 +608,7 @@ State and effects are tested without rendering:
   this sandbox does not have — the same category of gap as UI-1's own
   disclosed click-through.
 
-### rustic's and rclone's diagnostics reach a log (`src/app/settings.rs`, `src/debug.rs`)
+### rustic's and rclone's diagnostics reach a log (`src/app/startup.rs`, `src/debug.rs`)
 
 `rustic_backend_output_reaches_the_log_file` sets up the real logger against a
 private path, logs through the `log` crate under `rustic_backend`'s own
@@ -605,9 +618,9 @@ never called `tracing_log::LogTracer::init`, so nothing from `log` (all of
 rustic_core, rustic_backend and rclone) ever reached it; this test would have
 found an empty file.
 
-The developer debug log still sits at a fixed, predictable path under `/tmp`
-(off by default, and stripped from release builds entirely, so the exposure
-is a developer's own debugging session, not an ordinary user's). The backend
+The developer debug log is at `$XDG_STATE_HOME/stellarshot/developer-debug.log`
+(off by default, and stripped from release builds entirely), and an existing
+one left readable by others is tightened to `0600` when opened. The backend
 log moved to `$XDG_STATE_HOME/stellarshot/backend.log` (or
 `~/.local/state/stellarshot/backend.log`), since it is always on: two real
 users of a shared machine sharing one fixed `/tmp` path would otherwise
@@ -761,9 +774,9 @@ plan's own status note for why that was not rushed in alongside this.
 
 ### Packages (`./install.sh package`, CI)
 
-CI builds the `.deb`, `.rpm` and tarball on every push and prints the `.deb`'s
-control data and file list, so a packaging break shows up before a release is
-tagged.
+CI builds the `.deb`, `.rpm` and tarball on every push, installs each in a
+clean container and starts the program, so a packaging break shows up before
+a release is tagged.
 
 ## Manual checks
 
@@ -783,7 +796,7 @@ Things a test cannot reach yet, and how they were confirmed.
 | The restore page opens from `--restore` and lists the demo snapshot's folders | `scripts/screenshots.sh restore`, then the image inspected | M4 |
 | Generated units are valid, including an executable path with a space and `%` | `systemd-analyze --user verify` on the service and timer: no errors, and the escaped path resolved to the real file | M5 |
 | A timer installs, runs its service and uninstalls cleanly | Installed for a throwaway ID in the real user session: listed by `list-timers` with the next run, `enabled`, its service started and exited; after removal no unit, no `timers.target.wants` link and no timer remained | M5 |
-| `schedule::next_run` reads the real next-run time over D-Bus | Run against a real scheduled backup's timer in the user session: correct to the minute against `systemctl list-timers`, and `None` for a made-up ID. **Proven able to fail:** first written with the property name zbus derives (`NextElapseUsecRealtime`) and `0` as the "none" sentinel; the real call failed with `Unknown property` (systemd's name capitalises the unit as `USec`), and a made-up ID silently returned `u64::MAX` seconds rather than `None`, because `LoadUnit` never fails for an unknown name — it returns a `"not-found"` unit instead, caught only by also reading `LoadState` | 0.2 |
+| `schedule::next_run` reads the real next-run time over D-Bus | Run against a real scheduled backup's timer in the user session: correct to the minute against `systemctl list-timers`, and `None` for a made-up ID. **Proven able to fail:** first written with the property name zbus derives (`NextElapseUsecRealtime`) and `0` as the "none" sentinel; the real call failed with `Unknown property` (systemd's name capitalizes the unit as `USec`), and a made-up ID silently returned `u64::MAX` seconds rather than `None`, because `LoadUnit` never fails for an unknown name — it returns a `"not-found"` unit instead, caught only by also reading `LoadState` | 0.2 |
 | A scheduled run works inside a systemd user service | `systemd-run --user --wait … stellarshot --scheduled <id>` with a demo profile: exit 0, a snapshot, and `last_success` and `last_check` recorded; the keyring was reachable from the service | M5 |
 | The wizard no longer clips fields or hides rows under the scrollbar | `scripts/screenshots.sh wizard` before and after: the scrollbar now sits beside the cards instead of over them; a focused SFTP field under Xwayland shows its whole focus ring at the left edge | 0.1.x |
 | One press of Next checks an SFTP destination | Under Xwayland with `xdotool`: one press ran the check (a closed port on 127.0.0.1), which failed at once, stayed on the step and left Next ready to try again | 0.1.x |

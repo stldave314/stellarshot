@@ -528,7 +528,7 @@ impl ProfileState {
                 // called only once the app-level confirmation dialog this
                 // effect opens is itself confirmed. Still checked here too,
                 // not just by the button being disabled in `view`: nothing
-                // is worth confirming towards an action that would just be
+                // is worth confirming toward an action that would just be
                 // dropped anyway.
                 if self.is_busy() {
                     return Vec::new();

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A restore checks every name in the snapshot.** A name holding a `/`
+  passed as two ordinary path parts and, in a crafted repository shared by
+  someone else, could have landed inside a link created by the same restore.
+- **"Open a copy" no longer makes the runtime folder readable by others**,
+  which also made every later backup refuse to take its lock until a reboot.
+- **A scheduled backup can no longer be set to run a program from `/tmp`**,
+  where another user could put their own program after a reboot.
 - **Your settings and history folders are private.** The `profiles` file
   holds hook commands, a password command and SFTP details, and was
   readable by other users of the machine under the usual umask. Both
@@ -32,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   printed, not by what it left behind.** Launched from a terminal, one that
   prompted waited on an invisible prompt; one that started a background process
   could be reported as timed out after it had printed the password. Its output
-  is capped at 64 KiB, as are a hook's and rclone's.
+  is capped at 64 KiB; a hook keeps only the last 16 KiB of what it reports,
+  and an rclone listing at most 1 MiB, so none can fill memory.
 - **Your own `RCLONE_*` environment no longer reaches the rclone commands
   Stellarshot runs against its own settings.** `RCLONE_DRY_RUN=true` made
   deleting a backup report success without deleting anything.
@@ -70,6 +78,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Backups set to run when their drive is connected run once per
+  connection.** They ran again and again for as long as the drive stayed
+  plugged in, or stopped working for good after one quick run.
+- **Cancel works for every operation.** Canceling a restore, check,
+  clean-up or snapshot deletion was reported as an internal error; it is now
+  simply canceled. A backup canceled while a Before hook is running stops that
+  hook and still runs its After hooks, and a failing Before hook no longer
+  leaves an earlier one's work undone.
+- **Deleting or pinning a snapshot, or restoring, with the drive unplugged no
+  longer leaves the page stuck as busy** until a restart.
+- **Overwrite refuses to replace a folder with a file or a file with a
+  folder**, with an explanation, instead of crashing partway through the
+  restore. Keep both and Skip handle it as before.
+- **A destination that is not reachable right now is skipped quietly by a
+  scheduled backup**: an unmounted network share or drive mount point, and an
+  SFTP server, cloud account or REST server that cannot be reached. It used to
+  be recorded as a failure and notified at every slot. A refused login still
+  is.
+- **Signing in to Google with your own client ID keeps working after the
+  first hour**: the client is now saved with the remote. Sign-in can be
+  canceled from its dialog and gives up after ten minutes.
+- **Dialogs and the keyboard.** Shortcuts no longer act behind an open dialog
+  (Ctrl+B could start a backup behind "Remove this backup?"); Escape closes a
+  dialog; a busy dialog can no longer get stuck behind Quit; "Delete
+  everything" cannot be dismissed while it runs; pressing Ctrl+Q twice no
+  longer stacks two questions.
+- **Importing settings shows the new backups in the sidebar at once.**
+- **Opening the restore page again while a restore runs keeps that restore**
+  instead of replacing its page.
+- **Discarding the setup wizard returns to the home screen** instead of a
+  blank page.
+- **The uninstall instructions work**: the old command was refused by
+  `systemctl` and missed on-connect backups. The README now lists them.
 - **Opening an SFTP or cloud backup no longer leaves a dead `rclone`
   process behind each time.** Every snapshot list, statistics view or restore
   preview of such a backup started an rclone that was stopped but never
@@ -199,7 +240,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- The web interface and its REST API are no longer part of Stellarshot: the
+- The web interface and its REST API (added in 0.6.0) are no longer part of Stellarshot: the
   `stellarshot-web` program, its Settings page and its documentation now
   live in a project of their own. Stellarshot no longer installs it; a
   systemd user unit an earlier version created for it can be removed with

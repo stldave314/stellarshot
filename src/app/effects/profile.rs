@@ -159,6 +159,10 @@ impl App {
                     self.upsert_profile(updated);
                     Task::none()
                 }
+                // A restore page already open (perhaps restoring right now)
+                // is shown as it is, never replaced: its running restore
+                // would lose the page that reports and records it.
+                profile::Effect::OpenRestore(_) if self.restore.is_some() => Task::none(),
                 profile::Effect::OpenRestore(secret) => {
                     let root = profile
                         .sources

@@ -6,7 +6,7 @@
 //! Kept in cosmic-config's state store, one key per profile, for the same
 //! reason as [`crate::run_state`]: a scheduled run and the window can both
 //! add to it, and neither must ever overwrite the other's entry. It is
-//! included in the settings export (`app::settings_export`) even though it
+//! included in the settings export (`settings_export`) even though it
 //! lives apart from the settings themselves.
 
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};

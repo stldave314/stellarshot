@@ -80,6 +80,11 @@ impl App {
         self.wizard = None;
         self.wizard_session += 1;
         self.rebuild_nav(None);
+        // The wizard's own row was showing and is gone; without this the
+        // "New backup" row it leaves behind stays selected over a blank page.
+        if self.selected().is_none() && !self.showing_home() && !self.showing_history() {
+            self.go_home();
+        }
     }
 
     /// Rebuild the sidebar from the settings, keeping the selection when the

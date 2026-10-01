@@ -1056,13 +1056,13 @@ impl Application for App {
                 // repository being created or opened by the wizard, or a
                 // password change or deletion running from a dialog. Only
                 // the first used to count.
-                let dialog_busy = matches!(
-                    self.dialogs.front(),
-                    Some(
-                        Dialog::DeleteAll { busy: true, .. }
-                            | Dialog::ChangePassword { busy: true, .. }
-                    )
-                );
+                // Already asking: a second Ctrl+Q must not stack another.
+                if self.dialogs.any(|dialog| matches!(dialog, Dialog::Quit)) {
+                    return Task::none();
+                }
+                // Any busy dialog, not only the one in front: it may be
+                // waiting behind another the user opened meanwhile.
+                let dialog_busy = self.dialogs.any(Dialog::is_busy);
                 if self.pages.values().any(ProfileState::is_busy)
                     || self
                         .restore
@@ -1083,6 +1083,25 @@ impl Application for App {
             }
             Message::CopyToClipboard(text) => return cosmic::iced::clipboard::write(text),
             Message::Key(modifiers, key) => {
+                // A modal dialog captures the mouse but not the keyboard:
+                // while one is open, Escape dismisses it (unless an
+                // operation is running from it) and only Quit still works,
+                // so a shortcut cannot start a backup or open the wizard
+                // behind a "Remove this backup?".
+                if let Some(front) = self.dialogs.front() {
+                    if key == Key::Named(cosmic::iced::keyboard::key::Named::Escape)
+                        && !front.is_busy()
+                    {
+                        return self.update(Message::Dialog(DialogMessage::Close));
+                    }
+                    let quit = self.key_binds.iter().any(|(key_bind, action)| {
+                        *action == Action::Quit && key_bind.matches(modifiers, &key, None)
+                    });
+                    if quit {
+                        return self.update(Message::Quit);
+                    }
+                    return Task::none();
+                }
                 for (key_bind, action) in &self.key_binds {
                     if key_bind.matches(modifiers, &key, None) {
                         return self.update(action.message());

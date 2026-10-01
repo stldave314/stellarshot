@@ -51,8 +51,7 @@ pub fn local_time(seconds: i64) -> String {
 /// A path as the file manager shows it: `~/Documents` rather than
 /// `/home/alex/Documents`.
 pub fn path(path: &std::path::Path) -> String {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    shorten(path, home.as_deref())
+    shorten(path, crate::paths::home_dir().as_deref())
 }
 
 fn shorten(path: &std::path::Path, home: Option<&std::path::Path>) -> String {

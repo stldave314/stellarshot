@@ -42,13 +42,10 @@ use super::repo::Location;
 /// into it, since even `~/.cache` could in principle already exist with the
 /// wrong owner or permissions.
 pub fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .map_or_else(
-            || cache_dir().join("stellarshot/run"),
-            |dir| dir.join("stellarshot"),
-        )
+    crate::paths::runtime_root().map_or_else(
+        || cache_dir().join("stellarshot/run"),
+        |dir| dir.join("stellarshot"),
+    )
 }
 
 /// Create `dir/name` for an "Open a copy", private from the start: `dir`
@@ -212,12 +209,7 @@ fn lock_file(dir: &Path, key: &str, location: &Location) -> Result<File, EngineE
 /// lock directory could not even be created) is treated the same way,
 /// since this is a status display, not a guard against writing.
 pub fn is_running(location: &Location) -> bool {
-    let dir = runtime_dir();
-    let key = status_key(location);
-    probe_locked(&dir, &key).unwrap_or(false)
-        || location
-            .legacy_key()
-            .is_some_and(|key| probe_locked(&dir, &key).unwrap_or(false))
+    held(&runtime_dir(), &status_key(location), location)
 }
 
 /// [`Location::key`] for the status poll, remembered for
@@ -252,7 +244,14 @@ fn status_key(location: &Location) -> String {
 /// exercise the exact function production code calls rather than
 /// reimplementing the probe.
 pub fn is_running_in(dir: &Path, location: &Location) -> bool {
-    probe_locked(dir, &location.key()).unwrap_or(false)
+    held(dir, &location.key(), location)
+}
+
+/// Whether the lock named `key` in `dir`, or `location`'s legacy one, is
+/// held: what [`is_running`] answers, and what its tests check through
+/// [`is_running_in`].
+fn held(dir: &Path, key: &str, location: &Location) -> bool {
+    probe_locked(dir, key).unwrap_or(false)
         || location
             .legacy_key()
             .is_some_and(|key| probe_locked(dir, &key).unwrap_or(false))

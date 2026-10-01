@@ -12,15 +12,13 @@
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 use serde::{Deserialize, Serialize};
 
-use crate::constants::APP_ID;
-use crate::constants::CONFIG_VERSION;
 use crate::constants::EVENT_LOG_CAPACITY;
 use crate::core::{errors, format};
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind, short_id};
 use crate::fl;
 use crate::run_state::Stage;
-use crate::{debug_log, error_log};
+use crate::error_log;
 
 /// What happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,9 +106,7 @@ pub struct Event {
 struct Log(Vec<Event>);
 
 fn store() -> Option<Config> {
-    Config::new_state(APP_ID, CONFIG_VERSION)
-        .inspect_err(|err| debug_log!(CONFIG, "no state store: {err}"))
-        .ok()
+    crate::paths::state_store()
 }
 
 fn key(profile_id: &str) -> String {

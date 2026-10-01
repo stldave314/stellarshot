@@ -79,6 +79,25 @@ pub fn config_root() -> Option<PathBuf> {
     xdg_base("XDG_CONFIG_HOME", ".config")
 }
 
+/// `$XDG_RUNTIME_DIR`, if it is set to an absolute path. Unlike the others
+/// it has no fallback under home: see `engine::lock::runtime_dir`.
+pub fn runtime_root() -> Option<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+}
+
+/// Stellarshot's state store (run state and history): cosmic-config's, under
+/// `$XDG_STATE_HOME`. `None`, logged, if it cannot be opened.
+pub fn state_store() -> Option<cosmic::cosmic_config::Config> {
+    cosmic::cosmic_config::Config::new_state(
+        crate::constants::APP_ID,
+        crate::constants::CONFIG_VERSION,
+    )
+    .inspect_err(|err| crate::debug_log!(CONFIG, "no state store: {err}"))
+    .ok()
+}
+
 /// `$XDG_STATE_HOME`, or `~/.local/state`.
 pub fn state_root() -> Option<PathBuf> {
     xdg_base("XDG_STATE_HOME", ".local/state")
@@ -180,9 +199,8 @@ pub fn with_state_lock<T>(change: impl FnOnce() -> T) -> T {
 /// deleted: the marker is left, under a key nothing reads again. Call under
 /// [`with_state_lock`].
 pub fn remove_state_key(key: &str) -> Result<(), String> {
-    use cosmic::cosmic_config::{Config, ConfigSet};
-    let store = Config::new_state(crate::constants::APP_ID, crate::constants::CONFIG_VERSION)
-        .map_err(|err| err.to_string())?;
+    use cosmic::cosmic_config::ConfigSet;
+    let store = state_store().ok_or("no state store")?;
     let path = state_key_path(key)?;
     if std::fs::symlink_metadata(&path).is_err() {
         // Never saved, or already gone.

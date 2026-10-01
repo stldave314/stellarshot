@@ -11,13 +11,11 @@
 use cosmic::cosmic_config::{Config, ConfigGet, ConfigSet};
 use serde::{Deserialize, Serialize};
 
-use crate::constants::APP_ID;
-use crate::constants::CONFIG_VERSION;
 use crate::constants::OVERDUE_FACTOR;
 use crate::debug::CONFIG;
 use crate::engine::{EngineError, ErrorKind};
 use crate::profile::Profile;
-use crate::{debug_log, error_log};
+use crate::error_log;
 
 /// A backup's state, for the sidebar icon and its legend. See [`status`] for
 /// how the fields it is drawn from combine into one of these.
@@ -83,22 +81,37 @@ pub fn status(profile: &Profile, run: &RunState, running: bool) -> BackupStatus 
 }
 
 fn status_at(profile: &Profile, run: &RunState, running: bool, now: i64) -> BackupStatus {
-    // What is happening right now outranks history that this very run may
-    // be about to change (a retry, or the check a damaged repository asked
-    // for).
-    if running {
-        return BackupStatus::Running;
+    BackupStatus::from_facts(
+        running,
+        run.damaged,
+        run.current_failure(profile.last_success, now).is_some(),
+        is_overdue(profile, run, now),
+    )
+}
+
+impl BackupStatus {
+    /// The one status these facts add up to, for the window and the applet
+    /// alike. What is happening right now outranks history that this very
+    /// run may be about to change (a retry, or the check a damaged
+    /// repository asked for); damage is worse than an ordinary failure;
+    /// being late comes last.
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "four independent facts, each named where it is passed"
+    )]
+    pub fn from_facts(running: bool, damaged: bool, failed: bool, overdue: bool) -> Self {
+        if running {
+            Self::Running
+        } else if damaged {
+            Self::Damaged
+        } else if failed {
+            Self::Failed
+        } else if overdue {
+            Self::Overdue
+        } else {
+            Self::UpToDate
+        }
     }
-    if run.damaged {
-        return BackupStatus::Damaged;
-    }
-    if run.current_failure(profile.last_success, now).is_some() {
-        return BackupStatus::Failed;
-    }
-    if is_overdue(profile, run, now) {
-        return BackupStatus::Overdue;
-    }
-    BackupStatus::UpToDate
 }
 
 /// Whether `profile` is significantly late for an automatic backup. A
@@ -210,9 +223,7 @@ impl RunState {
 }
 
 fn store() -> Option<Config> {
-    Config::new_state(APP_ID, CONFIG_VERSION)
-        .inspect_err(|err| debug_log!(CONFIG, "no state store: {err}"))
-        .ok()
+    crate::paths::state_store()
 }
 
 fn key(profile_id: &str) -> String {

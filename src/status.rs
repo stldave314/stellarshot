@@ -31,22 +31,10 @@ pub struct Status {
 }
 
 impl Status {
-    /// These fields combined into one status, in the same order of
-    /// precedence [`run_state::status`] itself uses: something running
-    /// outranks history that run may be about to change, then damage,
-    /// which is worse than an ordinary failure, then simply being late.
+    /// These fields combined into one status, the same way the window
+    /// combines them.
     pub fn backup_status(&self) -> run_state::BackupStatus {
-        if self.running {
-            run_state::BackupStatus::Running
-        } else if self.damaged {
-            run_state::BackupStatus::Damaged
-        } else if self.failed {
-            run_state::BackupStatus::Failed
-        } else if self.overdue {
-            run_state::BackupStatus::Overdue
-        } else {
-            run_state::BackupStatus::UpToDate
-        }
+        run_state::BackupStatus::from_facts(self.running, self.damaged, self.failed, self.overdue)
     }
 }
 

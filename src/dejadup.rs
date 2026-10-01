@@ -70,7 +70,7 @@ pub struct Import {
 
 /// Find and read Déjà Dup's settings: the Flatpak keyfile first, then dconf.
 pub fn find() -> Option<Import> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let home = crate::paths::home_dir()?;
     let text = std::fs::read_to_string(home.join(FLATPAK_KEYFILE))
         .ok()
         .or_else(dconf_dump)?;

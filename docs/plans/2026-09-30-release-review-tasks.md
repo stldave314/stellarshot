@@ -2,8 +2,31 @@
 
 **Date:** 2026-09-30 · A final code review and security audit of the working
 tree after the production-readiness work (see
-`2026-09-29-production-readiness-tasks.md`). The verdict: **not ready to
-release.** Section 1 lists what blocks it.
+`2026-09-29-production-readiness-tasks.md`). The verdict at the time: **not ready to
+release.** Section 1 lists what blocked it; see "Status" for how each task
+was resolved.
+
+## Status (2026-09-30, end of day)
+
+Every task below is resolved, in commits `a8e37bb` through `08942ed`:
+
+| Task | Resolution |
+|---|---|
+| B-1 | On-connect units: `RemainAfterExit=yes`, `BindsTo=`/`After=` the drive's device unit, `ExecStart=-`; checked with `systemd-analyze --user verify` and real transient units (`a8e37bb`) |
+| B-2 | `check_walked` on every walked name in restore, browse, search and missing-files (`a8e37bb`) |
+| B-3 | Open copies get their own private folder; the runtime folder is never loosened (`a8e37bb`) |
+| B-4, B-5 | `end_before_start` for delete and pin; a restore that cannot start ends its page state (`a8e37bb`) |
+| B-6 | Verified: cargo-deny 0.20 reports unsound advisories as warnings, so it was not blocking; both are still listed in `deny.toml` with their reason, and `yoke-derive` was updated (`a8e37bb`) |
+| B-7 | `cpio fuse3` added to the release job (`a8e37bb`) |
+| S-1, S-2 | Every operation arms the SIGTERM handler before its Before hooks; a killed child exiting 143 while canceled is canceled; a failing Before hook runs After hooks (`a8e37bb`) |
+| S-3 | Sticky directories no longer exempt (`a8e37bb`) |
+| S-4 | Verified rclone does not save environment-only options; client ID and secret are written into the private config (`817c871`) |
+| E-1 | Type conflicts refused with `ErrorKind::TypeConflict` under Overwrite (`817c871`) |
+| E-2, E-3 | Unmounted local destinations and unreachable SFTP, cloud and REST destinations are `DestinationUnavailable`, a quiet skip (`817c871`) |
+| U-1 to U-7 | Dialog queue `close_where`/`any`, busy dialogs, shortcuts behind dialogs, `--restore` keeps a running restore, sidebar rebuilt after import and wizard (`577e3e6`) |
+| P-1, D-1 | Uninstall steps tested on dummy units; documentation corrected (`577e3e6`) |
+| L-1 1–19 | `db136d3`, `8b31a45` |
+| L-1 20–31 | `08942ed`. Item 25: history, run state and the 30-second refresh moved off the UI thread; `Profile::location` still reads `/proc/self/mountinfo` there for a drive destination, an in-memory read left as is. Item 31: Swedish now uses "Radera" for a permanent delete; the Bulgarian "Keep" setting is "Пазене" everywhere it is referred to |
 
 ## How to work these tasks
 

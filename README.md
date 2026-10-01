@@ -1067,6 +1067,8 @@ running as you can read.
 | `app` | The window: sidebar, menus, dialogs, settings |
 | `app::applet` | The panel applet: `stellarshot-applet`'s own window, sharing the library but nothing else with the main window |
 | `app::pages` | The first-launch screen, each backup's page, the restore page, Settings and Help |
+| `app::update` | What the window does with each message |
+| `app::profiles` | The list of backups: saving it, adding and removing one, and what follows (schedule, keyring items, state) |
 | `app::effects` | What the pages and the wizard ask for, carried out: one runner per page, turning its effects into tasks |
 | `app::wizard` | The setup wizard's steps and validation; `place` is the "where" step |
 | `app::tasks` | Engine calls off the UI thread, the folder chooser, the estimate as a stream |

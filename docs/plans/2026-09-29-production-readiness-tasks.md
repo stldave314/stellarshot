@@ -90,19 +90,26 @@ detailed steps.
 | ARC-30 | `app.rs` split from 3 433 to about 1 150 lines: `launch`, `nav`, `dialog`, `effects/{profile,restore,wizard,settings,dialog}`, `pages/{help,settings}`; `app/settings.rs` is now `app/startup.rs`. The moved modules glob-import their parent's scope; narrowing those, and trimming `app.rs` toward 800, remains |
 | ARC-31 | Remember-password task, theme index, `tasks::snapshots`, `hostname()`, `end_before_start`, `edit_wizard`, the "ago" sentences, the shared `row()`, one streaming helper in `tasks.rs`. The progress card is still two copies (UI-50) |
 
-Not done from the finished items: UI-31's other settings paths, CI-37's
-toolchain pin, CI-38's coverage job, DATA-8's "reset status" action, PROC-4's
-notification waiter; and the partials noted in the rows above.
+Not done from the finished items at the time: UI-31's other settings
+paths, CI-37's toolchain pin, CI-38's coverage job, DATA-8's "reset status"
+action, PROC-4's notification waiter; and the partials noted in the rows
+above. All were done on 2026-09-30; see "Follow-up, done".
+
+## Follow-up, done (2026-09-30)
+
+| Item | Resolution |
+|---|---|
+| UI-31 | Theme, exclusions and cache settings that fail to save show an error (`08942ed`) |
+| CI-37 | The release workflow builds with a pinned toolchain, raised as part of the release checklist in CONTRIBUTING (`08942ed`) |
+| CI-38 | A coverage job (`cargo llvm-cov`, same services as the tests) reports on every CI run (`08942ed`) |
+| DATA-8 | **Reset Status** for a status or history this version cannot read; the original is kept as `<key>.unreadable` (`b5f7617`, `ec10672`) |
+| PROC-4 | The failure notification's click wait runs in its own transient unit, so the scheduled run ends at once (`a12010d`) |
+| PROC-12 | **Test the automatic backup → Run Now** starts the scheduled unit through systemd (`7631c75`) |
+| TST-32 | Measured rather than assumed: rustic indexes every five minutes, so a backup killed sooner leaves unindexed packs that are not reused, and prune deletes them in two steps a day apart. The test pins what must hold; the README says when the space returns (`7fc0b39`) |
+| UI-50 / ARC-31 | One progress card body for backups and restores (`1ebfca1`) |
+| ARC-30 | The moved modules name their imports (`e0e1bdf`); shared code moved to `core/` (`7fc0b39`); `update` and the profile-list helpers moved out, leaving `app.rs` at 789 lines |
+| ARC-33 | `clippy::pedantic` adopted, with each allowed lint's reason in `Cargo.toml` (`2b0673e`) |
 
 ## Open
 
-Nothing is open from the review. What remains is follow-up:
-
-- The restore page's progress card duplicates `profile::progress`; sharing it
-  means giving the restore page the same running state (started, last moved,
-  stall notice).
-- Narrow the `use super::*` globs in the `app/` modules to named imports.
-- Pedantic clippy (about 1 490 warnings on this code), in one pass.
-- A "test as a scheduled run" button (PROC-12).
-- "The next run after a killed backup reuses the packs already uploaded"
-  (TST-32).
+Nothing.

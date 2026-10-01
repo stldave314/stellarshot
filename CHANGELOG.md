@@ -339,6 +339,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under one.
 - The REST server tests run against `rclone serve restic` and run in CI
   again; a coverage report is produced on every CI run.
+- The `.deb` passes `lintian`: it carries a Debian changelog, its copyright
+  file points at the system's copy of the GPL instead of repeating it, and
+  it ships `CHANGELOG.md`.
 - The release is built with a fixed Rust toolchain, `./install.sh package`
   builds once rather than once per format, and re-running an older
   release's build no longer fails on tags made after it.

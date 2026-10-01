@@ -167,7 +167,11 @@ fluent-syntax = "0.12"
 # Deliberately the GitHub no-reply address, not a personal one.
 maintainer = "stldave314 <stldave314@users.noreply.github.com>"
 copyright = "2024-2026, the Stellarshot contributors"
-license-file = ["LICENSE", "0"]
+# Debian wants the copyright file to point at its own copy of the GPL
+# rather than carry the full text.
+license-file = ["res/debian/license", "0"]
+# Written by `./install.sh deb` from the version being packaged.
+changelog = "target/debian/changelog"
 extended-description = """
 A backup application for the COSMIC desktop. Stellarshot keeps encrypted,
 deduplicated snapshots of your folders in a restic-compatible repository, so
@@ -185,6 +189,7 @@ assets = [
     ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["res/io.github.stldave314.Stellarshot.metainfo.xml", "usr/share/metainfo/", "644"],
     ["README.md", "usr/share/doc/stellarshot/README.md", "644"],
+    ["CHANGELOG.md", "usr/share/doc/stellarshot/CHANGELOG.md", "644"],
 ]
 
 [package.metadata.generate-rpm]

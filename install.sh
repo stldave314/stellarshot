@@ -164,6 +164,26 @@ cmd_uninstall() {
     warn "  systemctl --user daemon-reload"
 }
 
+# The one-entry Debian changelog a .deb must carry, pointing at the real
+# one. Generated from the version being packaged, so it can never name a
+# release that is not this one.
+write_debian_changelog() {
+    local version date
+    version=$(cargo metadata --no-deps --format-version 1 \
+        | sed -n 's/.*"name":"stellarshot","version":"\([^"]*\)".*/\1/p')
+    [[ -n "$version" ]] || die "could not determine the package version"
+    date=$(LC_ALL=C date -u -R -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}")
+    mkdir -p target/debian
+    cat > target/debian/changelog <<CHANGELOG
+stellarshot ($version-1) unstable; urgency=medium
+
+  * Release $version. What changed is in
+    /usr/share/doc/stellarshot/CHANGELOG.md.
+
+ -- stldave314 <stldave314@users.noreply.github.com>  $date
+CHANGELOG
+}
+
 cmd_deb() {
     need cargo
     cargo deb --version >/dev/null 2>&1 || die "cargo-deb is required: cargo install cargo-deb"
@@ -173,6 +193,7 @@ cmd_deb() {
     # necessarily the same binaries the .rpm and tarball ship.
     cmd_build
     mkdir -p "$DIST"
+    write_debian_changelog
     info "Building .deb"
     cargo deb --no-build --output "$DIST"
     info "Wrote $(ls -1 "$DIST"/*.deb | tail -1)"

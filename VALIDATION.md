@@ -783,6 +783,7 @@ files, and `tests/desktop_l10n.rs` fails if `res/` disagrees with them.
 | `tests/desktop_l10n.rs` | The desktop entries' and the store summary's translations match the locale files, for every locale |
 | `several_previews_from_one_index_add_up_to_each_on_its_own` (`src/engine/tests.rs`) | A multi-item preview read from one index equals the sum of separate previews |
 | `a_parent_folder_in_a_stdin_backups_name_stays_inside_the_target` (`src/engine/tests.rs`) | The nearest to a crafted snapshot rustic's public API can write (a stdin backup named `../escaped`) restores inside the target and nothing beside it |
+| `reading_a_big_file_through_a_mount_does_not_load_it_whole` (`src/engine/tests.rs`) | REL-15's memory check as a test: reading 16 MiB from both ends of a 1 GiB file in a mounted snapshot grew the process by about 10 MB; loading the file whole would add the full GiB, far past the half-file limit the test allows |
 | `only_this_users_own_snapshot_mounts_are_candidates_for_cleanup` (`src/engine/mount.rs`) | The startup cleanup only ever considers this user's own Stellarshot FUSE mounts |
 | `an_unreadable_mount_list_is_not_shown_as_no_drives` (`src/app/wizard/place.rs`) | The wizard tells an unreadable mount list apart from no drive |
 | `starting_a_run_by_hand_needs_a_real_backup_id_and_unit` (`src/timers.rs`) | Run Now refuses a malformed ID before systemctl, and fails for a unit that does not exist |

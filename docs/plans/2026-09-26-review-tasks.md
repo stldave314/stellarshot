@@ -42,6 +42,7 @@ Also finished, from notes that still said "not done" lower down:
 | CI-5 | Its fifth item followed TST-3, now done |
 | SEC-8 | Nothing left: the keyring's bytes move into the `Secret` (an exact-size `Vec` becomes the `String`, then the boxed secret) without a second copy |
 | SEC-2 | A test restores the nearest to a crafted snapshot rustic's public API can write; rustic normalizes a `..` in a path away when it builds the tree. A tree that really holds one needs rustic's private pack and encryption code, so `check_walked`'s in-memory tests remain the proof for that case |
+| REL-15 | Its live memory check is now a test: 16 MiB read from a 1 GiB file through the mount grows the process by about 10 MB |
 | REL-10 | `ErrorKind` and `Source` fall back to `Unknown`; `EventKind`'s variants carry data, which `serde(other)` cannot absorb, so an unknown one makes the history unreadable, which Reset Status now handles with the original kept aside |
 
 Decided against, with the reason:
@@ -67,9 +68,8 @@ Decided against, with the reason:
   one helper would have to be both synchronous and asynchronous.
 
 Left for a person at the desktop, since they need a live COSMIC session:
-the panel applet's Open click-through, Ctrl+Q with a dialog open, a
-multi-gigabyte file read through a mounted snapshot while watching memory,
-and the new Run Now and Reset Status buttons on a real backup.
+the panel applet's Open click-through, Ctrl+Q with a dialog open, and the
+new Run Now and Reset Status buttons on a real backup.
 
 ---
 

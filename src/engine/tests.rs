@@ -2822,3 +2822,55 @@ fn a_parent_folder_in_a_stdin_backups_name_stays_inside_the_target() {
     assert_eq!(beside, vec![std::ffi::OsString::from("target")]);
     assert!(!fixture.work.join("escaped").exists());
 }
+
+/// This process's resident memory, in bytes.
+fn resident_bytes() -> u64 {
+    let status = fs::read_to_string("/proc/self/status").unwrap();
+    let kib: u64 = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|number| number.parse().ok())
+        .expect("VmRSS in /proc/self/status");
+    kib * 1024
+}
+
+/// REL-15's live check, as a test: opening a big file in a mounted snapshot
+/// and reading parts of it must not load the whole file. A 1 GiB file
+/// (sparse, so cheap to make and back up) is opened and read at its start
+/// and its end; the process may not grow by anything near its size. Other
+/// tests run in the same process, so the margin is wide: half the file,
+/// where reading it whole would add all of it.
+#[test]
+fn reading_a_big_file_through_a_mount_does_not_load_it_whole() {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const SIZE: u64 = 1 << 30;
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    let big = fixture.source.join("disk.img");
+    fs::File::create(&big).unwrap().set_len(SIZE).unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    let mount_point = fixture.work.join("mnt");
+    fs::create_dir_all(&mount_point).unwrap();
+    let browser = Arc::new(browser(&fixture));
+    let _mount = mount::mount(browser, "latest".to_owned(), &mount_point).unwrap();
+    let mounted = restored(&mount_point, &fixture.source).join("disk.img");
+
+    let before = resident_bytes();
+    let mut file = fs::File::open(&mounted).unwrap();
+    assert_eq!(file.metadata().unwrap().len(), SIZE);
+    let mut chunk = vec![1u8; 8 << 20];
+    file.read_exact(&mut chunk).unwrap();
+    assert!(chunk.iter().all(|&byte| byte == 0));
+    file.seek(SeekFrom::End(-(8 << 20))).unwrap();
+    file.read_exact(&mut chunk).unwrap();
+    assert!(chunk.iter().all(|&byte| byte == 0));
+    let grown = resident_bytes().saturating_sub(before);
+
+    assert!(
+        grown < SIZE / 2,
+        "reading 16 MiB of a 1 GiB file grew the process by {grown} bytes"
+    );
+}

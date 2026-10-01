@@ -168,7 +168,15 @@ fn signing_in_never_writes_into_a_readable_configuration() {
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
 
     // `local` needs no browser; a cloud sign-in writes its token the same way.
-    stellarshot::engine::rclone::sign_in(&config, "probe", "local", &[], None).unwrap();
+    stellarshot::engine::rclone::sign_in(
+        &config,
+        "probe",
+        "local",
+        &[],
+        None,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
 
     let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "rclone keeps an existing file's mode");

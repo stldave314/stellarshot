@@ -116,18 +116,23 @@ impl Serve {
                 Err(err) => {
                     let _ = child.kill();
                     let status = child.wait().ok();
-                    let detail = match err {
-                        mpsc::RecvTimeoutError::Timeout => {
-                            format!("rclone did not start serving within {limit:?}")
-                        }
-                        mpsc::RecvTimeoutError::Disconnected => {
-                            format!("rclone exited before it could start serving: {status:?}")
-                        }
+                    let (kind, detail) = match err {
+                        // Most likely a connection that never completes:
+                        // the remote is not reachable now.
+                        mpsc::RecvTimeoutError::Timeout => (
+                            ErrorKind::DestinationUnavailable,
+                            format!("rclone did not start serving within {limit:?}"),
+                        ),
+                        mpsc::RecvTimeoutError::Disconnected => (
+                            if super::error::looks_unreachable(&said) {
+                                ErrorKind::DestinationUnavailable
+                            } else {
+                                ErrorKind::Internal
+                            },
+                            format!("rclone exited before it could start serving: {status:?}"),
+                        ),
                     };
-                    return Err(EngineError::new(
-                        ErrorKind::Internal,
-                        with_tail(detail, &said),
-                    ));
+                    return Err(EngineError::new(kind, with_tail(detail, &said)));
                 }
             }
         };
@@ -207,6 +212,7 @@ mod tests {
             .unwrap_err();
 
         assert!(err.detail.contains("did not start serving"), "{err:?}");
+        assert_eq!(err.kind, ErrorKind::DestinationUnavailable);
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "the wait is bounded by the limit, not by the command"
@@ -251,6 +257,31 @@ mod tests {
         assert!(
             !std::path::Path::new(&format!("/proc/{pid}")).exists(),
             "the process is gone, not a zombie"
+        );
+    }
+
+    /// What rclone prints when an SFTP host cannot be reached, checked
+    /// against a real rclone: it exits before serving.
+    #[test]
+    fn a_remote_that_cannot_be_reached_is_unavailable_not_an_internal_error() {
+        let err = Serve::start_within(
+            "sh -c 'echo NewFs: couldnt connect SSH: dial tcp: lookup nas.invalid: no such host >&2; exit 1' --",
+            "x",
+            Duration::from_secs(10),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::DestinationUnavailable, "{err:?}");
+
+        let err = Serve::start_within(
+            "sh -c 'echo NewFs: couldnt connect SSH: ssh: handshake failed: ssh: unable to authenticate >&2; exit 1' --",
+            "x",
+            Duration::from_secs(10),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.kind,
+            ErrorKind::Internal,
+            "a refused login is a real failure, not a quiet skip"
         );
     }
 }

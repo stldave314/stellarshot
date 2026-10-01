@@ -236,9 +236,10 @@ pub const RCLONE_LISTING_LIMIT: usize = 1024 * 1024;
 /// (a drive mounted somewhere else) is picked up within the minute.
 pub const STATUS_KEY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// How long to wait for `rclone serve restic` to start listening. It does not
-/// connect to the remote until asked to, so this is only its own start-up; a
-/// minute means something is wrong with rclone itself.
+/// How long to wait for `rclone serve restic` to start listening. For SFTP and
+/// most cloud storage it connects to the remote first (and exits if it
+/// cannot), so this covers a slow connection too; one that takes longer is
+/// treated as not reachable now.
 pub const RCLONE_SERVE_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How long a scheduled run waits for UPower and NetworkManager to answer
@@ -265,3 +266,7 @@ pub const OPEN_COPY_MAX_BYTES: u64 = 512 * 1024 * 1024;
 /// How long an "Open a copy" folder stays before it is removed. Long enough
 /// that one still open in a viewer is not pulled away within a working day.
 pub const OPEN_COPY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// How long a cloud sign-in may take in the browser before rclone is stopped
+/// and the sign-in reported as timed out.
+pub const SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);

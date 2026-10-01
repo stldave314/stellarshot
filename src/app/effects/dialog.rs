@@ -8,6 +8,13 @@ use super::super::*;
 impl App {
     pub(in crate::app) fn on_dialog(&mut self, message: DialogMessage) -> Task<Message> {
         match message {
+            DialogMessage::CancelSignIn => {
+                if let Some(cancel) = &self.sign_in_cancel {
+                    cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                // Closed when the sign-in reports back (see `Message::Wizard`).
+                Task::none()
+            }
             DialogMessage::Close => {
                 self.dialogs.close();
                 Task::none()
@@ -159,7 +166,7 @@ impl App {
             DialogMessage::Deleted(id, result) => match result {
                 Ok(()) => {
                     self.dialogs
-                        .close_if(|dialog| matches!(dialog, Dialog::DeleteAll { .. }));
+                        .close_where(|dialog| matches!(dialog, Dialog::DeleteAll { .. }));
                     debug_log!(ENGINE, "deleted the repository of profile {id}");
                     self.remove_profile(&id)
                 }
@@ -167,7 +174,7 @@ impl App {
                     // The busy dialog would otherwise stay in front of the
                     // error, which now waits its turn.
                     self.dialogs
-                        .close_if(|dialog| matches!(dialog, Dialog::DeleteAll { .. }));
+                        .close_where(|dialog| matches!(dialog, Dialog::DeleteAll { .. }));
                     self.show_error(&fl!("delete-repo-failed"), &err);
                     Task::none()
                 }
@@ -185,7 +192,7 @@ impl App {
                     // from another backup, say) is not this operation's to
                     // close.
                     self.dialogs
-                        .close_if(|dialog| matches!(dialog, Dialog::ChangePassword { .. }));
+                        .close_where(|dialog| matches!(dialog, Dialog::ChangePassword { .. }));
                     if let Some(page) = self.pages.get_mut(&id) {
                         page.set_secret(new_password.clone());
                     }
@@ -223,7 +230,7 @@ impl App {
                 | child::ChildEvent::Ended(error) => {
                     self.pending_password_change = None;
                     self.dialogs
-                        .close_if(|dialog| matches!(dialog, Dialog::ChangePassword { .. }));
+                        .close_where(|dialog| matches!(dialog, Dialog::ChangePassword { .. }));
                     self.show_error(&fl!("change-password-failed"), &error);
                     Task::none()
                 }

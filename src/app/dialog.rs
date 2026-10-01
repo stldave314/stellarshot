@@ -150,19 +150,31 @@ impl Dialogs {
         self.front = self.queued.pop_front();
     }
 
-    /// [`Dialogs::close`], but only if the dialog on screen is one `is`
-    /// accepts: for an operation finishing that must not close something
-    /// else which happens to be showing.
-    pub fn close_if(&mut self, is: impl Fn(&Dialog) -> bool) {
-        if self.front.as_ref().is_some_and(is) {
+    /// Close the first dialog `is` accepts, wherever it is: on screen (the
+    /// next waiting one then takes its place) or waiting behind another. For
+    /// an operation finishing: its own dialog may have been pushed back by
+    /// one the user opened meanwhile (Quit), and must still go, or it would
+    /// reappear busy with nothing left to end it. Anything else showing is
+    /// left alone.
+    pub fn close_where(&mut self, is: impl Fn(&Dialog) -> bool) {
+        if self.front.as_ref().is_some_and(&is) {
             self.close();
+        } else if let Some(index) = self.queued.iter().position(&is) {
+            self.queued.remove(index);
         }
+    }
+
+    /// Whether any dialog, on screen or waiting, is one `is` accepts.
+    pub fn any(&self, is: impl Fn(&Dialog) -> bool) -> bool {
+        self.front.iter().chain(self.queued.iter()).any(is)
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum DialogMessage {
     Close,
+    /// Stop a cloud sign-in that is waiting on the browser.
+    CancelSignIn,
     Confirm,
     Typed(String),
     Deleted(String, Result<(), EngineError>),
@@ -213,8 +225,8 @@ pub(super) fn view<'a>(dialog: &'a Dialog, config: &StellarshotConfig) -> Elemen
             .title(fl!("place-signing-in-title"))
             .body(fl!("place-signing-in-body"))
             .primary_action(
-                widget::button::suggested(fl!("ok"))
-                    .on_press(Message::Dialog(DialogMessage::Close)),
+                widget::button::standard(fl!("place-sign-in-cancel"))
+                    .on_press(Message::Dialog(DialogMessage::CancelSignIn)),
             ),
         Dialog::Remove { name, .. } => widget::dialog()
             .title(fl!("remove-title", name = name.clone()))
@@ -369,15 +381,35 @@ mod tests {
         let mut dialogs = Dialogs::default();
         dialogs.open(remove());
 
-        dialogs.close_if(|dialog| matches!(dialog, Dialog::SigningIn));
+        dialogs.close_where(|dialog| matches!(dialog, Dialog::SigningIn));
         assert!(
             matches!(dialogs.front(), Some(Dialog::Remove { .. })),
             "a sign-in finishing must not dismiss an unrelated confirmation"
         );
 
         dialogs.open(Dialog::SigningIn);
-        dialogs.close_if(|dialog| matches!(dialog, Dialog::SigningIn));
+        dialogs.close_where(|dialog| matches!(dialog, Dialog::SigningIn));
         assert!(matches!(dialogs.front(), Some(Dialog::Remove { .. })));
+    }
+
+    /// A busy dialog pushed back behind Quit must still close when its
+    /// operation finishes, or it reappears with nothing left to end it.
+    #[test]
+    fn an_operation_closes_its_own_dialog_even_behind_another() {
+        let mut dialogs = Dialogs::default();
+        dialogs.open(Dialog::ChangePassword {
+            id: "a".into(),
+            password: "x".into(),
+            confirm: "x".into(),
+            busy: true,
+        });
+        dialogs.open(Dialog::Quit);
+        assert!(dialogs.any(|d| matches!(d, Dialog::ChangePassword { busy: true, .. })));
+
+        dialogs.close_where(|d| matches!(d, Dialog::ChangePassword { .. }));
+        assert!(matches!(dialogs.front(), Some(Dialog::Quit)), "Quit stays");
+        dialogs.close();
+        assert!(dialogs.front().is_none(), "nothing busy comes back");
     }
 
     #[test]

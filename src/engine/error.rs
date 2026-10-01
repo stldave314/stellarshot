@@ -74,6 +74,9 @@ pub enum ErrorKind {
     /// A snapshot prefix that matches more than one snapshot: see
     /// `browse::Browser::snapshot`. The detail is the ambiguous prefix.
     Ambiguous,
+    /// Overwrite was asked to replace a folder with a file, or a file with a
+    /// folder, which it cannot do. The detail is the path on disk.
+    TypeConflict,
     /// A file is too large to open as a temporary copy, which lives in
     /// memory-backed storage. The detail is its size in bytes.
     TooLargeToOpen,
@@ -138,6 +141,29 @@ impl EngineError {
     }
 }
 
+/// Whether `text` (an error from rclone or from rustic's REST client) says
+/// the destination could not be reached at all, as opposed to reached and
+/// then refusing: no network, an unknown host, a server that is down. Only
+/// network-level wording counts, so a wrong password or a changed host key
+/// is never taken for "not reachable now" and skipped quietly.
+pub fn looks_unreachable(text: &str) -> bool {
+    const MARKERS: &[&str] = &[
+        "dial tcp",
+        "no such host",
+        "connection refused",
+        "network is unreachable",
+        "no route to host",
+        "i/o timeout",
+        "connection timed out",
+        "tls handshake timeout",
+        "dns error",
+        "(connect)",
+        "temporary failure in name resolution",
+    ];
+    let text = text.to_lowercase();
+    MARKERS.iter().any(|marker| text.contains(marker))
+}
+
 impl From<RusticError> for EngineError {
     /// rustic exposes no stable error kind, only error codes, and a wrong
     /// password is the one code worth acting on. Whether the destination is
@@ -169,5 +195,29 @@ impl From<Box<RusticError>> for EngineError {
 impl From<std::io::Error> for EngineError {
     fn from(err: std::io::Error) -> Self {
         Self::new(ErrorKind::Io, err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_network_level_failures_look_unreachable() {
+        for text in [
+            "dial tcp: lookup nas.invalid: no such host",
+            "error sending request for url (http://h/config) : (source: client error (Connect))",
+            "dial tcp 10.0.0.2:22: connect: connection refused",
+            "dial tcp: i/o timeout",
+        ] {
+            assert!(looks_unreachable(text), "{text}");
+        }
+        for text in [
+            "ssh: handshake failed: ssh: unable to authenticate",
+            "knownhosts: key mismatch",
+            "The password that has been entered, seems to be incorrect",
+        ] {
+            assert!(!looks_unreachable(text), "{text}");
+        }
     }
 }

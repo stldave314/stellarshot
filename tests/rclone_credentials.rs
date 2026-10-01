@@ -41,7 +41,7 @@ fn the_client_secret_reaches_rclone_through_the_environment_not_argv() {
     std::fs::write(
         &stub,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nenv > '{}'\nexit 0\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nenv > '{}'\nprintf '[probe]\\ntype = drive\\n' >> \"$2\"\nexit 0\n",
             seen_argv.display(),
             seen_env.display()
         ),
@@ -70,6 +70,7 @@ fn the_client_secret_reaches_rclone_through_the_environment_not_argv() {
         "drive",
         &["scope=drive"],
         Some(("my-client-id", "hunter2")),
+        &std::sync::atomic::AtomicBool::new(false),
     )
     .unwrap();
 
@@ -93,6 +94,15 @@ fn the_client_secret_reaches_rclone_through_the_environment_not_argv() {
         "the secret must reach rclone through the environment: {env:?}"
     );
 
+    // rclone does not save what it got only from the environment, so the
+    // client a token was issued to is written into the section afterward,
+    // or every later token refresh would use rclone's own client instead.
+    let saved = std::fs::read_to_string(&config).unwrap();
+    assert!(
+        saved.contains("client_id = my-client-id") && saved.contains("client_secret = hunter2"),
+        "the custom client must be saved with the remote: {saved:?}"
+    );
+
     // The user's own `RCLONE_*` environment must not reach commands run
     // against Stellarshot's configuration: `RCLONE_DRY_RUN=true` would turn a
     // delete into a no-op that still reports success.
@@ -105,7 +115,15 @@ fn the_client_secret_reaches_rclone_through_the_environment_not_argv() {
     // OAuth app must set neither environment variable, not leave the
     // previous case's values sitting there unset by mistake.
     std::fs::remove_file(&seen_env).unwrap();
-    rclone::sign_in(&config, "probe", "local", &[], None).unwrap();
+    rclone::sign_in(
+        &config,
+        "probe",
+        "local",
+        &[],
+        None,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
     let env = std::fs::read_to_string(&seen_env).unwrap();
     assert!(
         !env.contains("CLIENT_ID") && !env.contains("CLIENT_SECRET"),

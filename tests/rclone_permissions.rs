@@ -50,7 +50,15 @@ fn the_configuration_is_private_before_rclone_writes_a_token() {
     std::fs::write(&config, "[old]\ntype = local\n").unwrap();
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-    rclone::sign_in(&config, "probe", "drive", &[], None).unwrap();
+    rclone::sign_in(
+        &config,
+        "probe",
+        "drive",
+        &[],
+        None,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
 
     let seen = std::fs::read_to_string(&seen).expect("the stand-in rclone ran");
     assert_eq!(

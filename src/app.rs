@@ -84,6 +84,8 @@ pub struct App {
     /// result that finishes after the page was closed and another opened
     /// (for this backup or another) is dropped, not shown on the new one.
     restore_session: u64,
+    /// Set to stop a cloud sign-in that is waiting on the browser.
+    sign_in_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The password a change is in progress for, and which backup: kept
     /// here rather than read back out of the dialog when the child
     /// finishes. The dialog can be gone by then (closed, or replaced by an
@@ -669,6 +671,7 @@ impl Application for App {
             wizard: None,
             wizard_session: 0,
             restore_session: 0,
+            sign_in_cancel: None,
             pending_password_change: None,
             wizard_remember: false,
             restore: None,
@@ -925,7 +928,8 @@ impl Application for App {
                     crate::app::wizard::Message::Place(place::Message::SignedIn(_))
                 ) {
                     self.dialogs
-                        .close_if(|dialog| matches!(dialog, Dialog::SigningIn));
+                        .close_where(|dialog| matches!(dialog, Dialog::SigningIn));
+                    self.sign_in_cancel = None;
                 }
                 let Some(wizard) = self.wizard.as_mut() else {
                     return Task::none();

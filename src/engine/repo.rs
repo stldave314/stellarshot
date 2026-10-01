@@ -503,6 +503,19 @@ fn unopened(
     ))
 }
 
+/// `err` as [`ErrorKind::DestinationUnavailable`] when it says a remote
+/// location could not be reached at all (see
+/// [`super::error::looks_unreachable`]): no network or a server that is down
+/// is "try again at the next slot", not a failure worth a notification.
+fn unreachable(location: &Location, err: EngineError) -> EngineError {
+    let remote = !matches!(location, Location::Local { .. });
+    if remote && err.kind == ErrorKind::Internal && super::error::looks_unreachable(&err.detail) {
+        EngineError::new(ErrorKind::DestinationUnavailable, err.detail)
+    } else {
+        err
+    }
+}
+
 /// Create a repository. Refuses a location that already holds a repository or
 /// anything else.
 pub fn init(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
@@ -576,12 +589,27 @@ pub fn open(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
     if let Location::Local { path } = location
         && !is_repository(path)
     {
+        // Nothing there at all, or an empty folder: most often a network
+        // share or a drive whose mount point stays behind when it is not
+        // mounted. That is "not reachable now" (a scheduled run skips it
+        // quietly), not a folder that holds something else.
+        let empty_or_missing = std::fs::read_dir(path)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(true);
+        if empty_or_missing {
+            return Err(EngineError::new(
+                ErrorKind::DestinationUnavailable,
+                path.display().to_string(),
+            ));
+        }
         return Err(EngineError::not_a_repository(path));
     }
     debug_log!(ENGINE, "open {}", location.describe());
     let bars = SinkBars::default();
-    let (unopened, serve) = unopened(location, &bars)?;
-    let inner = unopened.open(&Credentials::password(secret.expose()))?;
+    let (unopened, serve) = unopened(location, &bars).map_err(|err| unreachable(location, err))?;
+    let inner = unopened
+        .open(&Credentials::password(secret.expose()))
+        .map_err(|err| unreachable(location, err.into()))?;
     Ok(Repo {
         location: location.clone(),
         bars,

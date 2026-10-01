@@ -16,6 +16,7 @@
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::error::{EngineError, ErrorKind};
@@ -23,7 +24,7 @@ use super::location::REPOSITORY_ENTRIES;
 use super::repo::Probe;
 use crate::constants::{
     CHILD_STDERR_TAIL, PROBE_TIMEOUT, PROCESS_POLL_INTERVAL, RCLONE_CHANGE_TIMEOUT,
-    RCLONE_LISTING_LIMIT, RCLONE_LOOK_FLAGS,
+    RCLONE_LISTING_LIMIT, RCLONE_LOOK_FLAGS, SIGN_IN_TIMEOUT,
 };
 use crate::debug::ENGINE;
 use crate::debug_log;
@@ -104,24 +105,6 @@ fn rclone(config: &Path, args: &[&str]) -> Result<Output, EngineError> {
     rclone_limited(config, &[], args, RCLONE_CHANGE_TIMEOUT)
 }
 
-/// [`rclone`], with extra environment variables set on the child. Used only
-/// by [`sign_in`], to pass the OAuth client ID and secret without ever
-/// putting them on argv (see its own doc comment).
-fn rclone_with_env(
-    config: &Path,
-    args: &[&str],
-    envs: &[(&str, &str)],
-) -> Result<Output, EngineError> {
-    debug_log!(ENGINE, "rclone {}", redact(args).join(" "));
-    command()
-        .envs(envs.iter().copied())
-        .arg("--config")
-        .arg(config)
-        .args(args)
-        .output()
-        .map_err(spawn_error)
-}
-
 /// Run rclone with Stellarshot's configuration, killing it if it has not
 /// finished within `limit`. For commands that only look: a location that does
 /// not answer must turn into an explanation, not a wait without end.
@@ -136,23 +119,71 @@ fn rclone_limited(
     args: &[&str],
     limit: Duration,
 ) -> Result<Output, EngineError> {
+    rclone_run(config, flags, args, &RunLimits::new(limit))
+}
+
+/// How a bounded rclone run may end early.
+struct RunLimits<'a> {
+    limit: Duration,
+    /// Extra environment, set after the user's own `RCLONE_*` is removed.
+    envs: &'a [(&'a str, &'a str)],
+    /// Stop as soon as this is set.
+    cancel: Option<&'a AtomicBool>,
+    /// Stop rclone's whole process group, not only rclone. Not for a
+    /// sign-in, which may have started the user's browser.
+    whole_group: bool,
+}
+
+impl RunLimits<'_> {
+    fn new(limit: Duration) -> Self {
+        Self {
+            limit,
+            envs: &[],
+            cancel: None,
+            whole_group: true,
+        }
+    }
+}
+
+/// Run rclone with Stellarshot's configuration and the given limits.
+fn rclone_run(
+    config: &Path,
+    flags: &[&str],
+    args: &[&str],
+    limits: &RunLimits<'_>,
+) -> Result<Output, EngineError> {
+    let mut command = command();
+    command
+        .envs(limits.envs.iter().copied())
+        .arg("--config")
+        .arg(config)
+        .args(flags)
+        .args(args);
+    run_bounded(command, args, limits)
+}
+
+/// Run `command` (rclone, set up by the caller) within `limits`, reading its
+/// output with a cap. `args` is only for the log.
+fn run_bounded(
+    mut command: Command,
+    args: &[&str],
+    limits: &RunLimits<'_>,
+) -> Result<Output, EngineError> {
+    let limit = limits.limit;
     debug_log!(
         ENGINE,
         "rclone {} (within {limit:?})",
         redact(args).join(" ")
     );
-    let mut child = command()
-        .arg("--config")
-        .arg(config)
-        .args(flags)
-        .args(args)
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if limits.whole_group {
         // Its own group, so a timeout reaches anything rclone started too.
-        .process_group(0)
-        .spawn()
-        .map_err(spawn_error)?;
+        command.process_group(0);
+    }
+    let mut child = command.spawn().map_err(spawn_error)?;
     // Read both pipes as they fill, so a long listing cannot block rclone,
     // but keep only what is used: a folder with millions of entries must not
     // fill memory. Only the start of a listing matters (see [`classify`]),
@@ -176,20 +207,30 @@ fn rclone_limited(
         if let Some(status) = child.try_wait()? {
             break status;
         }
-        if Instant::now() >= deadline {
-            if let Some(group) = i32::try_from(child.id())
-                .ok()
-                .and_then(rustix::process::Pid::from_raw)
+        let canceled = limits
+            .cancel
+            .is_some_and(|cancel| cancel.load(Ordering::Relaxed));
+        if canceled || Instant::now() >= deadline {
+            if limits.whole_group
+                && let Some(group) = i32::try_from(child.id())
+                    .ok()
+                    .and_then(rustix::process::Pid::from_raw)
             {
                 let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
             }
             let _ = child.kill();
             let _ = child.wait();
-            debug_log!(ENGINE, "rclone {} timed out", redact(args).join(" "));
-            return Err(EngineError::new(
-                ErrorKind::TimedOut,
-                limit.as_secs().to_string(),
-            ));
+            debug_log!(
+                ENGINE,
+                "rclone {} {}",
+                redact(args).join(" "),
+                if canceled { "canceled" } else { "timed out" }
+            );
+            return Err(if canceled {
+                EngineError::new(ErrorKind::Canceled, String::new())
+            } else {
+                EngineError::new(ErrorKind::TimedOut, limit.as_secs().to_string())
+            });
         }
         std::thread::sleep(PROCESS_POLL_INTERVAL);
     };
@@ -342,11 +383,9 @@ pub(crate) fn remote_exists(config: &Path, name: &str) -> bool {
 pub fn user_remotes() -> Result<Vec<String>, EngineError> {
     // The user's own configuration, so their own `RCLONE_*` environment
     // (an encrypted config's password, say) is left as it is.
-    let output = Command::new(RCLONE)
-        .env("LC_ALL", "C")
-        .arg("listremotes")
-        .output()
-        .map_err(spawn_error)?;
+    let mut command = Command::new(RCLONE);
+    command.env("LC_ALL", "C").arg("listremotes");
+    let output = run_bounded(command, &["listremotes"], &RunLimits::new(PROBE_TIMEOUT))?;
     if !output.status.success() {
         return Err(EngineError::new(ErrorKind::Internal, stderr(&output)));
     }
@@ -361,11 +400,10 @@ pub fn user_remotes() -> Result<Vec<String>, EngineError> {
 /// `name`, so Stellarshot keeps working even if the user later changes or
 /// removes their own copy.
 pub fn copy_user_remote(config: &Path, user_remote: &str, name: &str) -> Result<(), EngineError> {
-    let output = Command::new(RCLONE)
-        .env("LC_ALL", "C")
-        .args(["config", "show", "--", user_remote])
-        .output()
-        .map_err(spawn_error)?;
+    let mut command = Command::new(RCLONE);
+    let args = ["config", "show", "--", user_remote];
+    command.env("LC_ALL", "C").args(args);
+    let output = run_bounded(command, &args, &RunLimits::new(PROBE_TIMEOUT))?;
     if !output.status.success() {
         return Err(EngineError::new(ErrorKind::Internal, stderr(&output)));
     }
@@ -426,7 +464,18 @@ pub fn sign_in(
     provider: &str,
     params: &[&str],
     credentials: Option<(&str, &str)>,
+    cancel: &AtomicBool,
 ) -> Result<(), EngineError> {
+    if let Some((id, secret)) = credentials
+        && [id, secret]
+            .iter()
+            .any(|value| value.contains(['\n', '\r']) || value.trim() != *value)
+    {
+        return Err(EngineError::new(
+            ErrorKind::AuthFailed,
+            "the client ID or secret contains a line break or surrounding spaces",
+        ));
+    }
     make_private(config)?;
     let mut args = vec!["config", "create", "--", name, provider];
     args.extend_from_slice(params);
@@ -437,12 +486,86 @@ pub fn sign_in(
         Some((id, secret)) => vec![(id_var.as_str(), id), (secret_var.as_str(), secret)],
         None => Vec::new(),
     };
-    let output = rclone_with_env(config, &args, &envs)?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(EngineError::new(ErrorKind::AuthFailed, stderr(&output)))
+    // Bounded and cancelable: a sign-in abandoned in the browser would
+    // otherwise keep rclone, and its local callback port, for good.
+    let limits = RunLimits {
+        limit: SIGN_IN_TIMEOUT,
+        envs: &envs,
+        cancel: Some(cancel),
+        whole_group: false,
+    };
+    let output = rclone_run(config, &[], &args, &limits)?;
+    if !output.status.success() {
+        return Err(EngineError::new(ErrorKind::AuthFailed, stderr(&output)));
     }
+    // rclone saves nothing it was given only through the environment, but
+    // every later token refresh needs the same client the token was issued
+    // to: written into the section here, in this private file, rather than
+    // passed on the command line where other users could read the secret.
+    if let Some((id, secret)) = credentials {
+        set_section_values(
+            config,
+            name,
+            &[("client_id", id), ("client_secret", secret)],
+        )?;
+    }
+    Ok(())
+}
+
+/// Set `values` in section `[name]` of the rclone configuration at `config`,
+/// replacing any the section already had, and keep the file private. Written
+/// to a new file beside it and renamed over, so a crash never leaves half a
+/// configuration with every sign-in's tokens in it.
+fn set_section_values(
+    config: &Path,
+    name: &str,
+    values: &[(&str, &str)],
+) -> Result<(), EngineError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let text = std::fs::read_to_string(config).map_err(|err| EngineError::io(config, err))?;
+    let header = format!("[{name}]");
+    let mut out = Vec::new();
+    let mut in_section = false;
+    let mut found = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == header;
+        }
+        let replaced = in_section
+            && values.iter().any(|(key, _)| {
+                trimmed
+                    .split_once('=')
+                    .is_some_and(|(existing, _)| existing.trim() == *key)
+            });
+        if replaced {
+            continue;
+        }
+        out.push(line.to_owned());
+        if trimmed == header {
+            found = true;
+            out.extend(values.iter().map(|(key, value)| format!("{key} = {value}")));
+        }
+    }
+    if !found {
+        return Err(EngineError::new(
+            ErrorKind::Internal,
+            format!("{header} is not in {}", config.display()),
+        ));
+    }
+    let temporary = config.with_extension("conf.new");
+    let _ = std::fs::remove_file(&temporary);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .map_err(|err| EngineError::io(&temporary, err))?;
+    file.write_all((out.join("\n") + "\n").as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|err| EngineError::io(&temporary, err))?;
+    std::fs::rename(&temporary, config).map_err(|err| EngineError::io(config, err))
 }
 
 /// Remove a remote Stellarshot created.
@@ -482,6 +605,92 @@ mod tests {
                 "client_secret=<redacted>",
             ]
         );
+    }
+
+    #[test]
+    fn a_bounded_run_stops_when_canceled_and_when_out_of_time() {
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let mut sleeper = Command::new("sh");
+        sleeper.args(["-c", "sleep 30"]);
+        let started = Instant::now();
+        let err = run_bounded(
+            sleeper,
+            &["sleep"],
+            &RunLimits {
+                limit: Duration::from_secs(60),
+                envs: &[],
+                cancel: Some(&cancel),
+                whole_group: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Canceled);
+        assert!(started.elapsed() < Duration::from_secs(10));
+
+        let mut sleeper = Command::new("sh");
+        sleeper.args(["-c", "sleep 30"]);
+        let err = run_bounded(
+            sleeper,
+            &["sleep"],
+            &RunLimits::new(Duration::from_millis(200)),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn custom_credentials_are_kept_in_their_own_section_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("rclone.conf");
+        std::fs::write(
+            &config,
+            "[other]\ntype = drive\nclient_id = keep-me\n\n[mine]\ntype = drive\ntoken = {}\nclient_id = stale\n",
+        )
+        .unwrap();
+
+        set_section_values(
+            &config,
+            "mine",
+            &[("client_id", "new-id"), ("client_secret", "s3cret")],
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&config).unwrap();
+        let mine = text.split("[mine]").nth(1).unwrap();
+        assert!(mine.contains("client_id = new-id\n"), "{text}");
+        assert!(mine.contains("client_secret = s3cret\n"), "{text}");
+        assert!(!mine.contains("stale"), "replaced, not added twice: {text}");
+        assert!(
+            mine.contains("token = {}"),
+            "nothing else in the section is lost"
+        );
+        assert!(
+            text.contains("[other]\ntype = drive\nclient_id = keep-me"),
+            "{text}"
+        );
+        assert_eq!(mode(&config), 0o600);
+        let _ = std::fs::Permissions::from_mode(0o600);
+    }
+
+    #[test]
+    fn a_line_break_in_a_client_secret_is_refused_before_anything_runs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let err = sign_in(
+            &dir.path().join("rclone.conf"),
+            "x",
+            "drive",
+            &[],
+            Some(("id", "secret\n[evil]\ntype = local")),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::AuthFailed);
     }
 
     #[test]

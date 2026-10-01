@@ -344,6 +344,15 @@ struct ShapeContext<'a> {
     destination: &'a Path,
     policy: ConflictPolicy,
     date: &'a str,
+    /// A single file is being restored: its one item lands at
+    /// `destination` itself, whose conflicts `restore_one` has already
+    /// handled.
+    single_file: bool,
+}
+
+/// Overwrite cannot replace a folder with a file or a file with a folder.
+fn type_conflict(path: &Path) -> EngineError {
+    EngineError::new(ErrorKind::TypeConflict, path.display().to_string())
 }
 
 /// The decisions for every item, in the order the snapshot lists them.
@@ -386,8 +395,9 @@ fn shape(
         destination,
         policy,
         date,
+        single_file,
     } = *context;
-    let on_disk = if relative.as_os_str().is_empty() {
+    let on_disk = if relative.as_os_str().is_empty() || single_file {
         destination.to_path_buf()
     } else {
         destination.join(relative)
@@ -422,18 +432,31 @@ fn shape(
         *conflicts += 1;
         return Ok(Decision::Skip);
     }
+    if single_file {
+        return Ok(Decision::Keep);
+    }
+    // A folder where a file is, or a file below one: rustic cannot write
+    // either (it panics on the second), so Overwrite refuses with an
+    // explanation instead of passing it through.
     let type_blocked = if item.is_dir() {
         on_disk.symlink_metadata().is_ok_and(|meta| !meta.is_dir())
     } else {
         on_disk.symlink_metadata().is_err() && ancestor_is_not_a_directory(destination, &on_disk)
     };
     if type_blocked {
+        if policy == ConflictPolicy::Overwrite {
+            return Err(type_conflict(&on_disk));
+        }
         *conflicts += 1;
-        return Ok(if policy == ConflictPolicy::Overwrite {
-            Decision::Keep
-        } else {
-            Decision::Skip
-        });
+        return Ok(Decision::Skip);
+    }
+    // A file where a folder is: Keep Both can still restore it under
+    // another name, Skip leaves it, Overwrite cannot replace a folder.
+    if !item.is_dir()
+        && policy == ConflictPolicy::Overwrite
+        && on_disk.symlink_metadata().is_ok_and(|meta| meta.is_dir())
+    {
+        return Err(type_conflict(&on_disk));
     }
     if item.is_dir() || relative.as_os_str().is_empty() || on_disk.symlink_metadata().is_err() {
         return Ok(Decision::Keep);
@@ -557,12 +580,30 @@ fn restore_one(
 
     let mut conflicts = 0;
     let mut unchanged_by_us = 0;
-    // A single file restored over a different existing one: the whole
-    // destination moves aside or is skipped.
-    if !node.is_dir()
-        && destination.symlink_metadata().is_ok()
-        && !looks_identical(&destination, &node)
+    // What is already at the destination is of the other kind (a file where
+    // the folder goes, or a folder where the file goes): Keep Both restores
+    // beside it, Skip leaves it, Overwrite cannot.
+    let existing = destination.symlink_metadata().ok();
+    if existing
+        .as_ref()
+        .is_some_and(|meta| meta.is_dir() != node.is_dir() && !meta.file_type().is_symlink())
     {
+        match request.policy {
+            ConflictPolicy::Overwrite => return Err(type_conflict(&destination)),
+            ConflictPolicy::KeepBoth => {
+                conflicts += 1;
+                destination = keep_both_name(&destination, date);
+            }
+            ConflictPolicy::Skip => {
+                return Ok(RestorePreview {
+                    conflicts: 1,
+                    ..RestorePreview::default()
+                });
+            }
+        }
+    } else if !node.is_dir() && existing.is_some() && !looks_identical(&destination, &node) {
+        // A single file restored over a different existing one: the whole
+        // destination moves aside or is skipped.
         match request.policy {
             ConflictPolicy::Overwrite => conflicts += 1,
             ConflictPolicy::KeepBoth => {
@@ -589,6 +630,7 @@ fn restore_one(
         destination: &destination,
         policy: request.policy,
         date,
+        single_file: !node.is_dir(),
     };
     let mut decisions = Decisions::default();
     for entry in repo.ls(&node, &ls_options)? {

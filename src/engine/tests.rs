@@ -794,6 +794,24 @@ fn unreachable_location_is_reported_as_unavailable() {
     assert_eq!(err.kind, ErrorKind::DestinationUnavailable);
 }
 
+/// A share or drive that is not mounted usually leaves its mount point
+/// behind as an empty folder, or the repository folder simply missing under
+/// a parent that is still there. Both are "not reachable now", which a
+/// scheduled run skips quietly, not "this is not a repository".
+#[test]
+fn an_unmounted_destination_is_unavailable_not_a_non_repository() {
+    let dir = TempDir::new().unwrap();
+    let empty = dir.path().join("mnt");
+    fs::create_dir(&empty).unwrap();
+
+    let err = open(&Location::local(&empty), &secret()).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::DestinationUnavailable);
+
+    let missing = dir.path().join("mnt/backup");
+    let err = open(&Location::local(&missing), &secret()).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::DestinationUnavailable);
+}
+
 #[test]
 fn init_refuses_existing_and_non_empty_locations() {
     let fixture = fixture();
@@ -1884,22 +1902,153 @@ fn skip_leaves_a_symlinked_folder_alone_and_reports_it() {
 /// the way higher up." The restore silently reported zero conflicts and
 /// handed rustic an unrestorable path.
 #[test]
-fn a_file_vs_directory_conflict_is_reported_not_silently_ignored() {
+fn overwrite_refuses_to_put_a_folder_where_a_file_is() {
     let (fixture, target) = fixture_with_a_directory_blocked_by_an_existing_file();
 
-    let preview = open(&fixture.repo, &secret())
+    let err = open(&fixture.repo, &secret())
         .unwrap()
         .restore(
             &restore_request(
                 vec![fixture.source.join("nested")],
-                Target::Folder(target),
+                Target::Folder(target.clone()),
                 ConflictPolicy::Overwrite,
             ),
             Arc::new(NoProgress),
         )
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!(preview.conflicts, 1);
+    assert_eq!(err.kind, ErrorKind::TypeConflict, "{err:?}");
+    assert_eq!(
+        fs::read(target.join("nested")).unwrap(),
+        b"in the way",
+        "the file is left exactly as it was, not written into"
+    );
+}
+
+/// The same conflict one level down: a folder inside the restored one meets
+/// a file on disk. rustic used to be handed it and panic writing into it.
+#[test]
+fn overwrite_refuses_a_nested_folder_where_a_file_is() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("outer/inner")).unwrap();
+    fs::write(
+        fixture.source.join("outer/inner/data.bin"),
+        pseudo_random(4096, 3),
+    )
+    .unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+    fs::create_dir_all(target.join("outer")).unwrap();
+    fs::write(target.join("outer/inner"), b"a file, not a folder").unwrap();
+
+    let err = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("outer")],
+                Target::Folder(target.clone()),
+                ConflictPolicy::Overwrite,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::TypeConflict, "{err:?}");
+    assert_eq!(
+        fs::read(target.join("outer/inner")).unwrap(),
+        b"a file, not a folder"
+    );
+}
+
+/// A file meeting a folder of the same name: Keep both restores it beside
+/// the folder; Overwrite cannot replace a folder.
+#[test]
+fn a_file_where_a_folder_is_is_kept_beside_it_or_refused() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("box")).unwrap();
+    fs::write(fixture.source.join("box/thing"), b"a file").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+    fs::create_dir_all(target.join("box/thing")).unwrap();
+
+    let request = |policy| {
+        restore_request(
+            vec![fixture.source.join("box")],
+            Target::Folder(target.clone()),
+            policy,
+        )
+    };
+    let err = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(&request(ConflictPolicy::Overwrite), Arc::new(NoProgress))
+        .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::TypeConflict, "{err:?}");
+    assert!(target.join("box/thing").is_dir());
+
+    let done = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(&request(ConflictPolicy::KeepBoth), Arc::new(NoProgress))
+        .unwrap();
+    assert_eq!(done.conflicts, 1);
+    assert!(target.join("box/thing").is_dir(), "the folder is untouched");
+    let restored_beside = fs::read_dir(target.join("box"))
+        .unwrap()
+        .flatten()
+        .any(|entry| fs::read(entry.path()).is_ok_and(|bytes| bytes == b"a file"));
+    assert!(restored_beside, "the file is restored under another name");
+}
+
+/// One file restored over a different one counts one conflict, not two:
+/// its one item used to be checked again below the file itself.
+#[test]
+fn a_single_file_over_a_different_one_is_one_conflict() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("plain.txt"), b"changed since").unwrap();
+
+    let done = run_restore(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.join("plain.txt")],
+            Target::Original,
+            ConflictPolicy::Overwrite,
+        ),
+    );
+
+    assert_eq!(done.conflicts, 1);
+    assert_eq!(
+        fs::read(fixture.source.join("plain.txt")).unwrap(),
+        b"plain"
+    );
+}
+
+/// A symlink where a single restored file would go is never written
+/// through, the same as one inside a restored folder.
+#[test]
+fn a_single_file_is_never_written_through_a_symlink_at_its_own_path() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let outside = fixture.work.join("outside.txt");
+    fs::write(&outside, b"not yours").unwrap();
+    fs::remove_file(fixture.source.join("plain.txt")).unwrap();
+    symlink(&outside, fixture.source.join("plain.txt")).unwrap();
+
+    let err = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("plain.txt")],
+                Target::Original,
+                ConflictPolicy::Overwrite,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::UnsafePath, "{err:?}");
+    assert_eq!(fs::read(&outside).unwrap(), b"not yours");
 }
 
 #[test]

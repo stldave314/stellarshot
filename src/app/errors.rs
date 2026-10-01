@@ -56,6 +56,7 @@ pub fn explain(error: &EngineError) -> String {
         ErrorKind::UnsafePath => fl!("error-unsafe-path", path = error.detail.clone()),
         ErrorKind::NotFound => fl!("error-not-found", path = error.detail.clone()),
         ErrorKind::Ambiguous => fl!("error-ambiguous", path = error.detail.clone()),
+        ErrorKind::TypeConflict => fl!("error-type-conflict", path = error.detail.clone()),
         ErrorKind::TooLargeToOpen => fl!(
             "error-too-large-to-open",
             size = crate::app::format::bytes(error.detail.parse().unwrap_or(0))

@@ -102,6 +102,8 @@ impl App {
                 // finishes, successfully or not; the page itself already
                 // shows that outcome.
                 self.dialogs.open(Dialog::SigningIn);
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                self.sign_in_cancel = Some(cancel.clone());
                 Task::perform(
                     tasks::blocking(move || {
                         let config = engine::rclone::config_path();
@@ -109,8 +111,15 @@ impl App {
                         let credentials = credentials
                             .as_ref()
                             .map(|(id, secret)| (id.as_str(), secret.as_str()));
-                        engine::rclone::sign_in(&config, &name, "drive", &params, credentials)
-                            .map(|()| name)
+                        engine::rclone::sign_in(
+                            &config,
+                            &name,
+                            "drive",
+                            &params,
+                            credentials,
+                            &cancel,
+                        )
+                        .map(|()| name)
                     }),
                     move |result| to_wizard(place::Message::SignedIn(result)),
                 )

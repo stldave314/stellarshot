@@ -9,6 +9,53 @@ packaging, CI, and documentation. Each task
 says what is wrong, where, how to fix it, and how to prove the fix. Pick tasks
 up in the order given under [Sequencing](#sequencing).
 
+## Final status (2026-09-30)
+
+What the per-task status notes below still listed as open was finished or
+decided on 2026-09-30:
+
+| Task | Resolution |
+|---|---|
+| SEC-3 | REST server passwords move to the keyring; existing ones migrate at the next start (`ad935bd`) |
+| SEC-4 | Sign-in has a timeout, a Cancel, and runs in its own process group (`817c871`) |
+| SEC-9 | Every rclone command comes from one of two constructors (Stellarshot's own configuration, or the user's for reading their remotes), with one "not installed" mapping shared with `serve` (`7fc0b39`) |
+| REL-10 | An unreadable value is moved aside as `<key>.unreadable` before Reset Status replaces it (`ec10672`); writers share a lock (`db136d3`) |
+| REL-12 | `runner::Session`: one lock and one open repository for a scheduled run's backup, clean-up and check (`7fc0b39`) |
+| REL-15 | `AutoUnmount` stays off (it needs a mount other users can see); dead mounts are unmounted at the next start instead (`7fc0b39`) |
+| REL-17 | `known_hosts` from the password database (`08942ed`); wired connections can be trusted networks (`6f25e05`); an unreadable mount list is shown as such (`80a53f5`); removing a backup deletes its state (`08942ed`); the multi-item preview indexes once (`c6a7130`) |
+| UI-11 | Real tabs; named layout constants, History as wide as the other pages, the Browse hint no longer clips (`08942ed`). No setting needs a restart, so there is no "restart to apply" caption to add |
+| I18N-3 | Desktop entries and the store summary translated, kept in step by `tests/desktop_l10n.rs` (`18f9939`) |
+| ARC-4 | Nothing outside `app/` imports from it (`7fc0b39`) |
+| ARC-5 | Modules used only inside the crate are `pub(crate)`, `engine::location` included; `schedule` is now `timers` (`7fc0b39`) |
+| ARC-7 | `HOOKS`, `LOCK`, `KEYRING`, `RCLONE` categories wired in; the backend log path lives in `debug.rs` (`08942ed`) |
+| ARC-9 | `clippy::pedantic` adopted with reasons for each allowed lint, `#[expect]` with reasons where a cast is safe (`2b0673e`); dev builds optimize the crypto and compression crates (`7631c75`) |
+| TST-2 | The keyring test cleans up through a drop guard (`08942ed`) |
+| TST-3 | REST tests run against `rclone serve restic` and are no longer ignored (`08942ed`) |
+
+Decided against, with the reason:
+
+- **ARC-6, an enum per operation for `runner::Job`, and folding `Outcome`
+  into `Event::Done`.** Both are the wire format between the window and the
+  `--run` child. After a package upgrade the window still running is the
+  old version and the child it starts is the new one; the `Option` fields
+  with `serde(default)` are what let the two still understand each other.
+- **ARC-6, `thiserror` enums for the `Result<_, String>` modules.** No caller
+  branches on those errors: each is logged or shown under a sentence saying
+  what was being attempted, which an enum would not change.
+- **ARC-8, pinning `libcosmic` by `rev`.** `cosmic-panel-config` names the
+  same repository without a rev, so a pin builds two copies of the toolkit;
+  `Cargo.lock` with `--locked` everywhere already makes builds reproducible.
+- **REL-4, one process helper for hooks and the password command.** One is
+  synchronous and reads with `bounded`; the other runs on tokio and has to
+  wipe what it read (it is a password), so its capped reader zeroizes. Both
+  already kill the whole process group on a timeout and cap their output;
+  one helper would have to be both synchronous and asynchronous.
+
+Left for a person at the desktop, since they need a live COSMIC session:
+the panel applet's Open click-through, Ctrl+Q with a dialog open, a
+multi-gigabyte file read through a mounted snapshot while watching memory,
+and the new Run Now and Reset Status buttons on a real backup.
+
 ---
 
 ## Contents

@@ -158,6 +158,8 @@ pub enum Message {
     CancelBackup,
     CheckNow,
     Checked(ChildEvent),
+    /// Replace a status that could not be read.
+    ResetStatus,
     CleanUpNow,
     CleanedUp(ChildEvent),
     EditSchedule,
@@ -238,6 +240,8 @@ pub enum Effect {
     EstimateSize(Arc<AtomicBool>),
     /// Add an entry to this backup's history.
     LogEvent(EventKind),
+    /// Replace this backup's unreadable status with a fresh one.
+    ResetStatus,
     /// Read this backup's history from disk: once, when the page opens.
     FetchHistory,
 }
@@ -464,6 +468,7 @@ impl ProfileState {
                 }
                 Vec::new()
             }
+            Message::ResetStatus => vec![Effect::ResetStatus],
             Message::CheckNow => self
                 .start(Work::Check)
                 .map(Effect::Check)
@@ -1157,7 +1162,13 @@ fn trouble<'a>(
     can_work: bool,
 ) -> Option<Element<'a, Message>> {
     let spacing = theme::active().cosmic().spacing;
-    let (title, body, action) = if run.damaged {
+    let (title, body, action) = if run.unreadable {
+        (
+            fl!("status-unreadable-title"),
+            fl!("status-unreadable-body"),
+            Some((fl!("reset-status"), Message::ResetStatus)),
+        )
+    } else if run.damaged {
         (
             fl!("damaged-title"),
             fl!("damaged-body"),

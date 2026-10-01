@@ -409,6 +409,9 @@ clean-up-done-body = { $count ->
 progress-cleaning-up = Freeing up space…
 damaged-title = A check found damage in this backup
 damaged-body = Automatic freeing of space is paused until a check passes. Snapshots may still be restorable; to be safe, start a new backup somewhere else.
+status-unreadable-title = This backup’s status could not be read
+status-unreadable-body = It may have been saved by a newer version of Stellarshot. Automatic freeing of space is paused until it is reset. Resetting forgets when this backup last ran and was checked; the backup itself is not touched.
+reset-status = Reset Status
 failed-just-now = just now
 failed-minutes-ago = { $count ->
     [one] a minute ago

@@ -393,6 +393,9 @@ clean-up-done-body = { $count ->
 progress-cleaning-up = Frigör utrymme…
 damaged-title = En kontroll hittade skador i säkerhetskopian
 damaged-body = Automatiskt frigörande av utrymme är pausat tills en kontroll godkänns. Ögonblicksbilderna kan fortfarande gå att återställa; för säkerhets skull, starta en ny säkerhetskopia någon annanstans.
+status-unreadable-title = Säkerhetskopians status gick inte att läsa
+status-unreadable-body = Den kan ha sparats av en nyare version av Stellarshot. Automatiskt frigörande av utrymme är pausat tills den återställs. Vid återställningen glöms när säkerhetskopian senast kördes och kontrollerades; själva säkerhetskopian rörs inte.
+reset-status = Återställ status
 failed-just-now = alldeles nyss
 failed-minutes-ago = { $count ->
     [one] för en minut sedan

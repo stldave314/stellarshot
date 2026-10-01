@@ -194,6 +194,23 @@ impl App {
                     cosmic::iced::widget::operation::focus(new_password_input_id())
                 }
                 profile::Effect::LogEvent(kind) => record_event(id.clone(), kind),
+                profile::Effect::ResetStatus => {
+                    let ids = id.clone();
+                    let reset = Task::perform(
+                        tasks::blocking(move || {
+                            run_state::reset(&ids)
+                                .map_err(|err| EngineError::new(engine::ErrorKind::Io, err))
+                        }),
+                        |result| match result {
+                            Ok(()) => app(Message::Noop),
+                            Err(err) => app(Message::Dialog(DialogMessage::Failed(
+                                fl!("error-settings-not-saved"),
+                                err,
+                            ))),
+                        },
+                    );
+                    reset.chain(self.load_runs())
+                }
                 profile::Effect::FetchHistory => {
                     Task::perform(tasks::history(id.clone()), move |history| {
                         app(Message::Profile(

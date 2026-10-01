@@ -393,6 +393,9 @@ clean-up-done-body = { $count ->
 progress-cleaning-up = Platz wird freigäh …
 damaged-title = E Prüefig hät Schäde i dere Sicherig gfunde
 damaged-body = S automatische Freigäh vo Platz isch pausiert, bis e Prüefig besteht. Momentuufnahme lönd sich vilicht no widerherstelle; sicherheitshalber fang e neui Sicherig amene andere Ort aa.
+status-unreadable-title = De Status vo dere Sicherig het nöd chöne gläse wärde
+status-unreadable-body = Vilicht hät en e neueri Version vo Stellarshot gspeicheret. S automatische Freigäh vo Platz isch pausiert, bis du en zruggsetzisch. Debii gaht verlore, wänn die Sicherig s letscht Mal gloffe und prüeft worde isch; d Sicherig sälber blibt unberüert.
+reset-status = Status zruggsetze
 failed-just-now = grad eben
 failed-minutes-ago = { $count ->
     [one] vor ere Minute

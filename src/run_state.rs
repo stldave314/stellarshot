@@ -181,6 +181,11 @@ pub struct RunState {
     /// success.
     #[serde(default)]
     pub overdue_notified: bool,
+    /// What is saved could not be read (a newer version wrote it, or it is
+    /// corrupt), so this is a stand-in: never saved, and nothing can update
+    /// it until [`reset`] replaces it.
+    #[serde(skip)]
+    pub unreadable: bool,
 }
 
 impl RunState {
@@ -261,8 +266,17 @@ pub(crate) fn is_missing(err: &cosmic::cosmic_config::Error) -> bool {
 pub fn load(profile_id: &str) -> RunState {
     load_checked(profile_id).unwrap_or_else(|()| RunState {
         damaged: true,
+        unreadable: true,
         ..RunState::default()
     })
+}
+
+/// Replace a backup's state with a fresh one: the way out when it cannot be
+/// read, which [`update`] refuses to guess at. What is lost is a summary
+/// (the last run and check times, a failure, the space freed), not data;
+/// the next run and check fill it in again.
+pub fn reset(profile_id: &str) -> Result<(), String> {
+    crate::paths::with_state_lock(|| save(profile_id, &RunState::default()))
 }
 
 /// Forget a removed backup's state entirely.

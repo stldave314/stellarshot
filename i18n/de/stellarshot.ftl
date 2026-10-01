@@ -393,6 +393,9 @@ clean-up-done-body = { $count ->
 progress-cleaning-up = Speicher wird freigegeben …
 damaged-title = Eine Prüfung hat Schäden in dieser Sicherung gefunden
 damaged-body = Das automatische Freigeben von Speicher ist angehalten, bis eine Prüfung besteht. Momentaufnahmen lassen sich eventuell noch wiederherstellen; sicherheitshalber beginne eine neue Sicherung an einem anderen Ort.
+status-unreadable-title = Der Status dieser Sicherung konnte nicht gelesen werden
+status-unreadable-body = Vielleicht hat ihn eine neuere Version von Stellarshot gespeichert. Das automatische Freigeben von Speicher ist angehalten, bis du ihn zurücksetzt. Dabei geht verloren, wann diese Sicherung zuletzt lief und geprüft wurde; die Sicherung selbst bleibt unberührt.
+reset-status = Status zurücksetzen
 failed-just-now = gerade eben
 failed-minutes-ago = { $count ->
     [one] vor einer Minute

@@ -716,6 +716,18 @@ either way.
 </details>
 
 <details>
+<summary>"This backup's status could not be read".</summary>
+
+The summary Stellarshot keeps for each backup (when it last ran and was
+checked, the last failure, the space freed) was saved in a form this version
+cannot read, usually by a newer version. Automatic freeing of space is
+paused while it is, in case the summary said the backup was damaged. Run the
+newer version again, or press **Reset Status** to start the summary afresh;
+the next backup and check fill it in. The backup itself is not touched.
+
+</details>
+
+<details>
 <summary>"… already contains other files" when choosing where to keep a backup.</summary>
 
 Working as intended. Choose an empty folder, create a new one in the folder

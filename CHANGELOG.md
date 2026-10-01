@@ -258,6 +258,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backup stops uploading as soon as one upload fails.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
+- **A backup whose status cannot be read is no longer stuck as "damaged".**
+  It says what happened instead, and **Reset Status** starts the status
+  afresh; before, even a passing check could not clear it.
 - **Removing a backup deletes its history and status too**, instead of
   leaving them in the state folder for good.
 - **The window no longer reads and writes the status files on its own

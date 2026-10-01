@@ -21,6 +21,22 @@ use crate::constants::{
 };
 use crate::profile::{Hook, HookTiming};
 
+/// The process group of the hook running right now, if any, so a SIGTERM
+/// can stop it (see [`kill_running`]): a hook runs in its own group, which
+/// the signal sent to this process's group does not reach.
+static RUNNING: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
+
+/// Stop the hook running right now, and anything it started, if there is
+/// one: for `proc_signal`, before it runs the After hooks on the way out.
+pub fn kill_running() {
+    let running = *RUNNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(pid) = running.and_then(rustix::process::Pid::from_raw) {
+        let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+    }
+}
+
 /// What happened running one hook.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookResult {
@@ -97,7 +113,15 @@ fn run_command(command: &str) -> Result<(), String> {
         .process_group(0)
         .spawn()
         .map_err(|err| format!("hook: {err}"))?;
-    let (status, stderr) = wait_with_timeout(child, HOOK_TIMEOUT)?;
+    let group = i32::try_from(child.id()).ok();
+    *RUNNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = group;
+    let waited = wait_with_timeout(child, HOOK_TIMEOUT);
+    *RUNNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    let (status, stderr) = waited?;
     if !status.success() {
         let detail = crate::bounded::tail_str(stderr.trim(), CHILD_STDERR_DETAIL).to_owned();
         return Err(if detail.is_empty() {

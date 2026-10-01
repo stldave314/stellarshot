@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
-use super::restore::{reject_unsafe_name, reject_unsafe_relative_path};
+use super::restore::{check_walked, reject_unsafe_name, reject_unsafe_relative_path};
 use super::snapshots::SnapshotSummary;
 use crate::debug::ENGINE;
 use crate::error_log;
@@ -481,6 +481,7 @@ impl Browser {
             let mut tar = tar::Builder::new(gzip);
             for item in repo.ls(&root, &LsOptions::default())? {
                 let (relative, node) = item?;
+                check_walked(&relative, &node)?;
                 let mut header = tar::Header::new_gnu();
                 // A directory with no recorded mode of its own must still
                 // be enterable once extracted: `0o644` (no execute bit)
@@ -560,7 +561,7 @@ impl Browser {
         let mut found = Vec::new();
         for item in repo.ls(&root, &LsOptions::default())? {
             let (path, node) = item?;
-            reject_unsafe_relative_path(&path)?;
+            check_walked(&path, &node)?;
             if node
                 .name()
                 .to_string_lossy()
@@ -720,7 +721,7 @@ impl Browser {
                 }
                 for item in repo.ls(&node, &LsOptions::default())? {
                     let (relative, node) = item?;
-                    reject_unsafe_relative_path(&relative)?;
+                    check_walked(&relative, &node)?;
                     let path = scope.join(relative);
                     if node.is_file() && seen.insert(path.clone()) {
                         candidates.push((path, node.meta.size));

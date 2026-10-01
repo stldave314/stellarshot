@@ -1905,6 +1905,27 @@ mod tests {
         assert!(!page.is_restoring());
     }
 
+    /// What the window feeds back when a restore cannot even start (its
+    /// drive was unplugged): the page must not stay "restoring".
+    #[test]
+    fn a_restore_that_never_started_leaves_the_page_free() {
+        let mut page = page_with_snapshots();
+        page.running = Some(Running {
+            handle: None,
+            progress: None,
+            total: RestorePreview::default(),
+            queue: VecDeque::new(),
+        });
+
+        let effects = page.update(Message::Restore(ChildEvent::Ended(EngineError::new(
+            crate::engine::ErrorKind::DestinationUnavailable,
+            "",
+        ))));
+
+        assert!(!page.is_restoring());
+        assert!(matches!(effects.as_slice(), [Effect::ShowError(..)]));
+    }
+
     #[test]
     fn canceling_drops_the_rest_of_the_queue() {
         let mut page = page_with_snapshots();

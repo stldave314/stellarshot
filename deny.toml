@@ -11,6 +11,11 @@ ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled in transitively through wgpu, not a direct dependency" },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; pulled in transitively through libcosmic's text stack, not a direct dependency" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled in transitively through libcosmic's text stack, not a direct dependency" },
+    # Unsound, not exploitable from anything this program feeds them: both are
+    # pinned by libcosmic's own git dependencies (cryoglyph at a fixed rev,
+    # xkbcommon 0.7), so no update on this side can move them.
+    { id = "RUSTSEC-2026-0253", reason = "lru LruCache::pop panic safety; lru 0.16 comes only through libcosmic's pinned cryoglyph glyph cache, which never pops caller-controlled entries" },
+    { id = "RUSTSEC-2026-0186", reason = "memmap2 0.8 unchecked offset; comes only through xkbcommon 0.7 in libcosmic's iced_winit, mapping the compositor's own keymap" },
 ]
 
 [licenses]

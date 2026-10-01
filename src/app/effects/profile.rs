@@ -93,7 +93,12 @@ impl App {
                     let repository = match profile.location() {
                         Ok(location) => location,
                         Err(err) => {
-                            self.show_error(&fl!("delete-snapshot-failed"), &err);
+                            tasks.push(self.end_before_start(
+                                &id,
+                                &profile,
+                                profile::Message::SnapshotsDeleted,
+                                err,
+                            ));
                             continue;
                         }
                     };
@@ -123,7 +128,12 @@ impl App {
                     let repository = match profile.location() {
                         Ok(location) => location,
                         Err(err) => {
-                            self.show_error(&fl!("pin-snapshot-failed"), &err);
+                            tasks.push(self.end_before_start(
+                                &id,
+                                &profile,
+                                profile::Message::Pinned,
+                                err,
+                            ));
                             continue;
                         }
                     };

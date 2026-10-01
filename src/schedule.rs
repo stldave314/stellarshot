@@ -87,12 +87,44 @@ pub(crate) fn condition_path(path: &Path) -> Option<String> {
     Some(text.replace('%', "%%"))
 }
 
-pub fn service_text(executable: &Path, id: &str) -> Option<String> {
-    if !valid_id(id) {
+/// The systemd device unit for the drive with filesystem `uuid`, as systemd
+/// escapes `/dev/disk/by-uuid/<uuid>`: `/` becomes `-`, and a `-` that is part
+/// of the name becomes `\x2d`. `uuid` must already be [`valid_uuid`].
+fn drive_device_unit(uuid: &str) -> String {
+    format!("dev-disk-by\\x2duuid-{}.device", uuid.replace('-', "\\x2d"))
+}
+
+/// The service a timer or path unit starts. `drive` is the filesystem UUID
+/// for a backup that runs when its drive is connected.
+///
+/// Such a service stays "active" after the backup finishes
+/// (`RemainAfterExit`), bound to the drive's device unit (`BindsTo`), and
+/// ignores its own exit status (the `-` on `ExecStart`). A path unit starts
+/// its service again as soon as that service is no longer active while the
+/// path still exists, so without these the backup ran back to back for as
+/// long as the drive stayed plugged in, or, for one that exits quickly,
+/// tripped systemd's start limit and left the path unit failed for good.
+/// Now the service ends only when the drive goes away, and the next
+/// connection starts it once. A failure is still recorded and notified by
+/// the run itself. A timer's service must not do any of this: an "active"
+/// service is never started again by its timer.
+pub fn service_text(executable: &Path, id: &str, drive: Option<&str>) -> Option<String> {
+    if !valid_id(id) || drive.is_some_and(|uuid| !valid_uuid(uuid)) {
         return None;
     }
     let exec = exec_quote(executable)?;
     let present = condition_path(executable)?;
+    let (bind, remain, ignore_status) = match drive {
+        Some(uuid) => {
+            let device = drive_device_unit(uuid);
+            (
+                format!("BindsTo={device}\nAfter={device}\n"),
+                "RemainAfterExit=yes\n",
+                "-",
+            )
+        }
+        None => (String::new(), "", ""),
+    };
     // `Type=oneshot` has no start timeout of its own, so `TimeoutStartSec`
     // is what keeps a run stuck on a dead mount from staying "activating"
     // forever, with every later timer fire skipped without a word.
@@ -106,10 +138,12 @@ pub fn service_text(executable: &Path, id: &str) -> Option<String> {
          [Unit]\n\
          Description=Stellarshot scheduled backup\n\
          ConditionFileIsExecutable={present}\n\
+         {bind}\
          \n\
          [Service]\n\
          Type=oneshot\n\
-         ExecStart={exec} --scheduled {id}\n\
+         {remain}\
+         ExecStart={ignore_status}{exec} --scheduled {id}\n\
          Nice={SCHEDULED_UNIT_NICE}\n\
          IOSchedulingClass=idle\n\
          TimeoutStartSec={start}\n\
@@ -187,20 +221,17 @@ pub fn executable() -> Result<PathBuf, String> {
 
 /// `path` is safe to name as a scheduled unit's `ExecStart`: neither `path`
 /// itself nor any directory above it is writable by anyone but its owner,
-/// unless that directory is also sticky (like `/tmp` itself, mode `1777`) —
-/// sticky means only its own owner can rename or delete an entry inside it,
-/// which is enough to stop another user from swapping out a *file* another
-/// user already placed there, though not from placing a brand new one at a
-/// path nobody has used yet. `path` itself must always be owned by root or
-/// the current user, sticky parent or not.
+/// and `path` is owned by root or the current user.
+///
+/// No exception for a sticky directory such as `/tmp` (mode `1777`). Sticky
+/// only stops another user from replacing an entry that already exists;
+/// after a reboot wipes `/tmp`, nothing stops them from creating
+/// `/tmp/stellarshot/stellarshot` first, and the timer would run it.
 pub(crate) fn trusted_executable(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     fn safe_from_others(metadata: &std::fs::Metadata) -> bool {
-        let mode = metadata.mode();
-        let group_or_other_writable = mode & 0o022 != 0;
-        let sticky_root_directory = metadata.is_dir() && mode & 0o1000 != 0 && metadata.uid() == 0;
-        !group_or_other_writable || sticky_root_directory
+        metadata.mode() & 0o022 == 0
     }
 
     let Ok(file_metadata) = std::fs::metadata(path) else {
@@ -266,8 +297,14 @@ fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
 /// triggers, and make sure it is enabled and running. `changed` decides
 /// whether to actually reload and restart it, or just make sure it is on:
 /// the same no-op-avoidance `write_if_changed` itself exists for.
-fn install(dir: &Path, id: &str, unit_name: &str, unit_text: &str) -> Result<(), String> {
-    let service = service_text(&executable()?, id)
+fn install(
+    dir: &Path,
+    id: &str,
+    unit_name: &str,
+    unit_text: &str,
+    drive: Option<&str>,
+) -> Result<(), String> {
+    let service = service_text(&executable()?, id, drive)
         .ok_or("the program's path or the backup's ID cannot go in a systemd unit")?;
     let changed = write_if_changed(&dir.join(service_name(id)), &service)?
         | write_if_changed(&dir.join(unit_name), unit_text)?;
@@ -284,15 +321,29 @@ fn install(dir: &Path, id: &str, unit_name: &str, unit_text: &str) -> Result<(),
 /// Stop and delete one leftover unit file, from a schedule this profile no
 /// longer uses (switched from a timer to a path unit, or back). Quiet if it
 /// was never there.
-fn remove_stale(dir: &Path, unit_name: &str) -> Result<(), String> {
+fn remove_stale(dir: &Path, unit_name: &str) -> Result<bool, String> {
     let path = dir.join(unit_name);
     if !path.exists() {
-        return Ok(());
+        return Ok(false);
     }
     if let Err(err) = systemctl(&["disable", "--now", unit_name]) {
         debug_log!(SCHED, "disabling {unit_name}: {err}");
     }
-    std::fs::remove_file(&path).map_err(|err| format!("{}: {err}", path.display()))
+    std::fs::remove_file(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(true)
+}
+
+/// Stop `service` if it is "active (exited)": a finished run that a
+/// `RemainAfterExit` service keeps marked active. One still running is left
+/// alone.
+fn stop_if_finished(service: &str) {
+    let finished = Command::new("systemctl")
+        .args(["--user", "show", "--property=SubState", "--value", service])
+        .output()
+        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "exited");
+    if finished && let Err(err) = systemctl(&["stop", service]) {
+        debug_log!(SCHED, "stopping {service}: {err}");
+    }
 }
 
 /// Make the timer or path unit match the profile's schedule: installed and
@@ -313,12 +364,23 @@ pub fn apply(profile: &Profile) -> Result<(), String> {
         let unit =
             path_text(&profile.id, uuid).ok_or("the backup's ID or its drive is not usable")?;
         remove_stale(&dir, &timer_name(&profile.id))?;
-        install(&dir, &profile.id, &path_name(&profile.id), &unit)
+        install(
+            &dir,
+            &profile.id,
+            &path_name(&profile.id),
+            &unit,
+            Some(uuid),
+        )
     } else {
         let unit =
             timer_text(&profile.id, profile.schedule).ok_or("the backup's ID is not usable")?;
-        remove_stale(&dir, &path_name(&profile.id))?;
-        install(&dir, &profile.id, &timer_name(&profile.id), &unit)
+        if remove_stale(&dir, &path_name(&profile.id))? {
+            // The drive-bound service may still be "active (exited)" from
+            // its last connection, and a timer never starts an active
+            // service: end it, unless a backup is actually running.
+            stop_if_finished(&service_name(&profile.id));
+        }
+        install(&dir, &profile.id, &timer_name(&profile.id), &unit, None)
     }
 }
 
@@ -471,9 +533,36 @@ mod tests {
         assert!(!trusted_executable(&binary));
     }
 
+    /// A private directory outside the shared temporary ones: `TempDir::new`
+    /// would be under `/tmp`, which is (rightly) never trusted. The home
+    /// folder, because every directory above the fixture has to be writable
+    /// by its owner alone, which a checkout's own folders need not be.
+    fn private_dir() -> TempDir {
+        let home = crate::paths::home_dir().expect("a home directory");
+        tempfile::Builder::new()
+            .prefix(".stellarshot-test-")
+            .tempdir_in(home)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_binary_under_tmp_is_not_trusted_even_in_a_private_folder() {
+        let dir = TempDir::new().unwrap();
+        assert!(
+            dir.path().starts_with(std::env::temp_dir()),
+            "the fixture must really be under the shared temporary folder"
+        );
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let binary = dir.path().join("stellarshot");
+        std::fs::write(&binary, b"").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(!trusted_executable(&binary));
+    }
+
     #[test]
     fn a_binary_under_a_private_directory_is_trusted() {
-        let dir = TempDir::new().unwrap();
+        let dir = private_dir();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
         let binary = dir.path().join("stellarshot");
         std::fs::write(&binary, b"").unwrap();
@@ -497,7 +586,7 @@ mod tests {
 
     #[test]
     fn a_world_writable_binary_itself_is_not_trusted_even_in_a_private_directory() {
-        let dir = TempDir::new().unwrap();
+        let dir = private_dir();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
         let binary = dir.path().join("stellarshot");
         std::fs::write(&binary, b"").unwrap();
@@ -530,7 +619,7 @@ mod tests {
 
     #[test]
     fn the_service_runs_the_scheduled_backup_gently() {
-        let service = service_text(Path::new("/usr/bin/stellarshot"), ID).unwrap();
+        let service = service_text(Path::new("/usr/bin/stellarshot"), ID, None).unwrap();
         assert!(service.contains(&format!(
             "ExecStart=\"/usr/bin/stellarshot\" --scheduled {ID}\n"
         )));
@@ -569,6 +658,7 @@ mod tests {
         let service = service_text(
             Path::new("/home/alex/My Apps/100%/$bin/\"x\"/stellarshot"),
             ID,
+            None,
         )
         .unwrap();
         assert!(
@@ -578,7 +668,7 @@ mod tests {
             "{service}"
         );
         assert_eq!(
-            service_text(Path::new("/tmp/bad\nExecStartPost=/bin/rm"), ID),
+            service_text(Path::new("/tmp/bad\nExecStartPost=/bin/rm"), ID, None),
             None,
             "a newline could add a line to the unit"
         );
@@ -587,7 +677,10 @@ mod tests {
     #[test]
     fn only_plain_ids_go_into_units() {
         for id in ["", "../../etc", "a b", "x;rm", &"a".repeat(65)] {
-            assert_eq!(service_text(Path::new("/usr/bin/stellarshot"), id), None);
+            assert_eq!(
+                service_text(Path::new("/usr/bin/stellarshot"), id, None),
+                None
+            );
             assert_eq!(timer_text(id, Schedule::Daily), None, "{id:?}");
             assert_eq!(path_text(id, "1111-AAAA"), None, "{id:?}");
         }
@@ -602,6 +695,37 @@ mod tests {
             timer_text(ID, Schedule::OnConnect),
             None,
             "no calendar makes sense for it"
+        );
+    }
+
+    /// A path unit starts its service again whenever that service is not
+    /// active and the path still exists. Checked on a real systemd: without
+    /// these lines the backup re-ran back to back while the drive stayed
+    /// plugged in.
+    #[test]
+    fn a_drive_triggered_service_runs_once_per_connection() {
+        let service =
+            service_text(Path::new("/usr/bin/stellarshot"), ID, Some("1111-AAAA")).unwrap();
+        let device = "dev-disk-by\\x2duuid-1111\\x2dAAAA.device";
+        assert!(
+            service.contains(&format!("BindsTo={device}\n")),
+            "{service}"
+        );
+        assert!(service.contains(&format!("After={device}\n")), "{service}");
+        assert!(service.contains("RemainAfterExit=yes\n"));
+        assert!(
+            service.contains("ExecStart=-\"/usr/bin/stellarshot\" --scheduled"),
+            "a failed run must not make the path unit start it again: {service}"
+        );
+
+        let timed = service_text(Path::new("/usr/bin/stellarshot"), ID, None).unwrap();
+        assert!(
+            !timed.contains("RemainAfterExit") && !timed.contains("BindsTo"),
+            "a timer never starts an active service again: {timed}"
+        );
+        assert_eq!(
+            service_text(Path::new("/usr/bin/stellarshot"), ID, Some("x;y")),
+            None
         );
     }
 

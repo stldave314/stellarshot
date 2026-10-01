@@ -125,6 +125,23 @@ pub fn arm(armed: Armed) -> Ticket {
     ticket
 }
 
+/// Never returns once a SIGTERM is being handled, so the caller cannot
+/// report an outcome or end the process while the signal thread is still
+/// running the After hooks; that thread ends the process itself. Returns at
+/// once otherwise.
+pub fn wait_if_terminating() {
+    if !state().terminating.load(Ordering::SeqCst) {
+        return;
+    }
+    debug_log!(
+        ENGINE,
+        "SIGTERM is being handled; waiting for it to end the process"
+    );
+    loop {
+        std::thread::park();
+    }
+}
+
 /// Claims the running of `ticket`'s After hooks for the caller, who must
 /// run them while holding what this returns. `None` means a SIGTERM got
 /// there first and is running them itself (the process is on its way out).
@@ -154,6 +171,9 @@ pub fn claim_after_hooks(ticket: Ticket) -> Option<MutexGuard<'static, ()>> {
 
 fn on_term(state: &State) {
     debug_log!(ENGINE, "SIGTERM: stopping");
+    // A Before hook may be running: it is in its own process group, which
+    // the group-wide SIGTERM below does not reach.
+    hooks::kill_running();
     let armed = {
         let mut armed = state.armed.lock().unwrap_or_else(PoisonError::into_inner);
         state.terminating.store(true, Ordering::SeqCst);

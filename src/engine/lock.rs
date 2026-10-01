@@ -47,6 +47,19 @@ pub fn runtime_dir() -> PathBuf {
         .unwrap_or_else(|| cache_dir().join("stellarshot/run"))
 }
 
+/// Create `dir/name` for an "Open a copy", private from the start: `dir`
+/// itself through [`create_private_dir`] (creating it with the umask's mode
+/// instead would leave it readable by others, and every later lock would
+/// refuse it), and `name` with mode `0700` rather than chmod-ed afterward.
+/// Fails if `name` already exists.
+pub fn create_open_copy_dir(dir: &Path, name: &str) -> io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    create_private_dir(dir)?;
+    let folder = dir.join(name);
+    std::fs::DirBuilder::new().mode(0o700).create(&folder)?;
+    Ok(folder)
+}
+
 /// Remove the "Open a copy" folders (`open-*`) in [`runtime_dir`] that are
 /// older than `max_age`: nothing else ever does, and the runtime folder is
 /// memory-backed. Returns how many were removed.
@@ -434,6 +447,22 @@ mod tests {
 
         assert_eq!(first, location.key());
         assert_eq!(second, first);
+    }
+
+    #[test]
+    fn an_open_copy_folder_keeps_the_runtime_folder_usable_for_locks() {
+        let root = tempfile::TempDir::new().unwrap();
+        let dir = root.path().join("stellarshot");
+        let folder = create_open_copy_dir(&dir, "open-test").unwrap();
+        assert_eq!(
+            std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let location = Location::local(root.path().join("repo"));
+        assert!(
+            acquire_in(&dir, &location).is_ok(),
+            "the lock folder is still accepted after an Open a copy created it"
+        );
     }
 
     #[test]

@@ -515,6 +515,27 @@ pub(super) fn reject_unsafe_name(name: &std::ffi::OsStr) -> Result<(), EngineErr
     }
 }
 
+/// Checks one `(relative, node)` pair as `repo.ls` walks a snapshot's tree,
+/// before anything acts on it. A repository can be shared with someone else,
+/// so its tree is untrusted: the walked path must stay below where the walk
+/// started ([`reject_unsafe_relative_path`]), the node's own name must be a
+/// single plain name ([`reject_unsafe_name`]), and the path must end in that
+/// name. A node named `a/evil` would otherwise pass as the two ordinary
+/// components `a` and `evil`, and land inside whatever `a` turns out to be,
+/// such as a symlink the same restore creates later.
+pub(super) fn check_walked(relative: &Path, node: &Node) -> Result<(), EngineError> {
+    reject_unsafe_relative_path(relative)?;
+    let name = node.name();
+    reject_unsafe_name(&name)?;
+    if relative.file_name() != Some(&*name) {
+        return Err(EngineError::new(
+            ErrorKind::UnsafePath,
+            relative.display().to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn restore_one(
     repo: &Repository<IndexedFullStatus>,
     snapshot: &SnapshotFile,
@@ -572,7 +593,7 @@ fn restore_one(
     let mut decisions = Decisions::default();
     for entry in repo.ls(&node, &ls_options)? {
         let (relative, item) = entry?;
-        reject_unsafe_relative_path(&relative)?;
+        check_walked(&relative, &item)?;
         let decision = shape(
             &context,
             &relative,
@@ -674,6 +695,30 @@ mod tests {
             Some(Some(&PathBuf::from("a (restored)"))),
             "restored under another name"
         );
+    }
+
+    fn file_node(name: &str) -> Node {
+        Node::new_node(
+            std::ffi::OsStr::new(name),
+            rustic_core::repofile::NodeType::File,
+            rustic_core::repofile::Metadata::default(),
+        )
+    }
+
+    #[test]
+    fn a_walked_item_must_be_named_what_its_path_ends_in() {
+        assert!(check_walked(Path::new("docs/report.pdf"), &file_node("report.pdf")).is_ok());
+        // A node whose own name holds a `/` walks as two plain components.
+        let err =
+            check_walked(Path::new("a/evil.desktop"), &file_node("a/evil.desktop")).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::UnsafePath);
+        for name in ["", ".", ".."] {
+            assert!(
+                check_walked(&Path::new("dir").join(name), &file_node(name)).is_err(),
+                "{name:?} must be refused"
+            );
+        }
+        assert!(check_walked(Path::new("x/other"), &file_node("report.pdf")).is_err());
     }
 
     #[test]

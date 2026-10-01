@@ -384,3 +384,161 @@ fn the_run_child_hides_its_memory_from_other_processes_of_the_same_user() {
         "the --run child's memory must not be readable by another process of the same user"
     );
 }
+
+/// Cancel reaches more than a backup: a restore (and a check, a clean-up, a
+/// snapshot delete) told to stop must end canceled, not as an "internal
+/// error: exit status 143". Canceled right at the start, so the SIGTERM can
+/// land before the child has even taken its lock.
+#[test]
+fn canceling_a_restore_ends_it_as_canceled_not_as_a_failure() {
+    use stellarshot::engine::{ConflictPolicy, NoProgress, RestoreRequest, Target};
+
+    let (dir, mut job) = setup(24);
+    let request = job.request.take().unwrap();
+    engine::open(&job.repository, &Secret::new(PASSWORD))
+        .unwrap()
+        .backup(&request, std::sync::Arc::new(NoProgress))
+        .unwrap();
+    job.restore = Some(RestoreRequest {
+        snapshot: "latest".to_owned(),
+        paths: request.sources.clone(),
+        target: Target::Folder(dir.path().join("out")),
+        policy: ConflictPolicy::Overwrite,
+        ..RestoreRequest::default()
+    });
+
+    let events = runtime().block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let mut stream = std::pin::pin!(child::run_with(exe(), Operation::Restore, job));
+            let mut events = Vec::new();
+            while let Some(event) = stream.next().await {
+                if let ChildEvent::Started(handle) = &event {
+                    handle.cancel();
+                }
+                events.push(event);
+            }
+            events
+        })
+        .await
+        .expect("a canceled restore must end on its own")
+    });
+
+    match events.last() {
+        Some(ChildEvent::Ended(error) | ChildEvent::Event(Event::Error { error })) => {
+            assert_eq!(error.kind, ErrorKind::Canceled, "{error:?}");
+        }
+        // Finishing before the signal landed is acceptable too; anything
+        // else is the bug.
+        Some(ChildEvent::Event(Event::Done { .. })) => {}
+        other => panic!("expected a canceled restore, got {other:?}"),
+    }
+}
+
+/// A Before hook that fails after an earlier one succeeded: the earlier one
+/// may have stopped a service, so the After hooks still run.
+#[test]
+fn a_failing_before_hook_still_runs_the_after_hooks() {
+    use stellarshot::profile::{Hook, HookTiming};
+
+    let (dir, mut job) = setup(1);
+    let after = dir.path().join("after-ran");
+    let hook = |name: &str, command: String, timing: HookTiming| Hook {
+        name: name.to_owned(),
+        command,
+        timing,
+        enabled: true,
+    };
+    job.hooks = vec![
+        hook("stop the service", "true".to_owned(), HookTiming::Before),
+        hook("fails", "false".to_owned(), HookTiming::Before),
+        hook(
+            "start the service",
+            format!("touch {}", after.display()),
+            HookTiming::After,
+        ),
+    ];
+
+    let events: Vec<ChildEvent> =
+        runtime().block_on(child::run_with(exe(), Operation::Backup, job).collect());
+
+    match events.last() {
+        Some(ChildEvent::Event(Event::Error { error })) => {
+            assert_eq!(error.kind, ErrorKind::HookFailed, "{error:?}");
+        }
+        other => panic!("expected the hook failure, got {other:?}"),
+    }
+    assert!(
+        after.exists(),
+        "the After hook must run when a Before hook fails"
+    );
+}
+
+/// Cancel while a Before hook is still running: the hook is stopped (it is
+/// in its own process group, which the child's own SIGTERM to its group
+/// does not reach), the After hooks run, and the run ends canceled.
+#[test]
+fn canceling_during_a_before_hook_stops_it_and_runs_the_after_hooks() {
+    use stellarshot::profile::{Hook, HookTiming};
+
+    let (dir, mut job) = setup(1);
+    let pid_file = dir.path().join("hook-pid");
+    let after = dir.path().join("after-ran");
+    job.hooks = vec![
+        Hook {
+            name: "slow".to_owned(),
+            command: format!("sh -c 'echo $$ > {}; exec sleep 60'", pid_file.display()),
+            timing: HookTiming::Before,
+            enabled: true,
+        },
+        Hook {
+            name: "after".to_owned(),
+            command: format!("touch {}", after.display()),
+            timing: HookTiming::After,
+            enabled: true,
+        },
+    ];
+
+    let events = runtime().block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let mut stream = std::pin::pin!(child::run_with(exe(), Operation::Backup, job));
+            let mut events = Vec::new();
+            while let Some(event) = stream.next().await {
+                if let ChildEvent::Started(handle) = &event {
+                    let handle = handle.clone();
+                    let pid_file = pid_file.clone();
+                    tokio::spawn(async move {
+                        while !pid_file.exists() {
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        }
+                        handle.cancel();
+                    });
+                }
+                events.push(event);
+            }
+            events
+        })
+        .await
+        .expect("a run canceled during a Before hook must end on its own")
+    });
+
+    match events.last() {
+        Some(ChildEvent::Ended(error) | ChildEvent::Event(Event::Error { error })) => {
+            assert_eq!(error.kind, ErrorKind::Canceled, "{error:?}");
+        }
+        other => panic!("expected a canceled run, got {other:?}"),
+    }
+    assert!(after.exists(), "the After hook must run");
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    let mut alive = true;
+    for _ in 0..50 {
+        alive = std::path::Path::new(&format!("/proc/{}", pid.trim())).exists()
+            && !std::fs::read_to_string(format!("/proc/{}/stat", pid.trim()))
+                .unwrap_or_default()
+                .contains(") Z ");
+        if !alive {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!alive, "the Before hook's process must be stopped");
+}

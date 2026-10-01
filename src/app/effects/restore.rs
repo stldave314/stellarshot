@@ -133,8 +133,12 @@ impl App {
                 restore::Effect::Restore(request) => {
                     let repository = match profile.location() {
                         Ok(location) => location,
+                        // The drive went away: end this part the way a failed
+                        // restore ends, so the page stops showing it as running.
                         Err(err) => {
-                            self.show_error(&fl!("restore-failed"), &err);
+                            tasks.push(Task::done(to_page(restore::Message::Restore(
+                                child::ChildEvent::Ended(err),
+                            ))));
                             continue;
                         }
                     };
@@ -323,8 +327,8 @@ fn open_copy(
     path: &std::path::Path,
 ) -> Result<(), EngineError> {
     use std::os::unix::fs::PermissionsExt;
-    let folder =
-        engine::lock::runtime_dir().join(format!("open-{}", uuid::Uuid::new_v4().simple()));
+    let name = format!("open-{}", uuid::Uuid::new_v4().simple());
+    let folder = engine::lock::runtime_dir().join(&name);
     let request = engine::RestoreRequest {
         snapshot: snapshot.to_owned(),
         paths: vec![path.to_path_buf()],
@@ -344,8 +348,7 @@ fn open_copy(
             size.to_string(),
         ));
     }
-    std::fs::create_dir_all(&folder)?;
-    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
+    engine::lock::create_open_copy_dir(&engine::lock::runtime_dir(), &name)?;
     engine::open(&location, secret)?.restore(&request, std::sync::Arc::new(engine::NoProgress))?;
     let copy = folder.join(path.file_name().unwrap_or_default());
     // A snapshot's node can claim to be a symlink (see SEC-2 in the review

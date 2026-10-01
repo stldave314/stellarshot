@@ -47,7 +47,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            desktop-file-utils appstream dbus gnome-keyring rclone rpm2cpio
+            desktop-file-utils appstream dbus gnome-keyring rclone rpm2cpio cpio fuse3
 
       # The tag is what names the release and its notes; the version in
       # Cargo.toml is what names the files. They must be the same, or

@@ -1684,6 +1684,25 @@ mod tests {
         assert!(!effects.iter().any(|e| matches!(e, Effect::LogEvent(_))));
     }
 
+    /// What the window feeds back when a delete or pin cannot even start
+    /// (its drive was unplugged): the page must not stay busy.
+    #[test]
+    fn a_delete_or_pin_that_never_started_leaves_the_page_free() {
+        let gone = || ChildEvent::Ended(EngineError::new(ErrorKind::DestinationUnavailable, ""));
+
+        let mut state = unlocked();
+        state.delete_snapshot_confirmed("abc123".into());
+        assert!(state.is_busy());
+        let effects = state.update(Message::SnapshotsDeleted(gone()), &profile());
+        assert!(!state.is_busy());
+        assert!(effects.iter().any(|e| matches!(e, Effect::ShowError(..))));
+
+        state.update(Message::TogglePinned("abc123".into(), true), &profile());
+        assert!(state.is_busy());
+        state.update(Message::Pinned(gone()), &profile());
+        assert!(!state.is_busy());
+    }
+
     #[test]
     fn a_finished_pin_change_logs_which_way_it_went() {
         let mut state = unlocked();

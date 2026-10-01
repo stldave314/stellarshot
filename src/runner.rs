@@ -321,8 +321,12 @@ impl<'a> AfterHookGuard<'a> {
         match crate::proc_signal::claim_after_hooks(self.ticket) {
             Some(_running) => hooks::run_after(self.hooks, succeeded),
             // A SIGTERM got here first and is running them itself (see
-            // `proc_signal`); this process is on its way out.
-            None => Vec::new(),
+            // `proc_signal`); wait for it to end the process rather than
+            // carry on (or exit) under those hooks.
+            None => {
+                crate::proc_signal::wait_if_terminating();
+                Vec::new()
+            }
         }
     }
 }
@@ -366,28 +370,32 @@ pub fn run(
     if operation == Operation::Backup && job.request.is_none() {
         return Err(missing("backup request"));
     }
+    // Armed before the first Before hook, and for every operation, not only
+    // a backup: a SIGTERM (Cancel, `systemctl --user stop`, logout) then
+    // always reports the run canceled, and a backup's After hooks run
+    // whatever stage it is stopped at. A non-backup has no hooks to run.
+    let backup_hooks: &[Hook] = if operation == Operation::Backup {
+        &job.hooks
+    } else {
+        &[]
+    };
+    let report_sink = sink.clone();
+    let ticket = crate::proc_signal::arm(crate::proc_signal::Armed {
+        hooks: backup_hooks.to_vec(),
+        report: Box::new(move || report_sink.canceled()),
+    });
+    // Dropped without `run` (any early return below, including a Before hook
+    // failing), it runs the After hooks as a failure: a Before hook that
+    // already stopped a service must see it started again.
+    let after_hooks = AfterHookGuard::new(backup_hooks, ticket);
     if operation == Operation::Backup {
         hooks::run_before(&job.hooks).map_err(|results| hook_failure(&results))?;
     }
-    // From here until the guard has run them, a SIGTERM runs the After
-    // hooks too, then reports this run canceled through `sink`: see
-    // `proc_signal`. In a process that never installed it (a test calling
-    // this directly) this arms nothing anyone will ever read.
-    let after_hooks = (operation == Operation::Backup).then(|| {
-        let report_sink = sink.clone();
-        let ticket = crate::proc_signal::arm(crate::proc_signal::Armed {
-            hooks: job.hooks.clone(),
-            report: Box::new(move || report_sink.canceled()),
-        });
-        AfterHookGuard::new(&job.hooks, ticket)
-    });
     let repo = engine::open(&job.repository, &job.password)?;
     match operation {
         Operation::Backup => {
             let request = job.request.ok_or_else(|| missing("backup request"))?;
             let result = repo.backup(&request, sink);
-            let after_hooks = after_hooks
-                .ok_or_else(|| EngineError::new(ErrorKind::Internal, "no after-hooks guard"))?;
             log_after_hooks(&after_hooks.run(result.is_ok()));
             result.map(|report| Outcome {
                 report: Some(report),
@@ -498,6 +506,11 @@ pub fn main(args: &[String]) -> ExitCode {
     });
 
     let result = job.and_then(|job| run(operation, job, output.clone()));
+    // A SIGTERM is being handled: that thread runs the After hooks, reports
+    // the run canceled and ends the process. Reporting this thread's own
+    // result now (often a hook the handler just stopped, as a "failure")
+    // would race it, and returning would end the process under its hooks.
+    crate::proc_signal::wait_if_terminating();
     match result {
         Ok(outcome) => {
             output.emit(&Event::Done {

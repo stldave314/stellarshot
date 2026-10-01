@@ -260,6 +260,12 @@ async fn drive(
     };
     let diagnostics = crate::bounded::tail_str(&diagnostics, CHILD_STDERR_DETAIL);
     use std::os::unix::process::ExitStatusExt;
+    // A child told to stop exits 143 (128 + SIGTERM) itself once it has run
+    // its After hooks (see `proc_signal`), rather than dying of the signal.
+    if canceled && status.code() == Some(128 + libc::SIGTERM) {
+        debug_log!(ENGINE, "canceled child stopped itself");
+        return Ok(false);
+    }
     if let Some(signal) = status.signal() {
         if canceled {
             debug_log!(ENGINE, "canceled child ended by signal {signal}");

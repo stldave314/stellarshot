@@ -124,7 +124,12 @@ struct Failed(Stage, EngineError);
 /// progress file a window follows.
 fn operation(operation: Operation, job: Job) -> Result<runner::Outcome, EngineError> {
     let output = Arc::new(Output::progress_file_only(&job.repository));
-    runner::run(operation, job, output)
+    let result = runner::run(operation, job, output);
+    // Stopped by `systemctl --user stop` or logout: the signal thread runs
+    // the After hooks and ends the process; nothing here may record its
+    // result as a failure first.
+    crate::proc_signal::wait_if_terminating();
+    result
 }
 
 /// Back up, then forget, check and prune as the plan says.

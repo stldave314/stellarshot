@@ -264,6 +264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as in your network settings; it only ever looked at Wi-Fi, so a desktop
   on a cable never backed up with it on. The Bulgarian description of the
   setting also no longer says the opposite of what it does.
+- **The wizard says when it cannot read the list of mounted drives**,
+  instead of claiming no drive is plugged in.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**

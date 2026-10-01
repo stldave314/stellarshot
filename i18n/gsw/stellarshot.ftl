@@ -215,6 +215,7 @@ place-rclone-missing = Zum da sichere bruucht’s rclone. Installier’s (zum Bi
 place-check-failed = De Speicherort hät nöd chöne prüeft wärde.
 place-check = Prüefe
 place-no-drives = Es sind kei Wächseldatenträger aagschlosse. Schlüss eine aa und gang dänn zrugg und wider wiiter.
+place-drives-unreadable = D Lischte vo de iibundene Laufwerch het nöd chöne gläse wärde, drum chönd aagschlosseni Laufwerch nöd zeigt wärde. Wähl statt dem de Ordner vom Laufwerch under «Ordner».
 place-folder-on-drive = Ordner uf em Laufwerk
 place-folder-invalid = De Ordner muess en eifache Name oder Pfad uf em Laufwerk sii, ohni „.“ oder „..“.
 place-host = Server

@@ -215,6 +215,7 @@ place-rclone-missing = För att säkerhetskopiera hit behövs rclone. Installera
 place-check-failed = Platsen kunde inte kontrolleras.
 place-check = Kontrollera
 place-no-drives = Inga flyttbara enheter är anslutna. Anslut en och gå sedan tillbaka och framåt igen.
+place-drives-unreadable = Listan över monterade enheter gick inte att läsa, så anslutna enheter kan inte visas. Välj enhetens mapp under ”Mapp” i stället.
 place-folder-on-drive = Mapp på enheten
 place-folder-invalid = Mappen måste vara ett vanligt namn eller en sökväg på enheten, utan ”.” eller ”..”.
 place-host = Server

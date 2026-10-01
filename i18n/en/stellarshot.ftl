@@ -225,6 +225,7 @@ place-rclone-missing = Backing up here needs rclone. Install it (for example, su
 place-check-failed = Could not check this location.
 place-check = Check
 place-no-drives = No removable drives are plugged in. Plug one in, then go back and forward to look again.
+place-drives-unreadable = The list of mounted drives could not be read, so plugged-in drives cannot be shown. Choose the drive’s folder under “Folder” instead.
 place-folder-on-drive = Folder on the drive
 place-folder-invalid = The folder must be a plain name or path on the drive, without “.” or “..”.
 place-host = Server

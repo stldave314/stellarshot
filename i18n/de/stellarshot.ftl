@@ -215,6 +215,7 @@ place-rclone-missing = Um hier zu sichern, wird rclone benötigt. Installiere es
 place-check-failed = Dieser Speicherort konnte nicht geprüft werden.
 place-check = Prüfen
 place-no-drives = Es sind keine Wechseldatenträger angeschlossen. Schließe einen an und gehe dann zurück und wieder weiter.
+place-drives-unreadable = Die Liste der eingebundenen Laufwerke konnte nicht gelesen werden, daher lassen sich angeschlossene Laufwerke nicht anzeigen. Wähle stattdessen den Ordner des Laufwerks unter „Ordner“.
 place-folder-on-drive = Ordner auf dem Laufwerk
 place-folder-invalid = Der Ordner muss ein einfacher Name oder Pfad auf dem Laufwerk sein, ohne „.“ oder „..“.
 place-host = Server

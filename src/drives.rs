@@ -28,19 +28,18 @@ pub struct Drive {
 /// Where removable media is mounted on desktop Linux.
 const REMOVABLE_ROOTS: &[&str] = &["/media/", "/run/media/"];
 
-/// Every removable drive that is mounted now.
-pub fn mounted_drives() -> Vec<Drive> {
+/// Every removable drive that is mounted now. `Err` if the system's list
+/// of mounts could not be read, which is not the same as no drive being
+/// plugged in.
+pub fn mounted_drives() -> Result<Vec<Drive>, String> {
     // Bytes, not a `String`: mountinfo only escapes space, tab, newline and
     // backslash, so one mount point with a non-UTF-8 name would make a
     // `read_to_string` of the whole file fail and every drive look unplugged.
-    let mountinfo = std::fs::read("/proc/self/mountinfo").unwrap_or_else(|err| {
-        // Every drive then looks unplugged, not merely unlisted — worth
-        // knowing why, since `/proc/self/mountinfo` failing to read at all
-        // is not a "this one drive is missing" problem.
+    let mountinfo = std::fs::read("/proc/self/mountinfo").map_err(|err| {
         error_log!(ENGINE, "could not read /proc/self/mountinfo: {err}");
-        Vec::new()
-    });
-    drives_from(
+        err.to_string()
+    })?;
+    Ok(drives_from(
         &device_links(Path::new("/dev/disk/by-uuid")),
         &device_links(Path::new("/dev/disk/by-label")),
         &mountinfo,
@@ -48,12 +47,13 @@ pub fn mounted_drives() -> Vec<Drive> {
         // `/dev/mapper/…`, a link to the `/dev/dm-N` the by-uuid link
         // resolves to.
         &|source| std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf()),
-    )
+    ))
 }
 
 /// Where the drive with `uuid` is mounted now, if it is.
 pub fn mount_point(uuid: &str) -> Option<PathBuf> {
     mounted_drives()
+        .unwrap_or_default()
         .into_iter()
         .find(|drive| drive.uuid == uuid)
         .map(|drive| drive.mount_point)
@@ -61,7 +61,7 @@ pub fn mount_point(uuid: &str) -> Option<PathBuf> {
 
 /// The removable drive `path` is on, and the path relative to its root.
 pub fn drive_for(path: &Path) -> Option<(Drive, PathBuf)> {
-    locate(&mounted_drives(), path)
+    locate(&mounted_drives().unwrap_or_default(), path)
 }
 
 fn locate(drives: &[Drive], path: &Path) -> Option<(Drive, PathBuf)> {

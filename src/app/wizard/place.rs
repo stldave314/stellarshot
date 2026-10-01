@@ -54,6 +54,9 @@ pub struct Place {
     pub kind: Kind,
     pub folder: Option<PathBuf>,
     pub drives: Vec<Drive>,
+    /// The system's list of mounts could not be read, so `drives` being
+    /// empty says nothing about what is plugged in.
+    pub drives_unreadable: bool,
     pub drive: Option<usize>,
     pub drive_folder: String,
     pub host: String,
@@ -99,6 +102,8 @@ pub enum Message {
     ChooseFolder,
     FolderChosen(PathBuf),
     DrivesListed(Vec<Drive>),
+    /// The system's list of mounts could not be read.
+    DrivesUnreadable,
     PickDrive(usize),
     DriveFolder(String),
     Host(String),
@@ -156,6 +161,7 @@ impl Default for Place {
             kind: Kind::Folder,
             folder: None,
             drives: Vec::new(),
+            drives_unreadable: false,
             drive: None,
             drive_folder: default_folder(),
             host: String::new(),
@@ -328,7 +334,14 @@ impl Place {
                 self.folder = Some(path);
                 self.check()
             }
+            Message::DrivesUnreadable => {
+                self.drives.clear();
+                self.drive = None;
+                self.drives_unreadable = true;
+                Vec::new()
+            }
             Message::DrivesListed(drives) => {
+                self.drives_unreadable = false;
                 self.drives = drives;
                 self.drive = None;
                 let preferred = self
@@ -598,6 +611,9 @@ impl Place {
                     .into()
             }
             Kind::Drive => {
+                if self.drives_unreadable {
+                    return widget::text::body(fl!("place-drives-unreadable")).into();
+                }
                 if self.drives.is_empty() {
                     return widget::text::body(fl!("place-no-drives")).into();
                 }
@@ -769,6 +785,21 @@ mod tests {
             label: "Backup".into(),
             mount_point: "/media/alex/Backup".into(),
         }
+    }
+
+    #[test]
+    fn an_unreadable_mount_list_is_not_shown_as_no_drives() {
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Drive));
+        place.update(Message::DrivesListed(vec![drive()]));
+        place.update(Message::PickDrive(0));
+        place.update(Message::DrivesUnreadable);
+        assert!(place.drives_unreadable);
+        assert!(place.drives.is_empty() && place.drive.is_none());
+        assert!(place.destination().is_none());
+        // Read again later, it says what is plugged in.
+        place.update(Message::DrivesListed(vec![drive()]));
+        assert!(!place.drives_unreadable);
     }
 
     #[test]

@@ -82,8 +82,16 @@ impl App {
                 })
             }
             place::Effect::ListDrives => Task::perform(
-                tasks::blocking(|| Ok(crate::drives::mounted_drives())),
-                move |drives| to_wizard(place::Message::DrivesListed(drives.unwrap_or_default())),
+                tasks::blocking(|| {
+                    crate::drives::mounted_drives()
+                        .map_err(|err| EngineError::new(engine::ErrorKind::Io, err))
+                }),
+                move |drives| {
+                    to_wizard(match drives {
+                        Ok(drives) => place::Message::DrivesListed(drives),
+                        Err(_) => place::Message::DrivesUnreadable,
+                    })
+                },
             ),
             place::Effect::CheckRclone => Task::perform(
                 tasks::blocking(|| Ok(engine::rclone::available())),

@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An exported settings file is private from the moment it is written**
   (it can hold a hook's command line, and so a credential), not after a
   permission change that left a window in which others could read it.
+- **A REST server's password is kept in the keyring**, not in the settings
+  file. One already saved in a backup's address moves there the next time
+  the window starts; if the keyring cannot take it, it stays where it was.
 - **Restored files never keep setuid or setgid**, so restoring from a
   repository someone else wrote cannot plant a privileged program.
 - **A crafted repository can no longer crash or mislead a restore.** A

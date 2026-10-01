@@ -39,13 +39,12 @@ note in the [README](README.md).
   backup's name and removed when you remove the backup. Backups run in a
   separate process; the password is handed to it on its standard input, never
   on its command line or in its environment, which other programs running as
-  you can read from `/proc`. **One destination is the exception:** a
-  rest-server or rustic-server backup's full address, including any username
-  and password in it (`http://user:pass@host:port/repo/`), is stored as
-  typed, in Stellarshot's own settings file, readable only by you. If your
-  server needs a password, consider a URL without one and a server-side
-  mechanism (a client certificate, or a network restriction) instead, until
-  this is addressed.
+  you can read from `/proc`. A REST server's own login is kept the same
+  way: a password typed into its address (`http://user:pass@host:port/repo/`)
+  is moved to the keyring, and the address saved in Stellarshot's settings
+  keeps only the user name. If the keyring cannot take it, the password stays
+  in the address, in a settings file readable only by you, so the backup
+  keeps working.
 - **Deletion only touches the repository.** Deleting a backup's data needs its
   name typed exactly, holds the repository's lock, removes the entries the
   repository format creates and nothing else, and does not follow symlinks. Creating a repository in a folder that already holds other files is

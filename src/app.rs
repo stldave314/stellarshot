@@ -29,7 +29,7 @@ use crate::constants::{
 use crate::debug::{CONFIG, ENGINE, UI};
 use crate::engine::{self, EngineError, Secret};
 use crate::event_log;
-use crate::profile::Profile;
+use crate::profile::{Destination, Profile};
 use crate::run_state::{self, RunState};
 use crate::runner::{Event as RunnerEvent, Job, Operation};
 use crate::schedule;
@@ -165,6 +165,9 @@ pub enum Message {
     ScheduleFailed(String),
     Dialog(DialogMessage),
     Noop,
+    /// REST server passwords moved from the settings to the keyring: each
+    /// backup's ID and its address without the password.
+    RestPasswordsMoved(Vec<(String, String)>),
     /// Every backup's run state, read off the window's thread.
     RunsLoaded(HashMap<String, RunState>),
     Settings(pages::settings::Message),
@@ -413,18 +416,60 @@ impl App {
         };
         // A password left in the keyring when removing the backup promised
         // to forget it is worth saying so: nothing else will ever clear it.
-        let forget =
-            Task::perform(
-                async move { crate::keyring::forget(&id).await },
-                |result| match result {
-                    Ok(()) => app(Message::Noop),
-                    Err(detail) => app(Message::Dialog(DialogMessage::Failed(
-                        fl!("remove-keyring-failed"),
-                        EngineError::new(engine::ErrorKind::Internal, detail),
-                    ))),
-                },
-            );
+        let forget = Task::perform(
+            async move {
+                let rest = crate::profile::forget_rest_password(&id).await;
+                crate::keyring::forget(&id).await.and(rest)
+            },
+            |result| match result {
+                Ok(()) => app(Message::Noop),
+                Err(detail) => app(Message::Dialog(DialogMessage::Failed(
+                    fl!("remove-keyring-failed"),
+                    EngineError::new(engine::ErrorKind::Internal, detail),
+                ))),
+            },
+        );
         Task::batch([unschedule, forget, self.activate_selected()])
+    }
+
+    /// See [`crate::profile::secure_rest_passwords`].
+    fn secure_rest_passwords(&self) -> Task<Message> {
+        let profiles: Vec<Profile> = self
+            .config
+            .profiles
+            .iter()
+            .filter(|profile| matches!(profile.destination, Destination::Rest { .. }))
+            .cloned()
+            .collect();
+        if profiles.is_empty() {
+            return Task::none();
+        }
+        Task::perform(crate::profile::secure_rest_passwords(profiles), |moved| {
+            app(Message::RestPasswordsMoved(moved))
+        })
+    }
+
+    /// Save the addresses whose password the keyring now holds, unless the
+    /// address changed meanwhile.
+    fn rest_passwords_moved(&mut self, moved: Vec<(String, String)>) {
+        if moved.is_empty() || self.profiles_read_only {
+            return;
+        }
+        let mut profiles = self.config.profiles.clone();
+        let mut changed = false;
+        for (id, without) in moved {
+            if let Some(profile) = profiles.iter_mut().find(|profile| profile.id == id)
+                && let Destination::Rest { url } = &mut profile.destination
+                && crate::profile::split_rest_password(url)
+                    .is_some_and(|(stripped, _)| stripped == without)
+            {
+                *url = without;
+                changed = true;
+            }
+        }
+        if changed {
+            self.save_profiles(profiles);
+        }
     }
 
     /// Show the selected profile, looking for its password if needed.
@@ -741,7 +786,9 @@ impl Application for App {
         if flags_start_restore && let Some(id) = app.selected().map(str::to_owned) {
             app.pages.entry(id).or_default().restore_when_unlocked = true;
         }
-        let activate = app.activate_selected();
+        // A REST server backup cannot be opened before its password is read.
+        let secure = app.secure_rest_passwords();
+        let activate = secure.chain(app.activate_selected());
         // Timers follow the settings, which may have changed while the
         // window was closed, or the program may have moved. Skipped
         // entirely while `profiles_read_only` is set: reconciling against
@@ -1202,6 +1249,7 @@ impl Application for App {
             Message::SystemThemeModeChange => return self.update_theme(),
             Message::Noop => {}
             Message::RunsLoaded(runs) => self.apply_runs(runs),
+            Message::RestPasswordsMoved(moved) => self.rest_passwords_moved(moved),
         }
         Task::none()
     }

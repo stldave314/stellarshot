@@ -528,12 +528,17 @@ impl Profile {
         }
     }
 
-    /// Where the engine finds this profile's repository right now.
+    /// Where the engine finds this profile's repository right now. A REST
+    /// server's saved address leaves its password out; the one remembered
+    /// in the keyring goes back in here (see [`secure_rest_passwords`]).
     pub fn location(&self) -> Result<Location, EngineError> {
-        Ok(self
-            .destination
-            .location()?
-            .with_bandwidth_limit(&self.bandwidth_limit))
+        let mut location = self.destination.location()?;
+        if let Location::Rest { url } = &mut location
+            && let Some(password) = rest_password(&self.id)
+        {
+            *url = with_rest_password(url, &password);
+        }
+        Ok(location.with_bandwidth_limit(&self.bandwidth_limit))
     }
 
     /// What the engine should back up.
@@ -666,6 +671,134 @@ pub fn profiles_from_v1(ron_text: &str) -> Vec<Profile> {
             )
         })
         .collect()
+}
+
+/// REST server passwords read from the keyring, by profile ID, for
+/// [`Profile::location`]: a lookup there has to be instant, and the keyring
+/// is not. Filled by [`secure_rest_passwords`] and [`load_rest_password`].
+static REST_PASSWORDS: std::sync::Mutex<std::collections::BTreeMap<String, Secret>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn rest_password(profile_id: &str) -> Option<Secret> {
+    REST_PASSWORDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(profile_id)
+        .cloned()
+}
+
+fn set_rest_password(profile_id: &str, password: Option<Secret>) {
+    let mut passwords = REST_PASSWORDS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match password {
+        Some(password) => passwords.insert(profile_id.to_owned(), password),
+        None => passwords.remove(profile_id),
+    };
+}
+
+/// `url` without its password, and the password; `None` if it has none
+/// (or does not parse, in which case it is left alone).
+pub fn split_rest_password(url: &str) -> Option<(String, Secret)> {
+    let mut parsed = url::Url::parse(url).ok()?;
+    let password = percent_decode(parsed.password()?);
+    parsed.set_password(None).ok()?;
+    Some((parsed.to_string(), Secret::new(password)))
+}
+
+/// `url` with `password` in it, unless it already has one of its own.
+fn with_rest_password(url: &str, password: &Secret) -> String {
+    let Ok(mut parsed) = url::Url::parse(url) else {
+        return url.to_owned();
+    };
+    if parsed.password().is_some() || parsed.set_password(Some(password.expose())).is_err() {
+        return url.to_owned();
+    }
+    parsed.to_string()
+}
+
+/// A URL's password as typed: `Url` keeps it percent-encoded.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        if bytes[i] == b'%'
+            && let (Some(high), Some(low)) = (
+                bytes.get(i + 1).copied().and_then(hex),
+                bytes.get(i + 2).copied().and_then(hex),
+            )
+        {
+            // Both digits are below 16, so this fits a byte.
+            decoded.push(u8::try_from(high * 16 + low).unwrap_or_default());
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+/// For every REST server backup: a password still in its saved address is
+/// moved to the keyring, and one already there is read for
+/// [`Profile::location`]. Returns the backups whose saved address should
+/// now leave the password out, with that address. One the keyring cannot
+/// take keeps its password where it was, so it goes on working.
+pub async fn secure_rest_passwords(profiles: Vec<Profile>) -> Vec<(String, String)> {
+    let mut moved = Vec::new();
+    for profile in profiles {
+        let Destination::Rest { url } = &profile.destination else {
+            continue;
+        };
+        match split_rest_password(url) {
+            Some((without, password)) => {
+                match keyring::store_rest_password(&profile.id, &profile.name, &password).await {
+                    Ok(()) => {
+                        set_rest_password(&profile.id, Some(password));
+                        moved.push((profile.id.clone(), without));
+                    }
+                    Err(err) => error_log!(
+                        CONFIG,
+                        "kept the REST server password of {} in its settings: {err}",
+                        profile.id
+                    ),
+                }
+            }
+            None => {
+                if let Err(err) = load_rest_password(&profile).await {
+                    error_log!(
+                        CONFIG,
+                        "could not read the REST server password of {}: {err}",
+                        profile.id
+                    );
+                }
+            }
+        }
+    }
+    moved
+}
+
+/// Read `profile`'s REST server password from the keyring for
+/// [`Profile::location`], if it is a REST server backup whose saved address
+/// leaves it out. `Err` if the keyring could not be reached.
+pub async fn load_rest_password(profile: &Profile) -> Result<(), String> {
+    let Destination::Rest { url } = &profile.destination else {
+        return Ok(());
+    };
+    if split_rest_password(url).is_some() {
+        return Ok(());
+    }
+    let password = keyring::load_rest_password(&profile.id).await?;
+    set_rest_password(&profile.id, password);
+    Ok(())
+}
+
+/// Forget a removed backup's REST server password, here and in the keyring.
+pub async fn forget_rest_password(profile_id: &str) -> Result<(), String> {
+    set_rest_password(profile_id, None);
+    keyring::forget_rest_password(profile_id).await
 }
 
 #[cfg(test)]
@@ -969,5 +1102,45 @@ mod tests {
         // Unlike a timer, there is nothing to be "overdue" against: it runs
         // whenever the drive is next connected, not on a clock.
         assert_eq!(Schedule::OnConnect.period(), None);
+    }
+
+    #[test]
+    fn a_rest_password_is_split_out_of_its_address_as_typed() {
+        let (without, password) =
+            split_rest_password("http://alice:p%40ss%2Fw@host:8000/repo/").unwrap();
+        assert_eq!(without, "http://alice@host:8000/repo/");
+        assert_eq!(password.expose(), "p@ss/w");
+        assert!(split_rest_password("http://alice@host:8000/repo/").is_none());
+        assert!(split_rest_password("http://host:8000/repo/").is_none());
+    }
+
+    #[test]
+    fn a_remembered_rest_password_goes_back_into_the_location() {
+        let mut profile = Profile::new(
+            "Server".into(),
+            Destination::Rest {
+                url: "http://alice@host:8000/repo/".into(),
+            },
+            Vec::new(),
+        );
+        profile.id = uuid::Uuid::new_v4().to_string();
+        let url = |profile: &Profile| match profile.location().unwrap() {
+            Location::Rest { url } => url,
+            other => panic!("not a REST location: {other:?}"),
+        };
+        assert_eq!(url(&profile), "http://alice@host:8000/repo/");
+
+        set_rest_password(&profile.id, Some(Secret::new("p@ss/w")));
+        assert_eq!(url(&profile), "http://alice:p%40ss%2Fw@host:8000/repo/");
+        // Split again, it is the same password.
+        let (_, password) = split_rest_password(&url(&profile)).unwrap();
+        assert_eq!(password.expose(), "p@ss/w");
+
+        // One typed into the address itself wins.
+        profile.destination = Destination::Rest {
+            url: "http://alice:typed@host:8000/repo/".into(),
+        };
+        assert_eq!(url(&profile), "http://alice:typed@host:8000/repo/");
+        set_rest_password(&profile.id, None);
     }
 }

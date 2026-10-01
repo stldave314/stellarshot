@@ -132,3 +132,46 @@ pub async fn forget(profile_id: &str) -> Result<(), String> {
     )
     .await
 }
+
+/// The attributes that identify one profile's REST server password: a
+/// different second attribute from [`attributes`], so a search for the
+/// repository password can never find this one instead.
+fn rest_attributes(profile_id: &str) -> [(&'static str, &str); 2] {
+    [("application", APP_ID), ("rest-server", profile_id)]
+}
+
+/// Remember the password a REST server backup logs in with, so the address
+/// saved in the settings can leave it out.
+pub async fn store_rest_password(
+    profile_id: &str,
+    profile_name: &str,
+    secret: &Secret,
+) -> Result<(), String> {
+    let label = format!("Stellarshot REST server password: {profile_name}");
+    store_item(
+        &label,
+        &rest_attributes(profile_id),
+        secret,
+        &format!("the REST server password for profile {profile_id}"),
+    )
+    .await
+}
+
+/// The remembered REST server password, as [`load_checked`] tells them
+/// apart.
+pub async fn load_rest_password(profile_id: &str) -> Result<Option<Secret>, String> {
+    load_item(
+        &rest_attributes(profile_id),
+        &format!("the REST server password for profile {profile_id}"),
+    )
+    .await
+}
+
+/// Forget the profile's REST server password. Succeeds if there was none.
+pub async fn forget_rest_password(profile_id: &str) -> Result<(), String> {
+    forget_item(
+        &rest_attributes(profile_id),
+        &format!("the REST server password for profile {profile_id}"),
+    )
+    .await
+}

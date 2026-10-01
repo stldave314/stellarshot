@@ -90,6 +90,7 @@ impl App {
         let mut tasks: Vec<Task<Message>> =
             merged.added.into_iter().map(Self::apply_schedule).collect();
         tasks.push(activate);
+        tasks.push(self.secure_rest_passwords());
         // Disk I/O for every backup's history: off the UI thread.
         tasks.push(Task::perform(
             tasks::blocking(move || {

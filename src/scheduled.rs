@@ -320,6 +320,13 @@ pub fn main(args: &[String]) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // A REST server's password lives in the keyring, not its saved address.
+    if let Err(err) = runtime.block_on(crate::profile::load_rest_password(&profile)) {
+        error_log!(
+            SCHED,
+            "{id}: could not read the REST server password: {err}"
+        );
+    }
     let result = profile
         .location()
         .map_err(|err| Failed(Stage::Backup, err))

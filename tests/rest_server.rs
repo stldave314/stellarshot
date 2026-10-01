@@ -53,17 +53,21 @@ impl Drop for Server {
 /// Starts a real REST server over `data_dir`, on a port the OS picks, and
 /// waits until it says it is listening. The address is read from its own
 /// log, so no port is picked here and then raced for.
-fn spawn_server(data_dir: &Path) -> Server {
+fn spawn_server(data_dir: &Path, login: Option<(&str, &str)>) -> Server {
     std::fs::create_dir_all(data_dir).unwrap();
-    let mut child = Command::new("rclone")
-        .args([
-            "serve",
-            "restic",
-            "--addr",
-            "127.0.0.1:0",
-            "--config",
-            "/dev/null",
-        ])
+    let mut command = Command::new("rclone");
+    command.args([
+        "serve",
+        "restic",
+        "--addr",
+        "127.0.0.1:0",
+        "--config",
+        "/dev/null",
+    ]);
+    if let Some((user, pass)) = login {
+        command.args(["--user", user, "--pass", pass]);
+    }
+    let mut child = command
         .arg(data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -110,7 +114,7 @@ fn with_server(scenario: impl FnOnce(&Path, &str)) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let scratch = TempDir::new().unwrap();
-    let server = spawn_server(&scratch.path().join("data"));
+    let server = spawn_server(&scratch.path().join("data"), None);
     scenario(scratch.path(), &server.url);
 }
 
@@ -178,4 +182,64 @@ fn deleting_a_rest_repository_is_refused_rather_than_attempted() {
         // The repository itself must be untouched: still there afterwards.
         assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
     });
+}
+
+/// A REST server password typed into the address is moved to the keyring,
+/// the saved address keeps only the user name, and the backup still logs
+/// in. Needs a running, unlocked Secret Service, like `tests/keyring.rs`.
+#[test]
+fn a_rest_password_moves_to_the_keyring_and_still_logs_in() {
+    use stellarshot::profile::{self, Destination, Profile};
+
+    struct Forget<'a>(&'a tokio::runtime::Runtime, String);
+    impl Drop for Forget<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.block_on(profile::forget_rest_password(&self.1));
+        }
+    }
+
+    require_rclone();
+    let _guard = ONLY_ONE_SERVER_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let scratch = TempDir::new().unwrap();
+    let server = spawn_server(&scratch.path().join("data"), Some(("alice", "p@ss/w")));
+    let typed = server
+        .url
+        .replacen("http://", "http://alice:p%40ss%2Fw@", 1)
+        + "login-repo/";
+    let mut backup = Profile::new(
+        "REST login test".into(),
+        Destination::Rest { url: typed },
+        Vec::new(),
+    );
+    backup.id = uuid::Uuid::new_v4().to_string();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let _cleanup = Forget(&runtime, backup.id.clone());
+
+    let moved = runtime.block_on(profile::secure_rest_passwords(vec![backup.clone()]));
+    let saved = server.url.replacen("http://", "http://alice@", 1) + "login-repo/";
+    assert_eq!(moved, vec![(backup.id.clone(), saved.clone())]);
+    backup.destination = Destination::Rest { url: saved };
+
+    // Read back from the keyring, as another process would.
+    runtime
+        .block_on(profile::load_rest_password(&backup))
+        .expect("a Secret Service must be running and unlocked for this test");
+    let location = backup.location().unwrap();
+    engine::init(&location, &secret()).unwrap();
+    assert_eq!(engine::probe(&location).unwrap(), engine::Probe::Repository);
+
+    // Without it, the server turns the login away: the password is really
+    // what let the backup in.
+    let Location::Rest { url } = &location else {
+        panic!("not a REST location");
+    };
+    let without = Location::Rest {
+        url: url.replacen("alice:p%40ss%2Fw@", "alice@", 1),
+    };
+    assert!(engine::open(&without, &secret()).is_err());
 }

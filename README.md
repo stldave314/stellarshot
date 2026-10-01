@@ -184,7 +184,7 @@ right-click menu).
    | **Network server (SFTP)** | Server, user name, port and folder. Uses your SSH agent or keys; the server must already be in `~/.ssh/known_hosts` |
    | **Google Drive** | **Sign In with Google…** opens your browser; then a folder in your Drive. **Use my own Google API credentials…** lets you sign in with a Google Cloud client of your own instead of the one rclone shares with everyone who has not set one up |
    | **One of your rclone remotes** | Pick a remote you set up with `rclone config` (OneDrive, Dropbox, S3, …) and a folder on it |
-   | **REST server** | A [rest-server](https://github.com/restic/rest-server) or [rustic-server](https://github.com/rustic-rs/rustic_server) you run yourself, as a URL including the repository name and any credentials (`http://user:pass@host:8000/repo/`) |
+   | **REST server** | A [rest-server](https://github.com/restic/rest-server) or [rustic-server](https://github.com/rustic-rs/rustic_server) you run yourself, as a URL including the repository name and any credentials (`http://user:pass@host:8000/repo/`). The password moves to your keyring; the saved address keeps only the user name |
 
    A server, Google Drive or rclone remote also gets an **Advanced** section
    with a bandwidth limit, in rclone's own syntax (`1M`, or `8M:2M` for

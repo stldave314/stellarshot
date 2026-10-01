@@ -245,6 +245,7 @@ impl App {
             close,
             scheduled,
             remember_task,
+            self.secure_rest_passwords(),
             self.run_profile_effects(&id, effects),
         ])
     }

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! The rclone configuration holds cloud tokens, so it must already be private
 //! when rclone writes a token into it, not just afterwards. A stand-in

@@ -28,7 +28,6 @@ DESTDIR="${DESTDIR:-}"
 APP_ID="io.github.stldave314.Stellarshot"
 BIN_APP="stellarshot"
 BIN_APPLET="stellarshot-applet"
-BIN_WEB="stellarshot-web"
 APPLET_ID="$APP_ID.Applet"
 DIST="dist"
 
@@ -70,13 +69,18 @@ cmd_build() {
     if cargo auditable --version >/dev/null 2>&1; then
         cargo auditable build --release --locked --features "$FEATURES" \
             ${CARGO_JOBS:+-j "$CARGO_JOBS"}
+    elif [[ "${CI:-}" == "true" ]]; then
+        # A CI build is what produces the release artifacts; shipping them
+        # without the embedded dependency data would only show up when
+        # someone tried to audit one.
+        die "cargo-auditable is required in CI (cargo install cargo-auditable)"
     else
         warn "cargo-auditable not installed; building without embedded dependency data" \
             "(cargo install cargo-auditable)"
         cargo build --release --locked --features "$FEATURES" \
             ${CARGO_JOBS:+-j "$CARGO_JOBS"}
     fi
-    info "Built target/release/$BIN_APP, target/release/$BIN_APPLET and target/release/$BIN_WEB"
+    info "Built target/release/$BIN_APP and target/release/$BIN_APPLET"
 }
 
 # Install into $1 (a staging root, possibly empty for a real install).
@@ -87,7 +91,6 @@ stage() {
 
     "${runner[@]}" install -Dm755 "target/release/$BIN_APP"    "$root$PREFIX/bin/$BIN_APP"
     "${runner[@]}" install -Dm755 "target/release/$BIN_APPLET" "$root$PREFIX/bin/$BIN_APPLET"
-    "${runner[@]}" install -Dm755 "target/release/$BIN_WEB"    "$root$PREFIX/bin/$BIN_WEB"
 
     "${runner[@]}" install -Dm644 "res/$APP_ID.desktop" \
         "$root$PREFIX/share/applications/$APP_ID.desktop"
@@ -101,9 +104,6 @@ stage() {
 
     "${runner[@]}" install -Dm644 "res/$APP_ID.metainfo.xml" \
         "$root$PREFIX/share/metainfo/$APP_ID.metainfo.xml"
-
-    "${runner[@]}" install -Dm644 docs/web-interface.md \
-        "$root$PREFIX/share/doc/$BIN_APP/web-interface.md"
 
     "${runner[@]}" install -Dm644 LICENSE \
         "$root$PREFIX/share/licenses/$BIN_APP/LICENSE"
@@ -139,16 +139,16 @@ cmd_uninstall() {
     as_root rm -f \
         "$PREFIX/bin/$BIN_APP" \
         "$PREFIX/bin/$BIN_APPLET" \
-        "$PREFIX/bin/$BIN_WEB" \
         "$PREFIX/share/applications/$APP_ID.desktop" \
         "$PREFIX/share/applications/$APPLET_ID.desktop" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID-symbolic.svg" \
         "$PREFIX/share/metainfo/$APP_ID.metainfo.xml"
-    as_root rm -rf "$PREFIX/share/licenses/$BIN_APP"
+    as_root rm -rf "$PREFIX/share/licenses/$BIN_APP" "$PREFIX/share/doc/$BIN_APP"
     as_root update-desktop-database "$PREFIX/share/applications" 2>/dev/null || true
+    as_root gtk-update-icon-cache -f "$PREFIX/share/icons/hicolor" 2>/dev/null || true
     info "Removed. Settings in ~/.config/cosmic/$APP_ID and every repository were kept."
-    warn "Any per-user systemd unit (the web interface, a scheduled backup) is left" \
+    warn "Any per-user systemd unit (a scheduled backup) is left" \
         "running and installed, since it belongs to your user account, not this" \
         "prefix. Stopping and disabling a unit does not delete its file, so both" \
         "steps are needed to remove them yourself:"
@@ -159,11 +159,14 @@ cmd_uninstall() {
 cmd_deb() {
     need cargo
     cargo deb --version >/dev/null 2>&1 || die "cargo-deb is required: cargo install cargo-deb"
+    # Built once, by `cmd_build`, and packaged as it is: `cargo deb` would
+    # otherwise run its own plain `cargo build` — without `cargo auditable`,
+    # so the .deb's binaries would carry no dependency data, and not
+    # necessarily the same binaries the .rpm and tarball ship.
+    cmd_build
     mkdir -p "$DIST"
     info "Building .deb"
-    # The feature has to be threaded through explicitly: cargo-deb runs its own
-    # build and would otherwise not pass it.
-    cargo deb --output "$DIST" -- --locked --features "$FEATURES"
+    cargo deb --no-build --output "$DIST"
     info "Wrote $(ls -1 "$DIST"/*.deb | tail -1)"
 }
 
@@ -201,7 +204,13 @@ cmd_tarball() {
     install -Dm755 install-tarball.sh "$stagedir/install-tarball.sh"
     install -Dm644 README.md "$stagedir/README.md"
 
-    tar -czf "$DIST/$name.tar.gz" -C "$DIST" "$name"
+    # Owned by root in the archive regardless of who built it: a plain
+    # `tar -czf` records the *building* user's uid/gid, and extracting that
+    # as root (as `install-tarball.sh` does for a system install) would
+    # carry that uid into every file's ownership on disk.
+    tar --owner=0 --group=0 --numeric-owner --sort=name \
+        --mtime="@${SOURCE_DATE_EPOCH:-0}" \
+        -czf "$DIST/$name.tar.gz" -C "$DIST" "$name"
     rm -rf "$stagedir"
     info "Wrote $DIST/$name.tar.gz"
 }

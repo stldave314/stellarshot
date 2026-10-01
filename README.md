@@ -101,6 +101,9 @@ cd stellarshot-*/
 ./install-tarball.sh
 ```
 
+`./install-tarball.sh uninstall`, from the same extracted folder, removes it
+again. Your settings and backups are kept.
+
 ### From source
 
 Clone this repository, then:
@@ -127,12 +130,7 @@ limit parallel compile jobs on a small machine.
 
 ## What is coming
 
-A web interface and REST API — off by default (see [Settings](#settings)),
-it can start an existing backup and report on every backup's status; there
-is no web page to browse or restore from yet, and signing in with this
-computer's own password (PAM) is not wired up. See
-[docs/web-interface.md](docs/web-interface.md) for what it can do today.
-Also: a clearer picture of every backup, finer control over what is backed
+A clearer picture of every backup, finer control over what is backed
 up, more storage options and alerts beyond the desktop, on the way to 1.0.
 The detail is in [ROADMAP.md](ROADMAP.md).
 
@@ -212,8 +210,11 @@ right-click menu).
    skip a slot rather than run in a state you would not want it to: only on
    mains power, only above a battery level, not on a connection marked
    metered, or only on a trusted Wi-Fi network or a VPN (Tailscale,
-   WireGuard, or another). A slot skipped this way is quiet, the same as a
-   destination that is not reachable; the next one tries again.
+   WireGuard, or one NetworkManager manages itself). A slot skipped this way
+   is quiet, the same as a destination that is not reachable; the next one
+   tries again. The trusted-network condition does not guess: if
+   NetworkManager cannot be reached to say which network this is, the slot
+   is skipped.
 4. **Password.** Choose one and confirm it. **Remember password** keeps it in
    your keyring. Automatic backups need it remembered: they run when nobody
    is there to type it. While the backup is being created the button counts
@@ -271,7 +272,8 @@ Déjà Dup so the two apps do not both back up the same folders.
 Select the backup in the sidebar and press **Back Up Now**
 (<kbd>Ctrl</kbd>+<kbd>B</kbd>). A progress card shows the phase, how much has
 been read, and how long it has been running; **Cancel** stops it, keeping
-nothing half-finished.
+nothing half-finished. A backup's "after" hooks still run when it is
+canceled, so a service a "before" hook stopped is started again.
 
 For SSH servers and cloud storage the card also shows how much has been
 stored there. That figure is smaller than what has been read, because data is
@@ -338,7 +340,16 @@ snapshot are left alone.
 
 **Open Copy** restores the one file into a private folder in your session's
 runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out),
-makes it read-only, and opens it with its usual application.
+makes it read-only, and opens it with its usual application. That folder
+lives in memory, so a file larger than 512 MiB is refused with a pointer to a
+normal restore, and copies left behind for more than a day are removed the next
+time Stellarshot starts or the restore page closes.
+
+Overwriting files where they are is the one restore that destroys something, so
+its confirm button says so: **Replace 12 files…**, in red, instead of
+**Restore…**. Selecting two items with the same name (`a/notes.txt` and
+`b/notes.txt`) and restoring them into one folder is refused before anything is
+written, since the second would overwrite the first.
 
 </details>
 
@@ -475,10 +486,21 @@ The **Manage** section at the bottom of each backup's page:
 | **Check for damage → Check Now** | Verifies every snapshot, folder and index entry. It shows when it last ran |
 | **Free up space → Clean Up Now** | Forgets snapshots **Keep** no longer needs and deletes data nothing uses. It cannot be stopped once started |
 | **What to back up → Edit** | Opens the first wizard step to change the included and excluded folders |
-| **How the password is provided → Change…** | The keyring (default), or a command that prints the password on its standard output, run fresh every time one is needed — for a password manager with a command-line client, such as the Bitwarden CLI |
+| **How the password is provided → Change…** | The keyring (default), or a command that prints the password on its standard output, run fresh every time one is needed — for a password manager with a command-line client, such as the Bitwarden CLI. It gets no standard input, may print at most 64 KiB and is stopped after a minute |
 | **Password → Change…** | Needs the backup unlocked already. Adds a key for the new password, then removes the one you unlocked it with; updates the keyring entry too, if it was remembered |
 | **Remove from Stellarshot** | Forgets the backup and its remembered password. The data stays where it is and can be opened again later |
 | **Delete backup and all data** | Permanently deletes every snapshot. You type the backup's name to confirm. Only the repository's own files are removed |
+
+A scheduled backup is started by your systemd user manager, not from your
+terminal or desktop session, so it does not see every variable they do. A
+password command that needs one (`BW_SESSION` for the Bitwarden CLI,
+`GPG_TTY`, `WAYLAND_DISPLAY`) or an SFTP backup that relies on an
+`ssh-agent` (`SSH_AUTH_SOCK`) can work with **Back Up Now** and still fail
+on the timer, with only the command's own error to go on. To see what the
+timer sees, run `systemd-run --user --wait --pipe --collect -- env` and
+compare it with `env` in a terminal; if a variable is missing, export it to
+the manager with `systemctl --user import-environment NAME` (or set it in
+`~/.config/environment.d/`).
 
 Individual snapshots are deleted with the bin icon on their row; the pin icon
 next to it keeps one however old it gets, until unpinned.
@@ -512,8 +534,7 @@ next to it keeps one however old it gets, until unpinned.
 | `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
 | `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable or a laptop condition is not met |
 | `stellarshot-applet` | The panel applet; run by the panel itself, not normally launched directly |
-| `stellarshot-web` | The web interface's daemon: reads the Web interface setting and, unless it is Off, binds and serves the REST API over HTTPS. Managed as a systemd user service, started and stopped from Settings; not normally run by hand |
-| `stellarshot --run <operation>` | Internal: runs one backup, restore, check or snapshot deletion for the window, reading its job from stdin. Not meant to be run by hand |
+| `stellarshot --run <operation>` | Internal: runs one backup, restore, check, snapshot deletion, pin change, clean-up or password change for the window, reading its job from stdin. Not meant to be run by hand |
 
 </details>
 
@@ -559,7 +580,6 @@ run rustic's own `forget`/`prune`, never restic's.
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 | Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
 | Cache location | rustic's own default (`~/.cache/rustic`) | Another folder, or no local cache at all, for every repository this computer opens |
-| Web interface | Off | Network scope (off, this computer only, or reachable on the network), the port, a TLS certificate (self-signed by default, or one of your own), a shared password, an API token, PAM, and an address allow-list, for the `stellarshot-web` daemon — see [docs/web-interface.md](docs/web-interface.md). Still in progress: no web page exists yet and PAM is not checked — see [ROADMAP.md](ROADMAP.md) |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in
@@ -585,7 +605,8 @@ stored there, only in the keyring when you ask.
   The card counts its running time, shows how much has reached cloud storage,
   and says what it is waiting for when the figures stand still. Backups run
   in their own process: the window never freezes, **Cancel** stops the backup
-  and the rclone connection under it at once, a canceled or interrupted
+  and the rclone connection under it, runs its "after" hooks first (also when
+  a scheduled run is stopped, or you log out), a canceled or interrupted
   backup never leaves a half-written snapshot, and closing the window lets a
   running backup finish.
 - **"Estimate Size" next to "Back Up Now"** shows how much an existing
@@ -656,6 +677,23 @@ stored there, only in the keyring when you ask.
 ---
 
 ## Troubleshooting
+
+<details>
+<summary>"Some of Stellarshot's settings could not be read" at startup.</summary>
+
+Your list of backups is saved in a form this version of Stellarshot cannot
+read. Usually that means a newer version saved it and an older one is now
+running, after a downgrade or with two versions installed. Stellarshot then
+shows no backups and refuses to save any change, so it cannot overwrite the
+list. Scheduled backups are left as they were: nothing is removed.
+
+A copy of the file is saved next to it, at the path the message shows. The
+simplest fix is to run the newer version again. If you instead want this
+version to start fresh, move `~/.config/cosmic/io.github.stldave314.Stellarshot/v2/profiles`
+out of the way first. Your repositories and snapshots are not affected
+either way.
+
+</details>
 
 <details>
 <summary>"… already contains other files" when choosing where to keep a backup.</summary>
@@ -840,7 +878,9 @@ recover or reset it.
 <summary>Cancel does not seem to stop a backup.</summary>
 
 Cancel stops the backup's process and everything it started, including the
-`rclone` that carries SSH and cloud backups. If a backup keeps going after
+`rclone` that carries SSH and cloud backups. It first gives the backup's
+"after" hooks up to about two minutes to run; a backup whose "after" hook is
+slow can take that long to stop. If a backup keeps going after
 **Cancel**, it was probably started by the timer rather than by the window:
 the window can only stop what it started. Stop a timer's run with
 `systemctl --user stop 'stellarshot-backup-*'`.
@@ -852,8 +892,9 @@ the window can only stop what it started. Stop a timer's run with
 
 Turn on developer logging: set `DEVELOPER_LOGGING` to `true` in
 `src/debug.rs`, rebuild *without* `--features release-build`, reproduce the
-problem, and read `/tmp/stellarshot-debug.log`. Lines are tagged by category
-(`ENGINE`, `UI`, `CONFIG`) so you can `grep` a run. Genuine errors are always
+problem, and read `~/.local/state/stellarshot/developer-debug.log` (under
+`$XDG_STATE_HOME` if you set it). Lines are tagged by category (`ENGINE`,
+`UI`, `CONFIG`) so you can `grep` a run. Genuine errors are always
 written to stderr too.
 
 </details>
@@ -929,17 +970,16 @@ written to stderr too.
              each backup's status straight off disk (run history, and
              whether something holds its repository's lock), the same way
              the window itself does; no D-Bus link to the window at all
-  web     ── stellarshot-web, a separate daemon (off by default; a systemd
-             user service when on). Reads settings and snapshots the same
-             way the window does; starting a backup runs in-process, through
-             the same runner as the window's own child process
 ```
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child
 process, `stellarshot --run <operation>`, because rustic cannot be interrupted
-once an operation starts and a process can. Canceling kills the child's whole
-process group, so the `rclone` that rustic starts for SSH and cloud storage
-stops with it. The password reaches the child on stdin,
+once an operation starts and a process can. Canceling sends the child
+SIGTERM; it runs the backup's `After` hooks, reports itself canceled, and
+stops its own process group, so the `rclone` that Stellarshot starts for SSH and
+cloud storage stops with it. If it has not gone within `TERM_GRACE` (a hook's
+timeout plus a margin), the window kills the whole group. A scheduled run
+handles `systemctl --user stop`, logout and shutdown the same way. The password reaches the child on stdin,
 never in its command line or environment, both of which other programs
 running as you can read.
 
@@ -955,6 +995,9 @@ running as you can read.
 | `engine::restore` | Selected files to their original place or a folder, with the Keep both, Overwrite or Skip decision made before rustic sees the file list, and a dry run that counts the same way |
 | `engine::mount` | A snapshot mounted read-only through FUSE, reading through the same `Browser` the restore page uses |
 | `engine::estimate` | The size of a backup before it runs, from the same file list the backup reads |
+| `paths` | Where settings and state live, and keeping those folders owner-only at every start |
+| `bounded` | Reading a child's output with a cap, so a chatty hook, password command or rclone cannot fill memory |
+| `engine::serve` | Starts and stops the `rclone serve restic` behind SFTP and cloud backups, with a start-up timeout and no zombie left behind |
 | `drives` | Mounted removable drives, and where a drive with a given ID is mounted now |
 | `dejadup` | Reading Déjà Dup's settings (never its password) and turning them into a backup |
 | `runner` | `stellarshot --run`: reads a job from stdin, runs it under the lock, reports JSON lines |
@@ -964,23 +1007,19 @@ running as you can read.
 | `scheduled` | `stellarshot --scheduled`: a timer's run, from backup to check and clean-up, and what is worth a notification |
 | `conditions` | Whether a laptop's power, battery and network state satisfy a scheduled backup's conditions; reading the real state (UPower, NetworkManager) and deciding are kept apart |
 | `run_state` | What happened when each backup last ran on its own, in cosmic-config's state store |
-| `event_log` | Every backup's history — backups, checks, clean-ups, restores, snapshot deletions, pin and password changes, mounts — behind the History page, marked with whether it came from the desktop or the web interface |
+| `event_log` | Every backup's history — backups, checks, clean-ups, restores, snapshot deletions, pin and password changes, mounts — behind the History page, marked with whether it came from the desktop or another program |
 | `status` | Each backup's status from what any process can see on disk: run history, and whether its repository lock is currently held. Shared by the window (a run it did not itself start) and the applet |
 | `notify` | Desktop notifications, and opening the backup when one is clicked |
 | `keyring` | Remembered passwords in the Secret Service, each request bounded by a timeout |
 | `app` | The window: sidebar, menus, dialogs, settings |
 | `app::applet` | The panel applet: `stellarshot-applet`'s own window, sharing the library but nothing else with the main window |
-| `app::pages` | The first-launch screen, each backup's page, and the restore page |
+| `app::pages` | The first-launch screen, each backup's page, the restore page, Settings and Help |
+| `app::effects` | What the pages and the wizard ask for, carried out: one runner per page, turning its effects into tasks |
 | `app::wizard` | The setup wizard's steps and validation; `place` is the "where" step |
 | `app::tasks` | Engine calls off the UI thread, the folder chooser, the estimate as a stream |
 | `app::child` | Spawns `--run` in its own process group, streams its events into the UI, cancels it and everything it started |
 | `app::errors` | A localized explanation for every kind of engine error |
 | `app::migrate` | One-time moves of settings from older versions |
-| `web` | `stellarshot-web`, a separate daemon: serves the REST API over HTTPS, binds according to the network scope and port settings, enforces the address allow-list, then a shared password or API token, ahead of every route |
-| `web::routes` | The REST API's own routes: a backup's status, its snapshots, browsing a folder, and starting an existing backup |
-| `web_tls` | The daemon's TLS certificate: a self-signed one generated once and reused, or one of the user's own |
-| `web_daemon` | Installing, starting, stopping and reading the status of `stellarshot-web` as a systemd user service |
-| `web_token` | Generating and verifying the web interface's API token; only its hash is ever stored |
 
 </details>
 

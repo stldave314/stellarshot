@@ -10,8 +10,9 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::Message;
-use crate::app::format::{self, Ago};
+use crate::app::format;
 use crate::app::pages::profile::ProfileState;
+use crate::app::pages::row;
 use crate::fl;
 use crate::profile::Profile;
 use crate::run_state::{self, RunState};
@@ -34,12 +35,7 @@ pub fn view<'a>(
         let detail = match profile.last_success {
             None => fl!("never-backed-up"),
             Some(time) => {
-                let last = match format::ago(now, time) {
-                    Ago::JustNow => fl!("backed-up-just-now"),
-                    Ago::Minutes(count) => fl!("backed-up-minutes-ago", count = count),
-                    Ago::Hours(count) => fl!("backed-up-hours-ago", count = count),
-                    Ago::Days(count) => fl!("backed-up-days-ago", count = count),
-                };
+                let last = format::backed_up_ago(now, time);
                 fl!("home-backup-detail", status = status.label(), last = last)
             }
         };
@@ -71,7 +67,7 @@ pub fn view<'a>(
     if !folders.is_empty() {
         let mut section = widget::settings::section().title(fl!("home-folders-title"));
         for (path, names) in folders {
-            section = section.add(row(format::path(&path), names.join(", ")));
+            section = section.add(row(format::path(&path), format::list(names)));
         }
         page = page.push(section);
     }
@@ -91,7 +87,7 @@ pub fn view<'a>(
                             .push(widget::text::caption(fl!(
                                 "home-location-detail",
                                 kind = location.kind,
-                                backups = location.used_by.join(", ")
+                                backups = format::list(location.used_by.iter().cloned())
                             ))),
                     ),
             );
@@ -101,18 +97,6 @@ pub fn view<'a>(
 
     widget::scrollable(page.apply(widget::container).max_width(900))
         .height(Length::Fill)
-        .into()
-}
-
-/// A description-and-detail row with no interactive control, matching
-/// `pages::profile`'s own.
-fn row(title: String, detail: String) -> Element<'static, Message> {
-    let spacing = theme::active().cosmic().spacing;
-    widget::column::with_capacity(2)
-        .spacing(spacing.space_xxxs)
-        .padding([spacing.space_xxs, spacing.space_none])
-        .push(widget::text::body(title))
-        .push(widget::text::caption(detail))
         .into()
 }
 

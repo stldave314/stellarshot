@@ -91,6 +91,15 @@ pub struct RestorePreview {
     pub conflicts: u64,
 }
 
+impl std::ops::AddAssign for RestorePreview {
+    fn add_assign(&mut self, other: Self) {
+        self.files += other.files;
+        self.bytes += other.bytes;
+        self.unchanged += other.unchanged;
+        self.conflicts += other.conflicts;
+    }
+}
+
 /// `name.ext` → `name (restored 2026-09-23).ext`, or with a counter if that
 /// exists too. Built with `OsString`, not `to_string_lossy`, so a stem or
 /// extension that is not valid UTF-8 keeps its exact bytes rather than
@@ -217,13 +226,24 @@ fn run(
     let snapshot = repo.get_snapshot_from_str(&request.snapshot, |_| true)?;
     let date = jiff::Zoned::now().strftime("%Y-%m-%d").to_string();
 
+    // Into a folder, each item lands under its own name: two with the same
+    // name would overwrite each other, whatever the conflict policy says.
+    if let Target::Folder(_) = &request.target {
+        let mut names = std::collections::HashSet::new();
+        for name in request.paths.iter().filter_map(|path| path.file_name()) {
+            if !names.insert(name) {
+                return Err(EngineError::new(
+                    ErrorKind::DuplicateName,
+                    name.to_string_lossy().into_owned(),
+                ));
+            }
+        }
+    }
+
     let mut total = RestorePreview::default();
     for path in &request.paths {
         let preview = restore_one(&repo, &snapshot, path, request, &date, dry_run)?;
-        total.files += preview.files;
-        total.bytes += preview.bytes;
-        total.unchanged += preview.unchanged;
-        total.conflicts += preview.conflicts;
+        total += preview;
     }
     debug_log!(
         ENGINE,
@@ -266,6 +286,35 @@ fn utf8_root_and_relative(path: &Path) -> (PathBuf, PathBuf) {
 /// (see SEC-2 in the review plan). An empty path (the node being restored
 /// or looked up itself, not one of its descendants) has no components and
 /// always passes.
+/// Whether writing `on_disk` (somewhere at or below `destination`) would go
+/// through a symlink that is already there: `destination` itself or a
+/// folder between it and `on_disk`, or `on_disk` being a symlink when what
+/// is to be written there is not one (a file written over a symlink
+/// follows it; a symlink written over a symlink just replaces it).
+fn writes_through_a_symlink(destination: &Path, on_disk: &Path, item_is_symlink: bool) -> bool {
+    fn is_symlink(path: &Path) -> bool {
+        path.symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    }
+    let Ok(rest) = on_disk.strip_prefix(destination) else {
+        return false;
+    };
+    let components: Vec<_> = rest.components().collect();
+    if let Some((_, folders)) = components.split_last() {
+        let mut current = destination.to_path_buf();
+        if is_symlink(&current) {
+            return true;
+        }
+        for component in folders {
+            current.push(component);
+            if is_symlink(&current) {
+                return true;
+            }
+        }
+    }
+    !item_is_symlink && is_symlink(on_disk)
+}
+
 pub(super) fn reject_unsafe_relative_path(relative: &Path) -> Result<(), EngineError> {
     if relative
         .components()
@@ -277,6 +326,192 @@ pub(super) fn reject_unsafe_relative_path(relative: &Path) -> Result<(), EngineE
             ErrorKind::UnsafePath,
             relative.display().to_string(),
         ))
+    }
+}
+
+/// What to do with one item of the snapshot, given what is on disk.
+enum Decision {
+    /// Restore it where it says.
+    Keep,
+    /// Leave it out.
+    Skip,
+    /// Restore it under this path (relative to the destination) instead.
+    Rename(PathBuf),
+}
+
+/// What [`shape`] needs to know about the restore as a whole.
+struct ShapeContext<'a> {
+    destination: &'a Path,
+    policy: ConflictPolicy,
+    date: &'a str,
+}
+
+/// The decisions for every item, in the order the snapshot lists them.
+#[derive(Default)]
+struct Decisions {
+    skipped: Vec<bool>,
+    renamed: std::collections::HashMap<usize, PathBuf>,
+}
+
+impl Decisions {
+    fn push(&mut self, decision: Decision) {
+        let index = self.skipped.len();
+        self.skipped.push(matches!(decision, Decision::Skip));
+        if let Decision::Rename(path) = decision {
+            self.renamed.insert(index, path);
+        }
+    }
+
+    /// `None` for an item left out; otherwise the relative path to restore
+    /// it under, if that is not its own.
+    fn get(&self, index: usize) -> Option<Option<&PathBuf>> {
+        if self.skipped.get(index).copied().unwrap_or(false) {
+            None
+        } else {
+            Some(self.renamed.get(&index))
+        }
+    }
+}
+
+/// Decide what to do with `item`, at `relative` below `context.destination`,
+/// counting what it conflicts with. Reads the disk, never writes it.
+fn shape(
+    context: &ShapeContext<'_>,
+    relative: &Path,
+    item: &Node,
+    conflicts: &mut u64,
+    unchanged_by_us: &mut u64,
+) -> Result<Decision, EngineError> {
+    let ShapeContext {
+        destination,
+        policy,
+        date,
+    } = *context;
+    let on_disk = if relative.as_os_str().is_empty() {
+        destination.to_path_buf()
+    } else {
+        destination.join(relative)
+    };
+    // A directory item conflicts with something already at its own
+    // path that is not itself a directory (a file or symlink in the
+    // way). A non-directory item whose own path cannot even be looked
+    // up because some ancestor between it and `destination` is not a
+    // directory — not merely absent — is the same shape of problem
+    // discovered one level lower: `on_disk.symlink_metadata()` failing
+    // does not by itself distinguish "genuinely does not exist yet"
+    // (safe) from "cannot exist because something is in the way
+    // higher up" (a real conflict). Neither can be renamed aside for
+    // Keep Both the way an ordinary file conflict is: every item here
+    // is shaped independently against the same, fixed `destination`,
+    // with no way to carry a rename down to a directory's own
+    // descendants, or to rename a path that does not itself exist.
+    // Both are treated the same as Skip instead — left untouched —
+    // rather than attempt a rename that cannot actually work.
+    // A symlink already in the way of where this item would be written
+    // is followed by the filesystem calls rustic makes, so the file
+    // would land wherever it points — possibly outside `destination`
+    // altogether. Overwrite refuses outright; Skip and Keep Both leave
+    // it alone, like any other path that cannot be restored into.
+    if writes_through_a_symlink(destination, &on_disk, item.is_symlink()) {
+        if policy == ConflictPolicy::Overwrite {
+            return Err(EngineError::new(
+                ErrorKind::UnsafePath,
+                on_disk.display().to_string(),
+            ));
+        }
+        *conflicts += 1;
+        return Ok(Decision::Skip);
+    }
+    let type_blocked = if item.is_dir() {
+        on_disk.symlink_metadata().is_ok_and(|meta| !meta.is_dir())
+    } else {
+        on_disk.symlink_metadata().is_err() && ancestor_is_not_a_directory(destination, &on_disk)
+    };
+    if type_blocked {
+        *conflicts += 1;
+        return Ok(if policy == ConflictPolicy::Overwrite {
+            Decision::Keep
+        } else {
+            Decision::Skip
+        });
+    }
+    if item.is_dir() || relative.as_os_str().is_empty() || on_disk.symlink_metadata().is_err() {
+        return Ok(Decision::Keep);
+    }
+    if looks_identical(&on_disk, item) {
+        return Ok(if policy == ConflictPolicy::Skip {
+            *unchanged_by_us += 1;
+            Decision::Skip
+        } else {
+            Decision::Keep
+        });
+    }
+    *conflicts += 1;
+    Ok(match policy {
+        ConflictPolicy::Overwrite => Decision::Keep,
+        ConflictPolicy::KeepBoth => {
+            let renamed = keep_both_name(&on_disk, date);
+            Decision::Rename(
+                renamed
+                    .strip_prefix(destination)
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|_| relative.to_path_buf()),
+            )
+        }
+        ConflictPolicy::Skip => Decision::Skip,
+    })
+}
+
+/// How an item's path below the destination becomes one below the root given
+/// to `LocalDestination` (see the long comment in [`restore_one`]).
+enum Rooting {
+    Same,
+    /// A folder: its own name, relative to the root, goes in front.
+    Below(PathBuf),
+    /// A single file: its possibly renamed final name replaces its path.
+    Replace(PathBuf),
+}
+
+/// The snapshot's items with [`Decisions`] applied: what rustic is given, one
+/// item at a time, as often as it asks.
+fn shaped_stream<'a>(
+    repo: &'a Repository<IndexedFullStatus>,
+    node: &Node,
+    options: &LsOptions,
+    decisions: &'a Decisions,
+    rooted: &'a Rooting,
+) -> Result<impl Iterator<Item = rustic_core::RusticResult<(PathBuf, Node)>> + 'a, EngineError> {
+    let items = repo.ls(node, options)?;
+    Ok(items
+        .enumerate()
+        .filter_map(move |(index, entry)| match entry {
+            Err(err) => Some(Err(err)),
+            Ok((relative, item)) => {
+                let relative = decisions.get(index)?.cloned().unwrap_or(relative);
+                let relative = match rooted {
+                    Rooting::Same => relative,
+                    Rooting::Below(leaf) => leaf.join(relative),
+                    Rooting::Replace(leaf) => leaf.clone(),
+                };
+                Some(Ok((relative, item)))
+            }
+        }))
+}
+
+/// [`reject_unsafe_relative_path`] for a single name taken from a snapshot's
+/// tree, where an empty name (which lists as the directory itself and loops
+/// a mount), `.`, `..` or a `/` inside it must never be accepted: as a path
+/// those would slip through as "no components" or a two-part name.
+pub(super) fn reject_unsafe_name(name: &std::ffi::OsStr) -> Result<(), EngineError> {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = name.as_bytes();
+    if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') {
+        Err(EngineError::new(
+            ErrorKind::UnsafePath,
+            name.to_string_lossy().into_owned(),
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -322,71 +557,30 @@ fn restore_one(
         }
     }
 
-    let items: Vec<(PathBuf, Node)> = repo
-        .ls(&node, &LsOptions::default())?
-        .collect::<Result<_, _>>()?;
-    for (relative, _) in &items {
-        reject_unsafe_relative_path(relative)?;
-    }
-    let mut shaped = Vec::with_capacity(items.len());
-    for (relative, item) in items {
-        let on_disk = if relative.as_os_str().is_empty() {
-            destination.clone()
-        } else {
-            destination.join(&relative)
-        };
-        // A directory item conflicts with something already at its own
-        // path that is not itself a directory (a file or symlink in the
-        // way). A non-directory item whose own path cannot even be looked
-        // up because some ancestor between it and `destination` is not a
-        // directory — not merely absent — is the same shape of problem
-        // discovered one level lower: `on_disk.symlink_metadata()` failing
-        // does not by itself distinguish "genuinely does not exist yet"
-        // (safe) from "cannot exist because something is in the way
-        // higher up" (a real conflict). Neither can be renamed aside for
-        // Keep Both the way an ordinary file conflict is: every item here
-        // is shaped independently against the same, fixed `destination`,
-        // with no way to carry a rename down to a directory's own
-        // descendants, or to rename a path that does not itself exist.
-        // Both are treated the same as Skip instead — left untouched —
-        // rather than attempt a rename that cannot actually work.
-        let type_blocked = if item.is_dir() {
-            on_disk.symlink_metadata().is_ok_and(|meta| !meta.is_dir())
-        } else {
-            on_disk.symlink_metadata().is_err()
-                && ancestor_is_not_a_directory(&destination, &on_disk)
-        };
-        if type_blocked {
-            conflicts += 1;
-            if request.policy == ConflictPolicy::Overwrite {
-                shaped.push((relative, item));
-            }
-            continue;
-        }
-        if item.is_dir() || relative.as_os_str().is_empty() || on_disk.symlink_metadata().is_err() {
-            shaped.push((relative, item));
-            continue;
-        }
-        if looks_identical(&on_disk, &item) {
-            unchanged_by_us += u64::from(request.policy == ConflictPolicy::Skip);
-            if request.policy != ConflictPolicy::Skip {
-                shaped.push((relative, item));
-            }
-            continue;
-        }
-        conflicts += 1;
-        match request.policy {
-            ConflictPolicy::Overwrite => shaped.push((relative, item)),
-            ConflictPolicy::KeepBoth => {
-                let renamed = keep_both_name(&on_disk, date);
-                let relative = renamed
-                    .strip_prefix(&destination)
-                    .map(Path::to_path_buf)
-                    .unwrap_or(relative);
-                shaped.push((relative, item));
-            }
-            ConflictPolicy::Skip => {}
-        }
+    // What to do with each item is decided once, against the disk as it is
+    // now, and remembered (a byte per item, plus the rare rename): rustic
+    // reads the stream twice more, and by the second time its own writes
+    // have changed what the disk looks like, which would change the answers.
+    // Nothing is collected into memory, so a whole-home restore costs a byte
+    // per file instead of a copy of every node.
+    let ls_options = LsOptions::default();
+    let context = ShapeContext {
+        destination: &destination,
+        policy: request.policy,
+        date,
+    };
+    let mut decisions = Decisions::default();
+    for entry in repo.ls(&node, &ls_options)? {
+        let (relative, item) = entry?;
+        reject_unsafe_relative_path(&relative)?;
+        let decision = shape(
+            &context,
+            &relative,
+            &item,
+            &mut conflicts,
+            &mut unchanged_by_us,
+        )?;
+        decisions.push(decision);
     }
 
     // `LocalDestination::new` needs a UTF-8 `&str` root, but `destination`
@@ -410,18 +604,12 @@ fn restore_one(
     // possibly-renamed final name) replaces it outright rather than being
     // prepended to it.
     let (root, leaf) = utf8_root_and_relative(&destination);
-    let shaped: Vec<(PathBuf, Node)> = if root == destination {
-        shaped
+    let rooted = if root == destination {
+        Rooting::Same
     } else if node.is_dir() {
-        shaped
-            .into_iter()
-            .map(|(relative, item)| (leaf.join(&relative), item))
-            .collect()
+        Rooting::Below(leaf)
     } else {
-        shaped
-            .into_iter()
-            .map(|(_, item)| (leaf.clone(), item))
-            .collect()
+        Rooting::Replace(leaf)
     };
     let destination_text = root.to_str().ok_or_else(|| {
         EngineError::new(
@@ -444,7 +632,12 @@ fn restore_one(
         Ownership::Numeric => options.numeric_id = true,
         Ownership::None => options.no_ownership = true,
     }
-    let plan = repo.prepare_restore(&options, shaped.iter().cloned().map(Ok), &dest, dry_run)?;
+    let plan = repo.prepare_restore(
+        &options,
+        shaped_stream(repo, &node, &ls_options, &decisions, &rooted)?,
+        &dest,
+        dry_run,
+    )?;
     let files = &plan.stats.files;
     let preview = RestorePreview {
         files: files.restore + files.modify,
@@ -453,7 +646,12 @@ fn restore_one(
         conflicts,
     };
     if !dry_run {
-        repo.restore(plan, &options, shaped.into_iter().map(Ok), &dest)?;
+        repo.restore(
+            plan,
+            &options,
+            shaped_stream(repo, &node, &ls_options, &decisions, &rooted)?,
+            &dest,
+        )?;
     }
     Ok(preview)
 }
@@ -461,6 +659,35 @@ fn restore_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decisions_are_remembered_by_position_in_the_listing() {
+        let mut decisions = Decisions::default();
+        decisions.push(Decision::Keep);
+        decisions.push(Decision::Skip);
+        decisions.push(Decision::Rename(PathBuf::from("a (restored)")));
+
+        assert_eq!(decisions.get(0), Some(None), "restored as it is");
+        assert_eq!(decisions.get(1), None, "left out");
+        assert_eq!(
+            decisions.get(2),
+            Some(Some(&PathBuf::from("a (restored)"))),
+            "restored under another name"
+        );
+    }
+
+    #[test]
+    fn a_single_name_must_be_a_plain_name() {
+        use std::ffi::OsStr;
+        for bad in ["", ".", "..", "a/b", "/"] {
+            assert!(
+                reject_unsafe_name(OsStr::new(bad)).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
+        assert!(reject_unsafe_name(OsStr::new("notes.txt")).is_ok());
+        assert!(reject_unsafe_name(OsStr::new("..hidden")).is_ok());
+    }
 
     #[test]
     fn an_ordinary_relative_path_is_accepted() {

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! Build a demo repository for screenshots: `scripts/screenshots.sh` runs
 //! this. Creates a repository at `<repository>` and takes `<count>` real

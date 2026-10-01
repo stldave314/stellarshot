@@ -73,6 +73,27 @@ for file in "$METAINFO" "$DESKTOP" Cargo.toml; do
     }
 done
 
+# Every release that was tagged has a changelog section and a metainfo
+# release. A release's section was once folded into its successor's,
+# leaving two published versions with no entry in either place. Needs the
+# tags: a shallow checkout has none, and finding none must not pass.
+tags=$(git tag -l 'v*')
+if [[ -z "$tags" ]]; then
+    echo "FAIL: no v* tags found, so the changelog could not be checked against releases (fetch them: git fetch --tags, or fetch-depth: 0 in CI)" >&2
+    exit 1
+fi
+for tag in $tags; do
+    version="${tag#v}"
+    if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+        echo "FAIL: $tag has no '## [$version]' section in CHANGELOG.md"
+        fail=1
+    fi
+    if ! grep -q "<release version=\"$version\"" "$METAINFO"; then
+        echo "FAIL: $tag has no <release version=\"$version\"> in $METAINFO"
+        fail=1
+    fi
+done
+
 check() {
     local label="$1" actual="$2" expected="$3"
     if [[ "$actual" == "$expected" ]]; then
@@ -105,6 +126,14 @@ check "default screenshot" "$(grep -c 'screenshot type="default"' "$METAINFO" ||
 cargo_version=$(sed -n '0,/^version = /s/^version = "\(.*\)"/\1/p' Cargo.toml)
 metainfo_version=$(sed -n 's/.*<release version="\([^"]*\)".*/\1/p' "$METAINFO" | head -1)
 check "release version matches Cargo.toml" "$metainfo_version" "$cargo_version"
+
+# Screenshots are fetched from the repository at the tag being released, not
+# from `main`: a later commit that replaces an image would otherwise change
+# what an already-published version's store page shows. Every image URL has to
+# name this version's tag, so bumping the version without updating them fails
+# here rather than leaving a release pointing at the previous one's pictures.
+stale_images=$(grep '<image>' "$METAINFO" | grep -vc "/v$cargo_version/" || true)
+check "screenshot URLs name v$cargo_version" "$stale_images" "0"
 
 # The three identities have to agree or the launcher, the icon lookup and the
 # store entry come apart.

@@ -20,7 +20,8 @@ They are encrypted, but they are still your data.
 If something is misbehaving rather than obviously broken, a debug log helps:
 set `DEVELOPER_LOGGING` to `true` in `src/debug.rs`, rebuild *without*
 `--features release-build`, reproduce, and attach
-`/tmp/stellarshot-debug.log`. Look through it first: it contains file paths.
+`~/.local/state/stellarshot/developer-debug.log` (under `$XDG_STATE_HOME` if
+you set it). Look through it first: it contains file paths.
 
 ## Building and testing
 
@@ -37,6 +38,22 @@ run it.
 
 On a machine with limited memory, limit parallel jobs: `cargo build -j 4`, or
 `CARGO_JOBS=4 ./install.sh build`.
+
+### What the test suite needs
+
+The suite uses real programs and services instead of mocks, and a missing one
+fails the test that needs it rather than skipping it:
+
+- `rclone` (`tests/rclone.rs`) and `fuse3` (the mount tests).
+- A running, unlocked Secret Service for `tests/keyring.rs`. CI provides one
+  with `dbus-run-session -- bash -c 'echo -n ci | gnome-keyring-daemon
+  --unlock --components=secrets > /dev/null; cargo test --all-features'`.
+- A `rustic-server` for `tests/rest_server.rs` (`cargo install rustic_server`).
+
+`.cargo/config.toml` points `XDG_STATE_HOME` and `XDG_CACHE_HOME` at
+`target/test-xdg`, so tests — and anything else started through cargo, `cargo
+run` included — never read or write your real history, run state or cache. A
+side effect: `cargo run` shows none of the installed app's history.
 
 ## Translations
 
@@ -80,19 +97,6 @@ rustic upgrade is contained in one module.
 **Writes run in a child process.** Anything that writes to a repository goes
 through `stellarshot --run` and holds the repository lock. rustic cannot be
 interrupted; a process can.
-
-*Deliberate exception:* `stellarshot-web`'s `POST /api/v1/backups/{id}/run`
-runs the backup in-process (`web::routes::record_backup`), not through a
-`--run` child. The daemon is already its own process — the isolation a
-child buys the desktop window (surviving a crash mid-backup, still being
-interruptible when rustic itself is not) protects the window's own
-long-lived process specifically, and the daemon has no such long-lived
-foreground state to protect. What a child process buys that this still
-needs, and gets a different way: interruptibility on shutdown, via
-`web::wait_for_sigterm_then_drain` and `web::routes::drain_running_jobs`
-(a real backup still running when the grace period passes is aborted and
-recorded canceled, rather than left to be killed by systemd with nothing
-recorded at all).
 
 **Prove behavior against real files.** Tests that delete, write or restore
 work on real directories in temporary folders, and assert on what must survive

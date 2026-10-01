@@ -8,7 +8,7 @@
 //! run can be filtered with `grep` by any of those.
 //!
 //! Several processes can share this one file over a session: the window,
-//! the panel applet, the web daemon, and short-lived `--run`/`--scheduled`
+//! the panel applet, and short-lived `--run`/`--scheduled`
 //! children the window or a timer spawns. Only [`init`]'s [`Role::Window`]
 //! truncates it, once, at that process's own launch; every other role
 //! appends. Truncating from more than one place would race — whichever
@@ -28,10 +28,11 @@ use std::fmt::Arguments;
 use std::fs::File;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use rustix::fs::{Mode, OFlags, open};
+use rustix::fs::{Mode, OFlags, fchmod, open};
 
 /// Master switch. Set to `true` to turn debug logging on for a dev build.
 const DEVELOPER_LOGGING: bool = false;
@@ -41,8 +42,9 @@ const DEVELOPER_LOGGING: bool = false;
 /// packaging target passes `--features release-build`.
 pub const ENABLED: bool = DEVELOPER_LOGGING && !cfg!(feature = "release-build");
 
-/// Log file location.
-pub const PATH: &str = "/tmp/stellarshot-debug.log";
+/// Log file location, relative to `$XDG_STATE_HOME` (or `~/.local/state`):
+/// per-user and private, never a predictable name in a shared directory.
+pub const PATH: &str = "stellarshot/developer-debug.log";
 
 // Short category tags.
 /// Backup engine: repository open, backup, restore, maintenance.
@@ -53,8 +55,6 @@ pub const UI: &str = "UI";
 pub const CONFIG: &str = "CONFIG";
 /// Scheduled backups: systemd units, the `--scheduled` run, notifications.
 pub const SCHED: &str = "SCHED";
-/// The web interface's own server: binding, requests allowed or rejected.
-pub const WEB: &str = "WEB";
 /// A snapshot mounted as a filesystem: FUSE calls and the engine errors
 /// behind whichever `Errno` they turn into.
 pub const MOUNT: &str = "MOUNT";
@@ -67,9 +67,7 @@ pub const MOUNT: &str = "MOUNT";
 /// truncate it; the others would otherwise race to clobber each other's
 /// lines, or the window's.
 ///
-/// These paths are fixed and predictable (one is always `/tmp/…`; see
-/// `crate::app::settings::rustic_log_path` for the other, which is not),
-/// so without this, another user on a shared machine could plant a symlink
+/// These paths are fixed and predictable, so without this, another user on a shared machine could plant a symlink
 /// there first and have Stellarshot truncate or write into a file it does
 /// not otherwise have reason to touch, or read a log meant to be private.
 /// `O_CREAT` without `O_EXCL` opens a pre-existing file rather than failing,
@@ -77,7 +75,7 @@ pub const MOUNT: &str = "MOUNT";
 /// below additionally refuses a pre-existing *regular* file this user does
 /// not own, which a symlink check alone would happily open and write
 /// (truncating, in the common case) as this call's caller.
-pub(crate) fn open_private_log_file(path: &str, truncate: bool) -> Option<File> {
+pub(crate) fn open_private_log_file(path: &Path, truncate: bool) -> Option<File> {
     let mode_flag = if truncate {
         OFlags::TRUNC
     } else {
@@ -93,7 +91,22 @@ pub(crate) fn open_private_log_file(path: &str, truncate: bool) -> Option<File> 
     let owned_by_us = file
         .metadata()
         .is_ok_and(|metadata| metadata.uid() == unsafe { libc::getuid() });
-    owned_by_us.then_some(file)
+    if !owned_by_us {
+        return None;
+    }
+    // `open`'s mode only applies to a file it creates; one left behind at
+    // 0644 by an older build is tightened here.
+    let _ = fchmod(&file, Mode::RUSR | Mode::WUSR);
+    Some(file)
+}
+
+/// [`PATH`] resolved under the state directory, whose parent is created
+/// private. `None` (no log) when there is no home directory to resolve it
+/// under, rather than falling back to a shared location.
+fn log_path() -> Option<PathBuf> {
+    let path = crate::paths::state_root()?.join(PATH);
+    crate::engine::lock::create_private_dir(path.parent()?).ok()?;
+    Some(path)
 }
 
 /// Which process is writing: see this module's own doc comment for why
@@ -106,8 +119,6 @@ pub enum Role {
     Run,
     /// A `--scheduled` run.
     Scheduled,
-    /// The `stellarshot-web` daemon.
-    Web,
     /// [`init`] was never called before the first log line: should never
     /// happen outside a bug in some future entry point, but still appends
     /// rather than guessing this is the window and truncating.
@@ -121,7 +132,6 @@ impl Role {
             Self::Applet => "applet",
             Self::Run => "run",
             Self::Scheduled => "scheduled",
-            Self::Web => "web",
             Self::Unknown => "unknown",
         }
     }
@@ -142,7 +152,7 @@ static SINK: OnceLock<Mutex<Sink>> = OnceLock::new();
 
 fn new_sink(role: Role) -> Sink {
     Sink {
-        file: open_private_log_file(PATH, role.truncates()),
+        file: log_path().and_then(|path| open_private_log_file(&path, role.truncates())),
         start: Instant::now(),
         role,
         pid: std::process::id(),
@@ -236,13 +246,7 @@ mod tests {
 
     #[test]
     fn only_the_window_truncates() {
-        for role in [
-            Role::Applet,
-            Role::Run,
-            Role::Scheduled,
-            Role::Web,
-            Role::Unknown,
-        ] {
+        for role in [Role::Applet, Role::Run, Role::Scheduled, Role::Unknown] {
             assert!(!role.truncates(), "{role:?} must append, not truncate");
         }
         assert!(Role::Window.truncates());
@@ -273,7 +277,7 @@ mod tests {
         let link = dir.path().join("log");
         symlink(&target, &link).unwrap();
 
-        let opened = open_private_log_file(link.to_str().unwrap(), true);
+        let opened = open_private_log_file(&link, true);
 
         assert!(
             opened.is_none(),
@@ -298,7 +302,7 @@ mod tests {
         let path = dir.path().join("log");
         std::fs::write(&path, b"already here").unwrap();
 
-        let opened = open_private_log_file(path.to_str().unwrap(), false);
+        let opened = open_private_log_file(&path, false);
 
         assert!(
             opened.is_some(),
@@ -311,10 +315,23 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("log");
 
-        let file = open_private_log_file(path.to_str().unwrap(), true).unwrap();
+        let file = open_private_log_file(&path, true).unwrap();
 
         let mode = file.metadata().unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "the log file must be readable by no one else");
+    }
+
+    #[test]
+    fn a_log_left_world_readable_is_tightened_to_0600() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("log");
+        std::fs::write(&path, b"old\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let file = open_private_log_file(&path, false).unwrap();
+
+        let mode = file.metadata().unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
@@ -323,7 +340,7 @@ mod tests {
         let path = dir.path().join("log");
         std::fs::write(&path, b"first\n").unwrap();
 
-        let mut file = open_private_log_file(path.to_str().unwrap(), false).unwrap();
+        let mut file = open_private_log_file(&path, false).unwrap();
         writeln!(file, "second").unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "first\nsecond\n");

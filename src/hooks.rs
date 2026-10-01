@@ -11,13 +11,14 @@
 //! synchronous call forever — [`wait_with_timeout`] kills one that overruns
 //! [`HOOK_TIMEOUT`] rather than blocking on it.
 
-use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::constants::{DRAIN_AFTER_EXIT, HOOK_TIMEOUT, PROCESS_POLL_INTERVAL};
+use crate::constants::{
+    CHILD_STDERR_DETAIL, CHILD_STDERR_TAIL, DRAIN_AFTER_EXIT, HOOK_TIMEOUT, PROCESS_POLL_INTERVAL,
+};
 use crate::profile::{Hook, HookTiming};
 
 /// What happened running one hook.
@@ -98,7 +99,7 @@ fn run_command(command: &str) -> Result<(), String> {
         .map_err(|err| format!("hook: {err}"))?;
     let (status, stderr) = wait_with_timeout(child, HOOK_TIMEOUT)?;
     if !status.success() {
-        let detail = stderr.trim().to_owned();
+        let detail = crate::bounded::tail_str(stderr.trim(), CHILD_STDERR_DETAIL).to_owned();
         return Err(if detail.is_empty() {
             format!("exited with {status}")
         } else {
@@ -133,13 +134,14 @@ fn kill_group(child: &Child) {
 /// once the kernel actually closes the last write end, rather than being
 /// abandoned outright.
 fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus, String), String> {
-    let mut stderr = child.stderr.take();
+    let stderr = child.stderr.take();
     let (sender, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let mut buffer = Vec::new();
-        if let Some(stderr) = stderr.as_mut() {
-            let _ = stderr.read_to_end(&mut buffer);
-        }
+        // Only the tail is kept: a chatty hook must not be able to fill
+        // memory, and its last lines are what says why it failed.
+        let buffer = stderr
+            .map(|stderr| crate::bounded::read_tail(stderr, CHILD_STDERR_TAIL))
+            .unwrap_or_default();
         let _ = sender.send(String::from_utf8_lossy(&buffer).into_owned());
     });
     let start = Instant::now();
@@ -161,7 +163,17 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
         Ok(text) => text,
         Err(_) => {
             kill_group(&child);
-            receiver.recv().unwrap_or_default()
+            // Bounded the same way as the wait above it: a hook can leave
+            // behind a process that has left this group entirely (`setsid`
+            // starts a new session and process group of its own), which
+            // `kill_group` cannot reach. Such a process can keep this pipe's
+            // write end open indefinitely, and an unbounded `recv()` here
+            // would then hang the backup — and the repository lock it
+            // holds — forever, rather than finishing with whatever stderr
+            // had already arrived.
+            receiver
+                .recv_timeout(DRAIN_AFTER_EXIT)
+                .unwrap_or_else(|_| "<stderr left open by a background process>".to_owned())
         }
     };
     Ok((status, stderr))
@@ -178,6 +190,23 @@ mod tests {
             timing,
             enabled: true,
         }
+    }
+
+    #[test]
+    fn a_hook_that_writes_a_flood_to_stderr_gives_a_bounded_detail() {
+        // 50 MB of output and a failure: the detail must be the tail, cut to
+        // the same size every other child's is, not all of it.
+        let result = run_command(
+            r#"sh -c 'head -c 50000000 /dev/zero | tr "\0" x >&2; echo the-end >&2; exit 1'"#,
+        );
+
+        let detail = result.unwrap_err();
+        assert!(
+            detail.len() <= CHILD_STDERR_DETAIL,
+            "{} bytes",
+            detail.len()
+        );
+        assert!(detail.ends_with("the-end"), "the tail is what is kept");
     }
 
     #[test]
@@ -328,17 +357,84 @@ mod tests {
 
         let _ = wait_with_timeout(child, Duration::from_millis(200));
 
-        let still_alive = Command::new("kill")
-            .args(["-0", &grandchild_pid])
-            .status()
-            .unwrap()
-            .success();
+        // The SIGKILL lands at once, but the grandchild stays visible to
+        // `kill -0` as a zombie until whatever it was reparented to reaps
+        // it — under a loaded `cargo test` run that can lag well past the
+        // instant the signal was sent, so one check right away was flaky.
+        // Poll, and count a zombie (state `Z` in `/proc/<pid>/stat`) as
+        // dead: it is, for every purpose this test cares about.
+        let mut still_alive = true;
+        for _ in 0..50 {
+            let signalable = Command::new("kill")
+                .args(["-0", &grandchild_pid])
+                .status()
+                .unwrap()
+                .success();
+            let zombie = std::fs::read_to_string(format!("/proc/{grandchild_pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    // The state is the first field after the parenthesized
+                    // command name, which can itself contain spaces.
+                    let after_name = stat.rsplit(')').next()?;
+                    after_name.split_whitespace().next().map(|s| s == "Z")
+                })
+                .unwrap_or(false);
+            still_alive = signalable && !zombie;
+            if !still_alive {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
         let _ = std::fs::remove_file(&marker);
         assert!(
             !still_alive,
             "the timeout must kill the whole group, including a backgrounded \
              grandchild, not just the direct child"
         );
+    }
+
+    #[test]
+    fn a_hook_that_leaves_its_process_group_does_not_hang_the_backup_forever() {
+        // `setsid` detaches into a brand-new session and process group, so
+        // `kill_group`'s group-kill (proven to work in
+        // `a_timeout_kills_the_whole_group_not_just_the_direct_child` above)
+        // cannot reach it. It still inherits this hook's stderr fd, though,
+        // so the pipe stays open for as long as it runs. Before this fix,
+        // the fallback after killing the group was an unbounded `recv()`,
+        // so a hook like this hung the backup — and the repository lock it
+        // holds — forever, rather than giving up within `DRAIN_AFTER_EXIT`
+        // of the group-kill, same as any other background process left
+        // behind.
+        let marker = std::env::temp_dir().join(format!(
+            "stellarshot-hook-escape-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let hooks = vec![hook(
+            "leaves a session behind",
+            &format!("sh -c 'setsid sleep 20 & echo $! > {}'", marker.display()),
+            HookTiming::Before,
+        )];
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(run_before(&hooks));
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(10));
+
+        // Clean up the escaped process regardless of the assertion
+        // outcome, so a failure here does not also leave an orphaned
+        // `sleep` running for the rest of its 20 seconds.
+        if let Ok(pid) = std::fs::read_to_string(&marker) {
+            let _ = Command::new("kill").args(["-9", pid.trim()]).status();
+        }
+        let _ = std::fs::remove_file(&marker);
+
+        assert!(
+            result.is_ok(),
+            "must not hang forever on a hook that left a detached session behind"
+        );
+        assert!(result.unwrap().unwrap()[0].ok);
     }
 
     #[test]

@@ -1,0 +1,20 @@
+# Keeps every process cargo starts from this tree — `cargo test`'s own test
+# binaries, the `--run` and `--scheduled` children they spawn, and `cargo
+# run` — out of this user's real state and cache directories. A test that
+# records a run lands in
+# `target/test-xdg` here rather than in the same event log and run state
+# the installed app shows, where entries from test runs would otherwise
+# accumulate for good.
+#
+# `force = true` so a developer's own `XDG_STATE_HOME` does not leak back
+# in; `relative = true` resolves against the directory this file's parent
+# sits in, so it holds wherever the checkout lives. Settings (`XDG_CONFIG_HOME`)
+# are deliberately left alone: `cargo run` of the window should still find
+# the developer's real backups.
+#
+# The one visible consequence: `cargo run` shows no history and no run state
+# from the installed app, and rustic's cache for it lives under `target/`
+# too. Both come back with the installed binary, which cargo does not start.
+[env]
+XDG_STATE_HOME = { value = "target/test-xdg/state", relative = true, force = true }
+XDG_CACHE_HOME = { value = "target/test-xdg/cache", relative = true, force = true }

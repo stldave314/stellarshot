@@ -176,8 +176,10 @@ fn work(
         .unwrap_or_else(|payload| Err(panic_error(id, payload)));
         // Reported before the upload counts as finished, and outside the
         // lock, so progress output never holds up the other workers.
+        // A sink that panics must not end this worker before `in_flight`
+        // goes back down, for the same reason as the catch above.
         if result.is_ok() {
-            slot.uploaded(size);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.uploaded(size)));
         }
         let (lock, finished) = state;
         if let Ok(mut state) = lock.lock() {
@@ -505,5 +507,49 @@ mod tests {
             result.is_err(),
             "the index must not name a pack whose upload panicked"
         );
+    }
+
+    /// A progress sink that panics must not stop a worker from counting its
+    /// upload as finished (the same hang as above, from the other side).
+    #[test]
+    fn a_panicking_progress_sink_does_not_hang_the_index_write() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct Panicking(Arc<AtomicBool>);
+        impl crate::engine::ProgressSink for Panicking {
+            fn update(&self, _event: &crate::engine::ProgressEvent) {
+                assert!(!self.0.load(Ordering::SeqCst), "the sink is broken");
+            }
+        }
+        let armed = Arc::new(AtomicBool::new(false));
+        let slot = SinkSlot::default();
+        let _attached = slot.attach(Arc::new(Panicking(armed.clone())));
+        // `uploaded` only reports once there is an event to add to, so give
+        // it one, then make the sink start failing.
+        slot.send(&crate::engine::ProgressEvent {
+            phase: crate::engine::Phase::BackingUp,
+            done: 0,
+            total: None,
+            bytes: false,
+            uploaded: None,
+        });
+        armed.store(true, Ordering::SeqCst);
+        let slow = Arc::new(Slow {
+            delay: Duration::from_millis(20),
+            ..Slow::default()
+        });
+        let uploads = ParallelUploads::with_connections(slow, slot, 2);
+        for n in 0..4 {
+            let _ = uploads.write_bytes(FileType::Pack, &id(n), false, pack(n));
+        }
+
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = uploads.write_bytes(FileType::Index, &id(100), true, pack(100));
+            let _ = sender.send(result);
+        });
+
+        let _ = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("settle() must not hang because a progress sink panicked");
     }
 }

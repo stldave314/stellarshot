@@ -231,14 +231,33 @@ pub fn main(args: &[String]) -> ExitCode {
         eprintln!("usage: stellarshot --scheduled <backup-id>");
         return ExitCode::from(2);
     };
+    // Before anything else can start a thread: see `proc_signal`. This is
+    // what `systemctl --user stop`, logout and shutdown reach a scheduled
+    // run with, and what turns it into "run the After hooks, then go".
+    crate::harden_process();
+    crate::proc_signal::install();
     crate::debug::init(crate::debug::Role::Scheduled);
+    crate::paths::tighten_app_dirs();
     // Every real backup runs here or in a `--run` child, never in the
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing
     // them for in-process reads.
-    crate::app::settings::set_logger_for_child();
+    crate::app::startup::set_logger_for_child();
     crate::core::localization::init();
-    let config = StellarshotConfig::config();
+    let (config, profiles_unreadable) = StellarshotConfig::load();
+    if profiles_unreadable {
+        // Not "no backup with this ID": the list simply could not be read
+        // (a downgrade, or a variant a newer Stellarshot wrote), and the
+        // ID may well still be in it. Saying so keeps the timer's own
+        // failure log honest, and this run never gets far enough to write
+        // anything over the file the window will refuse to save too.
+        error_log!(
+            SCHED,
+            "--scheduled {id}: the profiles list could not be read; refusing to treat that as \
+             this backup having been removed"
+        );
+        return ExitCode::from(2);
+    }
     let Some(profile) = config.profile(id).cloned() else {
         error_log!(SCHED, "--scheduled: no backup with the ID {id}");
         return ExitCode::from(2);

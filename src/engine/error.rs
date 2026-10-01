@@ -74,12 +74,25 @@ pub enum ErrorKind {
     /// A snapshot prefix that matches more than one snapshot: see
     /// `browse::Browser::snapshot`. The detail is the ambiguous prefix.
     Ambiguous,
-    /// The web interface already has as many requests open on this
-    /// backup's repository as it will allow at once: see
-    /// `web::routes::REPOSITORY_PERMITS`.
+    /// A file is too large to open as a temporary copy, which lives in
+    /// memory-backed storage. The detail is its size in bytes.
+    TooLargeToOpen,
+    /// Two selected items share a name and would be restored into the same
+    /// folder on top of each other. The detail is that name.
+    DuplicateName,
+    /// This backup's repository already has as many operations open on it
+    /// as will be allowed at once; try again shortly.
     TooBusy,
     /// Anything else; the detail is the only explanation available.
     Internal,
+    /// A kind this version does not know: written by a newer Stellarshot
+    /// into a run state file or event log that this one then read.
+    /// `#[serde(other)]` lands it here instead of failing the whole file,
+    /// which for run state would otherwise leave `damaged` stuck at
+    /// whatever it was (see `run_state::load_checked`). Never produced by
+    /// this version itself; must stay the last variant.
+    #[serde(other)]
+    Unknown,
 }
 
 /// An engine failure: a kind for the UI to act on, and technical detail.

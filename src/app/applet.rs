@@ -38,6 +38,31 @@ pub struct Applet {
     core: Core,
     popup: Option<Id>,
     statuses: Vec<Status>,
+    /// A refresh is reading the disk right now. Every tick and every config
+    /// change asks for one, and on a hung network mount each used to start
+    /// another blocking thread behind the stuck ones, answering out of
+    /// order; now a request while one is running is dropped.
+    refreshing: bool,
+    /// The window could not be started, shown in the popup until a later
+    /// attempt works.
+    open_failed: bool,
+}
+
+impl std::fmt::Debug for Applet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Applet")
+            .field("popup", &self.popup)
+            .field("statuses", &self.statuses.len())
+            .field("refreshing", &self.refreshing)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Applet {
+    /// Whether to start a refresh now, noting that one is running if so.
+    fn begin_refresh(&mut self) -> bool {
+        !std::mem::replace(&mut self.refreshing, true)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +72,8 @@ pub enum Message {
     Refresh,
     StatusesLoaded(Vec<Status>),
     Open,
+    /// Whether starting the window worked.
+    Opened(bool),
     Quit,
     Surface(cosmic::surface::Action<Message>),
 }
@@ -68,17 +95,19 @@ async fn refresh() -> Vec<Status> {
 /// `cosmic::process::spawn`, which double-forks so the applet closing later
 /// never leaves the window as a zombie, unlike a plain `Command::spawn`
 /// that nothing ever `wait`s on.
-async fn open_window() {
+async fn open_window() -> bool {
     let exe = match crate::exe::installed_path() {
         Ok(exe) => exe.with_file_name("stellarshot"),
         Err(err) => {
             error_log!(UI, "applet: failed to find the window's own binary: {err}");
-            return;
+            return false;
         }
     };
     if cosmic::process::spawn(Command::new(&exe)).await.is_none() {
         error_log!(UI, "applet: failed to open the window ({exe:?})");
+        return false;
     }
+    true
 }
 
 impl cosmic::Application for Applet {
@@ -97,11 +126,14 @@ impl cosmic::Application for Applet {
 
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Message>) {
         crate::debug::init(crate::debug::Role::Applet);
+        crate::paths::tighten_app_dirs();
         crate::core::localization::init();
         let applet = Self {
             core,
             ..Default::default()
         };
+        let mut applet = applet;
+        applet.refreshing = true;
         (
             applet,
             Task::perform(refresh(), |statuses| {
@@ -144,13 +176,24 @@ impl cosmic::Application for Applet {
                 }
             }
             Message::Refresh => {
-                return Task::perform(refresh(), |statuses| {
-                    cosmic::Action::App(Message::StatusesLoaded(statuses))
+                if self.begin_refresh() {
+                    return Task::perform(refresh(), |statuses| {
+                        cosmic::Action::App(Message::StatusesLoaded(statuses))
+                    });
+                }
+            }
+            Message::StatusesLoaded(statuses) => {
+                self.refreshing = false;
+                self.statuses = statuses;
+            }
+            Message::Open => {
+                return Task::perform(open_window(), |opened| {
+                    cosmic::Action::App(Message::Opened(opened))
                 });
             }
-            Message::StatusesLoaded(statuses) => self.statuses = statuses,
-            Message::Open => {
-                return Task::perform(open_window(), |()| cosmic::Action::App(Message::Refresh));
+            Message::Opened(opened) => {
+                self.open_failed = !opened;
+                return cosmic::task::message(cosmic::Action::App(Message::Refresh));
             }
             // Quitting the applet itself never touches a running backup:
             // that runs in the window's own `--run` child, unaffected by
@@ -166,6 +209,7 @@ impl cosmic::Application for Applet {
 
     fn view(&self) -> Element<'_, Message> {
         let have_popup = self.popup;
+        let main_window = self.core.main_window_id();
         let btn = self
             .core
             .applet
@@ -173,14 +217,14 @@ impl cosmic::Application for Applet {
             .on_press_with_rectangle(move |offset, bounds| {
                 if let Some(id) = have_popup {
                     Message::Surface(destroy_popup(id))
-                } else {
+                } else if let Some(main_window) = main_window {
                     Message::Surface(app_popup::<Applet>(
                         |_| Default::default(),
                         move |state: &mut Applet| {
                             let new_id = Id::unique();
                             state.popup = Some(new_id);
                             let mut popup_settings = state.core.applet.get_popup_settings(
-                                state.core.main_window_id().unwrap(),
+                                main_window,
                                 new_id,
                                 None,
                                 None,
@@ -199,6 +243,10 @@ impl cosmic::Application for Applet {
                                 .map(cosmic::Action::App)
                         })),
                     ))
+                } else {
+                    // No window to anchor a popup to (not yet, or no more):
+                    // nothing to open.
+                    Message::Refresh
                 }
             });
         Element::from(self.core.applet.applet_tooltip::<Message>(
@@ -250,11 +298,14 @@ fn icon_name(statuses: &[Status]) -> &'static str {
 fn popup_content(state: &Applet) -> Element<'_, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     if state.statuses.is_empty() {
-        return list_column()
-            .add(settings::item(
-                fl!("applet-none"),
-                widget::button::standard(fl!("applet-open")).on_press(Message::Open),
-            ))
+        let mut column = list_column().add(settings::item(
+            fl!("applet-none"),
+            widget::button::standard(fl!("applet-open")).on_press(Message::Open),
+        ));
+        if let Some(notice) = open_failed_notice(state) {
+            column = column.add(notice);
+        }
+        return column
             .add(widget::button::standard(fl!("quit")).on_press(Message::Quit))
             .into();
     }
@@ -273,14 +324,31 @@ fn popup_content(state: &Applet) -> Element<'_, Message> {
             widget::row::with_capacity(2)
                 .spacing(spacing.space_xxs)
                 .align_y(Alignment::Center)
+                // Said in words too: the icon alone tells a screen reader
+                // nothing.
+                .push_maybe(
+                    warning
+                        .is_some()
+                        .then(|| widget::text::caption(backup_status.label())),
+                )
                 .push(widget::text::caption(status_text(status)))
                 .push_maybe(warning),
         ));
+    }
+    if let Some(notice) = open_failed_notice(state) {
+        column = column.add(notice);
     }
     column
         .add(widget::button::standard(fl!("applet-open")).on_press(Message::Open))
         .add(widget::button::standard(fl!("quit")).on_press(Message::Quit))
         .into()
+}
+
+/// Say so, when the last try to open the window did not work.
+fn open_failed_notice(state: &Applet) -> Option<Element<'_, Message>> {
+    state
+        .open_failed
+        .then(|| widget::text::caption(fl!("applet-open-failed")).into())
 }
 
 fn status_text(status: &Status) -> String {
@@ -307,6 +375,16 @@ mod tests {
             overdue: false,
             damaged: false,
         }
+    }
+
+    #[test]
+    fn a_refresh_is_dropped_while_one_is_running() {
+        let mut applet = Applet::default();
+
+        assert!(applet.begin_refresh(), "the first one starts");
+        assert!(!applet.begin_refresh(), "one while it runs does not");
+        applet.refreshing = false;
+        assert!(applet.begin_refresh(), "after it finishes, the next does");
     }
 
     #[test]

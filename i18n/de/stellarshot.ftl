@@ -104,6 +104,7 @@ wizard-estimate = { $size } · { $files ->
    *[other] { $files } Dateien
 }
 wizard-estimate-counting = Wird gezählt …
+wizard-estimate-failed = Die Größe konnte nicht ermittelt werden.
 wizard-estimate-note = Die erste Sicherung ist nach Kompression und Deduplizierung meist kleiner. Spätere Sicherungen speichern nur Änderungen.
 wizard-where-intro = Wähle, wo die Sicherung aufbewahrt wird: ein leerer Ordner, am besten auf einem anderen Laufwerk.
 wizard-where-title = Speicherort
@@ -133,12 +134,15 @@ back = Zurück
 next = Weiter
 edit = Bearbeiten
 remove = Entfernen
+remove-item = { $item } entfernen
 dismiss = Verwerfen
 delete = Löschen
 cancel = Abbrechen
 password = Passwort
 remove-title = „{ $name }“ entfernen?
 remove-body = Stellarshot vergisst diese Sicherung und ihr gespeichertes Passwort. Die Sicherung und ihre Momentaufnahmen werden nicht gelöscht und können später wieder geöffnet werden.
+remove-keyring-failed = Die Sicherung wurde entfernt, aber ihr gespeichertes Passwort konnte nicht aus dem Schlüsselbund gelöscht werden. Du kannst es dort selbst löschen.
+edit-backup-removed = Diese Sicherung wurde entfernt, während du sie bearbeitet hast. Es wurde nichts gespeichert.
 delete-title = „{ $name }“ und alle Daten löschen?
 delete-body = Dadurch werden die Sicherung und jede Momentaufnahme darin endgültig gelöscht. Andere Dateien im selben Ordner bleiben unberührt. Gib { $name } zur Bestätigung ein.
 delete-snapshot-title = Diese Momentaufnahme löschen?
@@ -147,6 +151,8 @@ delete-snapshot-body = Die Momentaufnahme vom { $time } wird endgültig gelösch
 # Errors
 error-title = Etwas ist schiefgelaufen
 error-details = Details: { $details }
+error-settings-not-saved = Die Änderung konnte nicht gespeichert werden.
+error-config-unreadable = Ein Teil der Einstellungen von Stellarshot konnte nicht gelesen werden, daher kann nichts gespeichert werden, bis dies behoben ist. Eine Kopie der ursprünglichen Datei wurde unter { $path } gespeichert.
 location-not-empty = { $path } enthält bereits andere Dateien. Wähle einen leeren Ordner oder einen Ordner, der bereits ein Archiv enthält.
 create-repo-failed = Das Archiv konnte nicht erstellt werden.
 delete-repo-failed = Das Archiv konnte nicht gelöscht werden.
@@ -209,6 +215,7 @@ place-check-failed = Dieser Speicherort konnte nicht geprüft werden.
 place-check = Prüfen
 place-no-drives = Es sind keine Wechseldatenträger angeschlossen. Schließe einen an und gehe dann zurück und wieder weiter.
 place-folder-on-drive = Ordner auf dem Laufwerk
+place-folder-invalid = Der Ordner muss ein einfacher Name oder Pfad auf dem Laufwerk sein, ohne „.“ oder „..“.
 place-host = Server
 place-user = Benutzername
 place-user-placeholder = Dein Benutzername auf diesem Rechner
@@ -249,6 +256,10 @@ selected-count = { $count ->
    *[other] { $count } Elemente ausgewählt
 }
 restore-button = Wiederherstellen …
+restore-replace-button = { $count ->
+    [one] 1 Datei ersetzen …
+   *[other] { $count } Dateien ersetzen …
+}
 search-placeholder = Diese Momentaufnahme durchsuchen
 search-results = { $count ->
     [one] 1 Treffer
@@ -465,7 +476,9 @@ error-invalid-remote = Das Cloud-Speicher-Remote dieser Sicherung wird von Stell
 error-unsafe-path = Eine Datei in dieser Sicherung verweist auf einen Ort außerhalb des Wiederherstellungsordners ({ $path }), daher wurde nichts wiederhergestellt.
 error-not-found = { $path } ist nicht in dieser Sicherung enthalten.
 error-ambiguous = { $path } passt auf mehr als eine Sicherung. Verwenden Sie ein längeres Präfix.
-error-too-busy = Die Weboberfläche hat bereits so viele Anfragen für diese Sicherung offen, wie sie gleichzeitig zulässt. Versuchen Sie es in Kürze erneut.
+error-too-large-to-open = Das ist zu groß, um es als temporäre Kopie zu öffnen ({ $size }). Stellen Sie es stattdessen in einem Ordner wieder her.
+error-duplicate-name = Zwei der ausgewählten Elemente heißen beide „{ $name }“ und würden im selben Ordner übereinander landen. Stellen Sie sie einzeln oder in verschiedene Ordner wieder her.
+error-too-busy = Für diese Sicherung sind bereits so viele Vorgänge gleichzeitig geöffnet, wie zulässig sind. Versuchen Sie es in Kürze erneut.
 place-checking-for = Wird geprüft … { $time }
 wizard-creating = Wird erstellt … { $time }
 wizard-opening = Wird geöffnet … { $time }
@@ -541,7 +554,7 @@ event-unmounted = Momentaufnahme { $snapshot } ausgehängt
 history-empty = Noch ist nichts passiert.
 history-unknown-backup = (entfernte Sicherung)
 history-truncated = Zeigt die neuesten { $shown } von { $total }
-history-via-web = Web
+history-via-other = Anderes Programm
 notify-overdue = „{ $name }“ wurde lange nicht gesichert
 notify-overdue-body = Das Ziel war zu den geplanten Zeiten nicht erreichbar. { $schedule } Prüfe, ob es verbunden ist, und öffne dann Stellarshot, um jetzt zu sichern.
 settings-backup-title = Stellarshots eigene Einstellungen sichern und wiederherstellen
@@ -571,6 +584,7 @@ settings-import-done-body = { $added ->
    *[other] { $rejected } konnten nicht sicher importiert werden und wurden übersprungen.
 }
 settings-import-failed = Die Einstellungen konnten nicht importiert werden.
+settings-import-newer = Diese Datei wurde von einer neueren Version von Stellarshot gespeichert. Aktualisiere Stellarshot und versuche es dann erneut.
 settings-import-hooks-disabled = Importierte Sicherungen starten mit ausgeschaltetem Zeitplan und ausgeschalteten Hooks. Prüfe sie, bevor du sie einschaltest.
 home = Übersicht
 home-backups-title = Sicherungen
@@ -598,6 +612,7 @@ place-bandwidth-limit-placeholder = z. B. 1M
 applet-tooltip = Stellarshot
 applet-none = Es ist noch keine Sicherung eingerichtet.
 applet-open = Stellarshot öffnen
+applet-open-failed = Stellarshot konnte nicht gestartet werden.
 wizard-exclude-caches = Cache-Ordner auslassen
 wizard-exclude-caches-description = Ordner überspringen, die sich mit einer CACHEDIR.TAG-Datei als temporäre Cache-Daten kennzeichnen.
 wizard-git-ignore = .gitignore beachten
@@ -620,68 +635,12 @@ settings-no-cache = Gar nicht zwischenspeichern
 settings-no-cache-description = Langsamer, aber nichts, was es wert ist, auf einem Rechner mit wenig Speicherplatz behalten zu werden.
 settings-global-excludes-title = Aus jeder Sicherung ausgelassen
 settings-global-excludes-description = Glob-Muster wie node_modules oder target, die auf jede Sicherung angewendet werden, ohne sie jeder einzeln hinzuzufügen.
-settings-web-title = Weboberfläche
-web-scope-off = Aus
-web-scope-off-description = Die Weboberfläche ist überhaupt nicht erreichbar.
-web-scope-localhost = Nur dieser Computer
-web-scope-localhost-description = Nur von diesem Computer selbst erreichbar, zum Beispiel über einen eigenen SSH-Tunnel.
-web-scope-lan = Im Netzwerk erreichbar
-web-scope-lan-description = Von jedem anderen Gerät im selben Netzwerk erreichbar.
-web-port = Port
-web-port-description = Auf welchem Port die Weboberfläche lauscht.
-web-port-invalid = Das ist keine gültige Portnummer. Sie muss zwischen 1 und 65535 liegen.
-web-address-label = Wird erreichbar sein unter:
-web-auth-password = Gemeinsames Passwort
-web-auth-password-description = Ein Passwort, getrennt vom Passwort jeder Sicherung, zum Anmelden erforderlich.
-web-password-set = Passwort festlegen
-web-password-placeholder = Neues Passwort
-web-password-saved-body = Die Weboberfläche verwendet es beim nächsten Start.
-web-password-failed = Das Passwort der Weboberfläche konnte nicht gespeichert werden.
-web-password-length = { $count } von { $minimum ->
-    [one] { $minimum } Zeichen
-   *[other] { $minimum } Zeichen
-}
-web-auth-token = API-Token
-web-auth-token-description = Ein erzeugtes Token für die programmgesteuerte Nutzung der API der Weboberfläche.
-web-token-generate = Token
-web-token-generate-button = Neues Token erzeugen…
-web-token-exists = Ein Token wurde erzeugt. Ein weiteres ersetzt es.
-web-token-none = Es wurde noch kein Token erzeugt.
-web-token-title = Neues API-Token
-web-token-body = Kopieren Sie dieses Token jetzt — es wird nicht noch einmal angezeigt.
-web-token-copy = Kopieren
-web-token-regenerate-title = Aktuelles Token ersetzen?
-web-token-regenerate-body = Alles, was das aktuelle Token bereits verwendet, funktioniert nicht mehr, sobald ein neues erzeugt wird.
-web-token-regenerate-confirm = Erneuern
-
-    Dies wird nur einmal angezeigt. Bewahre es sicher auf: ein weiteres erzeugtes Token ersetzt dieses.
-web-auth-pam = Die eigene Anmeldung dieses Computers
-web-auth-pam-description = Mit demselben Passwort anmelden, mit dem man sich an diesem Computer anmeldet.
-web-allowed-title = Erlaubte Adressen
-web-allowed-description = Nur diese Adressen oder Bereiche dürfen die Weboberfläche erreichen. Leer bedeutet jede Adresse, die die obige Einstellung bereits erlaubt.
-web-allowed-placeholder = Adresse oder Bereich, zum Beispiel 192.168.1.0/24
-web-allowed-invalid = Ungültige Adresse oder ungültiger Bereich, zum Beispiel 192.168.1.0/24 oder 192.168.1.1
-web-tls-title = TLS-Zertifikat
-web-tls-description = Die Weboberfläche wird immer über HTTPS erreicht. Standardmäßig erzeugt und verwendet sie ein eigenes selbstsigniertes Zertifikat; ein Browser benötigt dafür einmalig eine Vertrauensausnahme. Lege stattdessen ein eigenes Zertifikat und einen eigenen Schlüssel fest, falls du eines hast, zum Beispiel von einer Zertifizierungsstelle, der deine Geräte bereits vertrauen.
-web-tls-cert = Zertifikat
-web-tls-key = Privater Schlüssel
-web-tls-default = Selbstsigniert (automatisch erzeugt)
-web-tls-choose = Auswählen …
-web-tls-reset = Standard verwenden
-web-tls-cert-title = Zertifikatsdatei auswählen
-web-tls-key-title = Datei mit privatem Schlüssel auswählen
-web-daemon-title = Dienst
-web-daemon-status = Status
-web-daemon-status-active = Läuft
-web-daemon-status-inactive = Angehalten
-web-daemon-status-failed = Start fehlgeschlagen
-web-daemon-status-unknown = Nicht installiert
-web-daemon-start = Starten
-web-daemon-stop = Anhalten
-web-daemon-restart = Neu starten
-web-daemon-action-failed = Der Dienst der Weboberfläche konnte nicht gesteuert werden.
-web-docs-link = Mehr über die Weboberfläche und ihre API erfahren
 pin-snapshot-failed = Die Pinnung der Momentaufnahme konnte nicht geändert werden.
 pin-snapshot = Anheften, damit das Aufräumen diese Momentaufnahme nie entfernt
 unpin-snapshot = Loslösen, damit das Aufräumen diese Momentaufnahme wieder entfernen kann
 delete-snapshot-row = Diese Momentaufnahme löschen
+snapshot-label = { $time } · { $id }
+hook-row = { $timing } · { $command }
+size-removed = −{ $size }
+compression-ratio = { $ratio }×
+list-separator = {", "}

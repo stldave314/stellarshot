@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! `settings_export::merge` writes imported history into the real
 //! `event_log` state store — there is no test-only namespace for it, only
@@ -47,11 +53,11 @@ fn history_is_merged_for_new_and_existing_backups_alike() {
             time: 1,
             kind: EventKind::BackedUp,
             source: Source::Desktop,
-            web: None,
         }],
     )];
 
-    stellarshot::settings_export::merge(&existing, &export);
+    let merged = stellarshot::settings_export::merge(&existing, &export);
+    stellarshot::settings_export::store_history(&merged.history);
 
     assert_eq!(event_log::load(&id).len(), 1);
 }

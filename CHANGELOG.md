@@ -7,6 +7,205 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Your settings and history folders are private.** The `profiles` file
+  holds hook commands, a password command and SFTP details, and was
+  readable by other users of the machine under the usual umask. Both
+  folders are now tightened to owner-only every time the window, the applet
+  or a backup starts.
+- **"Only on a trusted network" no longer fails open.** When NetworkManager
+  could not be reached, or did not answer within ten seconds, the backup
+  ran anyway; it is now skipped with a reason. A virtual machine's tap
+  device no longer counts as a VPN, and a slow UPower or NetworkManager can
+  no longer leave a scheduled run hanging and every later one skipped.
+- **No more guessing at `/tmp`.** With no home directory in the environment
+  (`su -`, cron, a service), the lock folder and the rclone settings file fell
+  back to `/tmp`, where another user could have created the folder first. The
+  home directory is now found from the password database, and with none at all
+  the operation fails instead. The rclone settings folder is tightened, or
+  refused if it is a symlink or someone else's, before a sign-in token goes in.
+- **A scheduled backup can no longer leave a core dump with the password in
+  it**, as a manual one already could not, and a password command's output is
+  wiped from memory on every path, including when it is not valid text.
+- **A password command gets no standard input, and is judged by what it
+  printed, not by what it left behind.** Launched from a terminal, one that
+  prompted waited on an invisible prompt; one that started a background process
+  could be reported as timed out after it had printed the password. Its output
+  is capped at 64 KiB, as are a hook's and rclone's.
+- **Your own `RCLONE_*` environment no longer reaches the rclone commands
+  Stellarshot runs against its own settings.** `RCLONE_DRY_RUN=true` made
+  deleting a backup report success without deleting anything.
+- **A browsed or searched path can no longer step out of the snapshot.** A name
+  that is empty, `.`, `..` or contains a `/`, and a path with `..` in it, are
+  refused rather than resolved to some other file.
+- **A backup ID that is not letters, digits and dashes is refused when the
+  settings are read**, rather than reaching the keyring, the lock names and the
+  settings store.
+- **The developer debug log moved out of `/tmp`** to
+  `~/.local/state/stellarshot/`, and an existing log left readable by others
+  is tightened to owner-only. Still compiled out of every release build.
+
+- **Restoring can no longer write through a symlink already in the folder
+  you restore into.** A symlink left there (easy to arrange with two
+  snapshots in a shared repository) made the restore put the snapshot's
+  files wherever it pointed, outside the folder you chose. Overwrite now
+  refuses with an explanation; Skip and Keep Both leave that part alone and
+  count it as a conflict.
+- **A settings file from someone else is checked much more strictly.** One
+  backup with a retention of 0 days would have deleted every snapshot at its
+  first clean-up; that, a huge value, a repository address that is not
+  `http`/`https`, an out-of-range battery level and an oversized file are
+  now refused or brought into range, a file from a newer version is refused
+  by its version instead of a parse error, and the same backup listed twice
+  is added once.
+- **An exported settings file is private from the moment it is written**
+  (it can hold a hook's command line, and so a credential), not after a
+  permission change that left a window in which others could read it.
+- **The portable tarball's installer no longer re-owns `/usr`.** Installed
+  as root from an archive extracted by an ordinary user, it copied that
+  user's ownership onto `/usr` and `/usr/bin`. It now installs each file
+  on its own, owned by root, and `install-tarball.sh uninstall` removes
+  them again.
+
+### Fixed
+
+- **Opening an SFTP or cloud backup no longer leaves a dead `rclone`
+  process behind each time.** Every snapshot list, statistics view or restore
+  preview of such a backup started an rclone that was stopped but never
+  collected, so a window left open for days piled up defunct processes
+  against the per-user process limit. Stellarshot now starts and stops that
+  rclone itself, gives up if it does not start within a minute, and keeps its
+  output in the backend log.
+- **An unlocked encrypted USB drive is found again.** Drives from an
+  unlocked LUKS volume were never recognized, so a scheduled backup to one
+  was skipped as "destination unavailable". One mount with a non-UTF-8 name
+  anywhere on the system also made every drive look unplugged; it no longer
+  does.
+- **Déjà Dup folders with an apostrophe import correctly.** GLib prints such
+  a name in double quotes, which the importer did not read: the folder fell
+  back to the machine's name and an excluded folder was backed up after all.
+  All of GLib's escapes are decoded now too.
+- **Results on the restore page can no longer land under the wrong
+  snapshot.** Searching, comparing, finding deleted files and searching
+  every snapshot each tag their answer with what it was asked, and an answer
+  for something you have since moved on from is dropped. They also no longer
+  share one "busy" flag, so one running no longer grays out another's button.
+- **A finished background task no longer replaces a question you are
+  answering.** A backup error arriving while "Remove this backup?" or
+  "Delete everything?" was on screen replaced it; it now waits its turn. A
+  finished sign-in closes only its own "go to your browser" message.
+- **Restoring a whole home folder no longer holds every file's record in
+  memory.** It kept the complete list of files, twice over, which for millions
+  of files is gigabytes at exactly the moment of a disaster recovery. It now
+  reads the snapshot as it goes and remembers one byte per file.
+- **Restoring two same-named files into one folder is refused** with an
+  explanation, instead of the second silently overwriting the first.
+- **A file's history and the deleted-files list no longer hide a damaged
+  repository.** Any read error was taken for "not in this snapshot" and
+  the list came back shorter.
+- **The "Replace N files…" button** replaces **Restore…** when overwriting
+  files in place would destroy some.
+- **A multi-part restore reports the total**, not the last part's counts.
+- **"Open a copy" cleans up after itself and refuses huge files.** The copies
+  live in memory-backed storage and were never removed; ones over a day old are
+  now, and a file over 512 MiB is offered a normal restore instead.
+- **The applet no longer piles up refreshes behind a stalled network mount**,
+  says so when it cannot start the window, and names the status next to its
+  warning icon for screen readers.
+- **A size estimate that fails says so** in the new-backup wizard, instead of
+  leaving "Counting…" or a stale figure.
+- **Closing the folder browser in the new-backup wizard stops the size scan.**
+- **A drive folder containing `..` is refused**, since it could point a backup
+  (and "Delete everything") at the internal disk.
+- **Moving settings from the old app ID is all or nothing**, so an interruption
+  cannot leave a half-copy that blocks the real one.
+- **Buttons named for what they remove** ("Remove Downloads", not "Remove"),
+  password dialogs focus their first field and submit with Enter, and a handful
+  of strings that could not be translated (engine details in the wizard, list
+  separators, arrows and multiplication signs) now go through the locale files.
+- **Deja Dup detection at startup no longer runs on the window's thread.**
+- **Screenshots in the store listing point at the release's own tag**, so a
+  later change to an image cannot alter what an old version shows.
+- **Importing settings can no longer push out your recent history.** An
+  export with 200 older events on a backup that already had a full log
+  dropped every recent entry. Imported events now merge in by date, the
+  oldest are trimmed afterward, imported entries are marked as coming from
+  elsewhere, and the merge happens off the window's thread.
+- **Looking for deleted files no longer freezes browsing.** The search for
+  files that are gone from disk kept the backup open for its whole run, so one
+  stalled network mount in the folder being checked blocked every other
+  browse, search, and the mounted view until it returned. The disk check now
+  runs without holding it.
+- **An unreadable list of backups can no longer wipe your schedules or be
+  saved over.** If the saved list cannot be read (a downgrade, or a file a
+  newer version wrote), the window used to treat it as "no backups", remove
+  every scheduled backup's timer, and overwrite the file with the empty list
+  on the next save. It now says so, keeps a copy of the file, changes no
+  timer, and refuses to save until it is resolved. A scheduled run says the
+  list could not be read instead of claiming the backup was removed.
+- **Cancel, stopping a scheduled run, and logging out now run a backup's
+  "after" hooks.** A service stopped by a "before" hook stayed stopped
+  every time a backup was canceled. A backup that crashes or is killed by
+  the system is now reported as a failure with its reason, not as canceled.
+- **A backup's hook that leaves a background process behind can no longer
+  hang the backup forever** (while it held the repository lock).
+- **A retention rule of 0, or an absurdly large one, is refused** instead
+  of forgetting every snapshot (including the newest) or crashing.
+- **Downloading a folder as an archive no longer corrupts it when a file
+  was changing during the backup.** One shrunken file misaligned every
+  entry after it.
+- **A failed save of your settings is now shown**, and the window stops
+  displaying the change as if it had been kept. A failed save no longer
+  goes on to start a backup, or install a schedule, for something that
+  was not saved.
+- **Cancel and Back are disabled while the wizard is creating or opening a
+  repository**, and a result arriving for a wizard that was discarded is
+  ignored instead of acting on the next one.
+- **Changing a repository's password now always switches the running
+  session over to it**, even if the dialog was closed or replaced meanwhile.
+  Cancel is disabled while the change runs.
+- **"Remember password" now saves it only after it worked**, instead of
+  saving a mistyped one (and, for a failed Create, leaving an orphaned
+  keyring item).
+- **Finishing an edit applies it to the backup as it is now**, not to the
+  copy the dialog opened with, so it no longer rolls back a run that
+  finished meanwhile or brings back a backup that was removed (which is
+  now reported).
+- **Quit asks before cutting off a restore, a repository being created, or
+  a running password change or deletion**, not only a running backup.
+- **Removing a backup says so when its saved password could not be
+  deleted from the keyring.** The restore page can be closed if its backup
+  disappeared from under it.
+- **A mounted snapshot survives a bug in one file operation** instead of
+  becoming "Transport endpoint is not connected".
+- **A run state written by a newer version no longer gets stuck**: an
+  error kind this version does not know is read as unknown, and an
+  unreadable state is reported as a failed update rather than a silent
+  success.
+- **Scheduled backups have a start timeout, a stop policy and a private
+  umask**, and a removed package makes them skip quietly instead of failing
+  at every slot.
+
+### Changed
+
+- The History page labels an entry recorded by another program "Other
+  program". Entries written by earlier versions with a source this version
+  does not know still load.
+- Packages are installed, started and removed in clean containers in CI,
+  the release is checked against the version in `Cargo.toml` and re-runs
+  the lint and advisory checks, and every shipped binary is verified to
+  carry its dependency data.
+
+### Removed
+
+- The web interface and its REST API are no longer part of Stellarshot: the
+  `stellarshot-web` program, its Settings page and its documentation now
+  live in a project of their own. Stellarshot no longer installs it; a
+  systemd user unit an earlier version created for it can be removed with
+  `systemctl --user disable --now stellarshot-web.service` and deleting
+  `~/.config/systemd/user/stellarshot-web.service`.
+
 ## [0.8.2] - 2026-09-29
 
 ### Security
@@ -21,17 +220,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was already correctly gated — but the file was. Caught by the
   project's own standing "prove it, don't assume it" check, not by
   reading the code.
-- **The web interface's own systemd unit now refuses to point at a
-  binary in an untrustworthy location**, closing the one place this
-  protection did not already reach: a scheduled backup's own unit
-  already refused a binary run from somewhere like `/tmp`, where any
-  local user could recreate the same path after a reboot and have it
-  run as someone else.
-- **A regenerated TLS private key can no longer end up readable by
-  anyone else.** If only the certificate half of a self-signed pair
-  went missing, the key was reused as-is rather than rewritten, so a
-  key that had somehow ended up with a looser permission before kept
-  that looser permission afterward too.
+
+## [0.8.1] - 2026-09-29
+
+### Changed
+
+- Two tests that only ever failed while the whole test suite was running
+  under load are fixed. No change to the application itself.
+
+## [0.8.0] - 2026-09-29
+
+### Security
+
 - **A symlink placed at a backup's progress file can no longer be
   followed.** The lock and log files already refused a pre-existing
   symlink at their own paths; writing progress data now does too,
@@ -51,24 +251,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on disk, the same as the setup wizard's own live estimate, so it does not
   account for what is already stored or how long an actual backup would
   take.
-- **A generated API token can now be copied with one click**, and
-  generating a new one asks first if a token is already in use — it stops
-  working the moment a new one exists, which used to happen with no
-  warning.
-
-### Changed
-
-- **The web interface's password, port and allow-list fields no longer
-  pop up full-screen dialogs for problems the field itself can explain.**
-  The port field now starts holding its real current value instead of
-  only looking pre-filled, validates as it is typed, and disables Save
-  with an explanation underneath instead of failing with an empty error.
-  The shared password shows "X of 12 characters" live and disables Save
-  until it is long enough. The allow-list's "Add" field now checks that
-  what was typed could ever match an address before it can be saved — a
-  typo or the wrong format used to be accepted silently and could lock
-  out whoever had just added it.
-- **The web interface's address in Settings is now a clickable link.**
 
 ### Fixed
 
@@ -77,35 +259,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "N found so far" while browsing, "N changed" in Compare, a password's
   character count, and forgetting N snapshots) — each now uses its
   language's own singular form for a count of one.
-- **The TLS certificate and key pickers' Choose and Reset buttons had
-  been reusing the cache-location row's own translation keys**, giving
-  translators no way to word them differently for an unrelated setting;
-  they're separate keys now. A backup's schedule and retention summary
-  is also now one translatable sentence instead of two fragments joined
-  by fixed English-first punctuation, so word order is a translator's
-  choice per language.
 - **Restoring into a folder where a snapshot expects a directory but a
   plain file already exists there now reports it as a real conflict and
   honors Skip**, instead of silently reporting no conflicts and then
   failing partway through the restore.
-- **The web interface now refuses to start, rather than running and
-  silently rejecting every request forever, if every authentication
-  method it was told to enable turns out to be unusable at startup** —
-  a locked keyring at boot, for instance. A backup started over the API
-  is also now recorded on the History page with the address and
-  authentication method that started it.
 - **Uninstalling now names the exact leftover systemd unit files to
-  remove by hand** (a scheduled backup's timer, the web interface's
-  service) instead of just saying they exist.
-- **The app's metainfo now lists the applet and web daemon binaries it
-  installs, and declares keyboard and pointer support**, for software
+  remove by hand** (a scheduled backup's timer) instead of just saying
+  they exist.
+- **The app's metainfo now lists the applet binary it installs, and
+  declares keyboard and pointer support**, for software
   centers that read it.
-- **Adding or removing a backup while the web interface is running now
-  shows up there right away**, instead of only after the next manual
-  restart — the same immediate treatment a changed password, token or
-  allow-list entry already got. Editing an existing backup's own settings
-  still does not restart anything, since the list of backups the web
-  interface serves does not change either.
 - **A password keystroke or a running backup's progress no longer rebuilds
   the entire sidebar.** Every backup's own status still updates live, but
   the sidebar's other rows, its selection, and whatever had keyboard focus
@@ -145,11 +308,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.0] - 2026-09-27
 
-A full security and reliability audit: hardening across secrets handling,
-the web interface, and file safety, plus the web interface actually
-reachable end to end for the first time — a systemd service, HTTPS with a
-real certificate, lockout protection, and a route to start an existing
-backup.
+A full security and reliability audit: hardening across secrets handling
+and file safety.
 
 ### Security
 
@@ -185,72 +345,6 @@ backup.
   longer needed**, rather than just left for the allocator to reuse later,
   and the backup/restore/check process that holds it disables core dumps
   for itself so a crash cannot write the password to disk.
-- **The web interface's self-signed certificate now covers `127.0.0.1` and
-  `::1`**, the addresses Settings actually tells you to connect to, so a
-  browser has one less reason to show a warning about it. It is also now
-  valid for about two years rather than effectively forever, so an expiry
-  date on it actually means something.
-- **Only one cryptography library is compiled into the web interface now**,
-  not two — closing off a future dependency change that could have made
-  TLS startup ambiguous and made it panic.
-- **The web interface's allow-list is now checked before the TLS handshake,
-  not only afterward.** A connection from an address not on the list used
-  to still be accepted and held open through a full handshake before ever
-  being refused; it is now refused immediately. A client that opens a
-  connection and sends nothing can no longer tie it up forever either
-  (previously unbounded, since the default header-read timeout never
-  actually applied), and the number of connections open at once is now
-  capped.
-- **The web interface now refuses a cross-site request outright**, before
-  authentication is even attempted, so a page open in your browser on some
-  other site cannot use your own still-valid access against this API.
-- **A page in your own browser can no longer lock you out of the web
-  interface.** Only a request that actually presented a password or token
-  counts against the lockout now; a credential-less request is still
-  refused, but does not cost the address anything.
-- **Repeated wrong passwords or tokens now lock an address out for longer
-  each time it comes back**: 5 minutes, then 15, then 60, capped at a day —
-  instead of the same 5-minute window every time. A burst of failures across
-  many addresses at once now also pauses password authentication for
-  everyone until it passes.
-- **The web interface's shared password now needs at least 12 characters.**
-- **The LAN network scope's empty IP allow-list now means "private network
-  addresses only"**, not everyone: it binds every network interface on this
-  machine, and the allow-list wording and this fallback now say so.
-- **Changing the web interface's password, API token, or IP allow-list now
-  takes effect right away** if the daemon is already running, instead of
-  only on the next manual restart — a regenerated token's old value used to
-  keep working, and a removed allow-list entry used to keep reaching the
-  daemon, until then.
-- **The web interface's service now notices when it has been replaced by a
-  package upgrade** and restarts itself into the new binary within a
-  minute, instead of quietly running the old one until the next login.
-- **A daemon that cannot even start no longer restarts every 5 seconds
-  forever.** It settles into a failed state after a few tries, and the
-  service is hardened further (no new privileges, a private `UMask`, and a
-  memory and open-file cap). `install.sh uninstall` now also prints the
-  command to remove any per-user systemd unit it leaves behind.
-- **Starting a backup that is already running over the web interface now
-  answers `409`** instead of starting a second one that would only fail
-  later, having run the password command again for nothing.
-- **Stopping or restarting the web interface no longer kills a backup it
-  started with nothing to show for it.** It now waits up to 30 seconds for
-  work already in progress to finish; if a backup is still going once that
-  passes, it is recorded on the History page as canceled instead of simply
-  disappearing.
-- **Reading a backup's snapshots or browsing one over the web interface is
-  now capped** at a small number of requests open on that repository at
-  once; past that, a request is refused immediately (`503`, with a
-  `Retry-After` header) instead of queuing behind a slow remote or letting
-  memory use grow with however many requests arrive at once.
-- **A failed web interface request no longer echoes technical detail back to
-  whoever asked.** A password command's stderr, rclone's own stderr, and
-  local paths used to be included; the response now carries a stable
-  description and a request ID instead, and the detail goes only to this
-  daemon's own log, tied to that same ID. A repository password problem now
-  answers `409`, not `401` (a valid API token no longer looks like "bad
-  credentials"), and a bad or missing path in a snapshot answers `400`/`404`
-  instead of `500`.
 
 ### Added
 
@@ -261,23 +355,6 @@ backup.
 - **A settings icon in the header bar**, right-aligned next to the window
   controls, matching where COSMIC Store and COSMIC Files put theirs. It
   opens the same Settings page as View → Settings.
-- **The web interface can now actually be reached**, not just configured:
-  - It runs as a per-user systemd service, started and stopped automatically
-    when the network scope is turned on or off, with a status indicator and
-    Start/Stop/Restart controls in Settings.
-  - Its port is now a setting, shown as part of the full address so there is
-    no guessing where to connect.
-  - It is always reached over `https://`: a self-signed certificate is
-    generated automatically and reused across restarts, or a certificate and
-    key of your own can be set instead.
-  - A new `POST /api/v1/backups/{id}/run` route starts an existing backup —
-    not a new one, and not a restore — the same thing "Back Up Now" does on
-    the desktop, recorded on the History page.
-  - Repeated wrong passwords or tokens from the same address are throttled
-    and locked out for a while, told how long to wait (see Security, above,
-    for exactly how).
-  - [A new page](docs/web-interface.md) documents the whole thing: settings,
-    the daemon, and the API, linked from Settings itself.
 - **A hint points at the Browse button** the first time you set up a new
   backup, next to the folder it starts with. Exclusions and the size
   estimate live behind it, and nothing else on that page says so. It
@@ -334,12 +411,6 @@ backup.
   other destructive action in the app.
 - **A rare Fluent syntax error no longer silently drops the "this word is
   only shown once" warning** from every language's translation file.
-- **The web interface's Settings page now shows the address it will listen
-  at** once a network scope other than Off is chosen, instead of leaving you
-  to guess the port.
-- **Saving the web interface's shared password now confirms it was saved.**
-  The field clearing itself was the only feedback; it now looks the same
-  whether the save quietly succeeded or nothing happened at all.
 - **A window reopened from the panel applet no longer shows two title
   bars.** Closing the window (minimizing it to the panel) and reopening it
   from there used a plain window configuration that asked the compositor to
@@ -392,9 +463,7 @@ backup.
 
 Getting more out of a backup: mounting a snapshot as a folder, a History
 page across every backup, searching by filename across every snapshot, and
-folder-grouped comparisons. Plus the start of a web interface: settings, a
-daemon with real password and token authentication, and the first REST API
-routes.
+folder-grouped comparisons.
 
 ### Added
 
@@ -407,18 +476,6 @@ routes.
 - **A History page**, in the sidebar, showing every backup's activity in one
   place: backups, checks, clean-ups, restores, snapshot deletions, pin
   changes, password changes, and mounts, newest first.
-- **Web interface settings**, in Settings: a network scope (off,
-  localhost-only, or LAN-reachable), a shared password, a generated API
-  token, PAM, and an IP allow-list, each configurable independently.
-- **A `stellarshot-web` daemon**, binding according to the network scope
-  setting and enforcing the IP allow-list. Checks the shared password and
-  API token for real (PAM not wired up yet); every request is rejected if no
-  method is enabled, rather than the daemon becoming open by omission. Not
-  yet a systemd service (it has to be started by hand).
-- **The beginning of a REST API**: `GET /api/v1/backups`,
-  `GET /api/v1/backups/{id}/snapshots`, and
-  `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse`. Read-only for
-  now — no starting a backup or restoring through it yet.
 - **Search across every snapshot** by filename, in a new "Search everywhere"
   tab: shows every snapshot a match was found in, and jumps straight to
   Browse at the one you pick.

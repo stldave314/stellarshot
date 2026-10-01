@@ -5,14 +5,17 @@
 
 use std::fmt;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use cosmic::iced::futures::{SinkExt, Stream, channel::mpsc};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
-use crate::constants::{CHILD_STDERR_DETAIL, CHILD_STDERR_TAIL, DRAIN_AFTER_EXIT};
+use crate::constants::{
+    CHILD_STDERR_DETAIL, CHILD_STDERR_TAIL, DRAIN_AFTER_EXIT, PROCESS_POLL_INTERVAL, TERM_GRACE,
+};
 use crate::debug::ENGINE;
 use crate::engine::{EngineError, ErrorKind};
 use crate::runner::{Event, Job, Operation};
@@ -20,7 +23,17 @@ use crate::{debug_log, error_log};
 
 /// A running child, shared so the UI can cancel it.
 #[derive(Clone)]
-pub struct ChildHandle(Arc<Mutex<Child>>, Option<rustix::process::Pid>);
+pub struct ChildHandle {
+    child: Arc<Mutex<Child>>,
+    /// The child's own process group (see `drive`'s `process_group(0)`).
+    group: Option<rustix::process::Pid>,
+    /// When `cancel` was called, if it was: `wait` escalates to killing
+    /// the group once `TERM_GRACE` has passed since, and `drive` reports a
+    /// child that died by signal as canceled only if this is set.
+    canceled: Arc<Mutex<Option<Instant>>>,
+    /// Whether `wait` has already escalated, so it does so once.
+    escalated: Arc<AtomicBool>,
+}
 
 impl fmt::Debug for ChildHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -32,25 +45,48 @@ impl ChildHandle {
     /// Stop the operation. Safe for a backup: the snapshot file is written
     /// last, so nothing half-written is ever referenced.
     ///
-    /// The whole process group is killed, not only the child: for SFTP and
-    /// cloud storage, rustic runs `rclone serve restic` under it, and an
-    /// rclone left behind keeps the child's stdout open, so the operation
-    /// would never be seen to end.
+    /// SIGTERM to the child alone, not SIGKILL to its whole group as this
+    /// used to be: the child's own `proc_signal` thread then runs the
+    /// backup's `After` hooks (a `Before` hook that stopped a database
+    /// would otherwise leave it stopped), reports the run canceled over its
+    /// stdout, and stops its own group itself — rustic's `rclone serve`
+    /// child included, which an rclone left behind would otherwise keep
+    /// the child's stdout open with, so the operation was never seen to
+    /// end. `wait` kills the group outright if the child is still there
+    /// after `TERM_GRACE`, and `drive` does so once more after the child
+    /// exits, in case anything was left.
     pub fn cancel(&self) {
-        if let Ok(mut child) = self.0.lock() {
-            debug_log!(ENGINE, "canceling child {:?}", child.id());
-            // `id()` is `None` once the child has been reaped, after which
-            // its group ID could in time belong to someone else.
-            if child.id().is_some() {
-                self.kill_group();
-            }
-            let _ = child.start_kill();
+        let Ok(child) = self.child.lock() else {
+            return;
+        };
+        // `id()` is `None` once the child has been reaped, after which its
+        // PID could in time belong to someone else.
+        let Some(pid) = child
+            .id()
+            .and_then(|id| i32::try_from(id).ok())
+            .and_then(rustix::process::Pid::from_raw)
+        else {
+            return;
+        };
+        let mut canceled = self.canceled.lock().unwrap_or_else(PoisonError::into_inner);
+        if canceled.is_some() {
+            return;
         }
+        debug_log!(ENGINE, "canceling child {pid:?}");
+        *canceled = Some(Instant::now());
+        if let Err(err) = rustix::process::kill_process(pid, rustix::process::Signal::TERM) {
+            debug_log!(ENGINE, "sending SIGTERM to {pid:?}: {err}");
+        }
+    }
+
+    /// Whether `cancel` has been called.
+    fn canceled_at(&self) -> Option<Instant> {
+        *self.canceled.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Kill every process in the child's group.
     fn kill_group(&self) {
-        if let Some(group) = self.1
+        if let Some(group) = self.group
             && let Err(err) =
                 rustix::process::kill_process_group(group, rustix::process::Signal::KILL)
         {
@@ -105,7 +141,7 @@ pub fn run_with(
 }
 
 /// Returns `Ok(true)` when the child reported its own outcome, `Ok(false)` when
-/// it was killed before it could.
+/// it was canceled before it could.
 async fn drive(
     exe: std::io::Result<std::path::PathBuf>,
     operation: Operation,
@@ -136,10 +172,16 @@ async fn drive(
         serde_json::to_vec(&job)
             .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?,
     );
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&job).await?;
-        // Dropping stdin closes it, which tells the child the job is complete.
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(err) = stdin.write_all(&job).await
+    {
+        // A child that died at once (a crash before it read anything)
+        // closes its end and this fails with EPIPE. Not worth returning
+        // for on its own: what the child left on stderr, read below, says
+        // what actually happened, where a bare "broken pipe" would not.
+        debug_log!(ENGINE, "writing the job to the child: {err}");
     }
+    // Dropping stdin closes it, which tells the child the job is complete.
     let stdout = child.stdout.take();
     // Read concurrently with stdout, on its own task, for as long as the
     // child runs: its tracing can write more than a pipe's buffer holds
@@ -156,7 +198,12 @@ async fn drive(
         .id()
         .and_then(|id| i32::try_from(id).ok())
         .and_then(rustix::process::Pid::from_raw);
-    let handle = ChildHandle(Arc::new(Mutex::new(child)), group);
+    let handle = ChildHandle {
+        child: Arc::new(Mutex::new(child)),
+        group,
+        canceled: Arc::new(Mutex::new(None)),
+        escalated: Arc::new(AtomicBool::new(false)),
+    };
     let _ = out.send(ChildEvent::Started(handle.clone())).await;
 
     let mut reported = false;
@@ -195,6 +242,15 @@ async fn drive(
     }
 
     let status = wait(&handle).await?;
+    let canceled = handle.canceled_at().is_some();
+    if canceled {
+        // The child stops its own group on SIGTERM (see `proc_signal`), and
+        // `wait` already killed it if it never answered; this is for
+        // anything either of those left. The child was reaped only just
+        // now, so its group ID has had no time to be given out again —
+        // and a group with nothing left in it is a harmless ESRCH.
+        handle.kill_group();
+    }
     if reported {
         return Ok(true);
     }
@@ -202,11 +258,24 @@ async fn drive(
         Some(task) => task.await.unwrap_or_default(),
         None => String::new(),
     };
-    let diagnostics = tail_for_detail(&diagnostics);
+    let diagnostics = crate::bounded::tail_str(&diagnostics, CHILD_STDERR_DETAIL);
     use std::os::unix::process::ExitStatusExt;
-    if status.signal().is_some() {
-        debug_log!(ENGINE, "child ended by signal {:?}", status.signal());
-        return Ok(false);
+    if let Some(signal) = status.signal() {
+        if canceled {
+            debug_log!(ENGINE, "canceled child ended by signal {signal}");
+            return Ok(false);
+        }
+        // Not ours: the OOM killer, a segfault, an abort. Reporting that
+        // as "canceled" hid every such crash from the History page and
+        // the log, since a canceled backup is deliberately not recorded.
+        error_log!(
+            ENGINE,
+            "child was stopped by signal {signal} with no outcome: {diagnostics}"
+        );
+        return Err(EngineError::new(
+            ErrorKind::Internal,
+            format!("stopped by signal {signal}: {}", diagnostics.trim()),
+        ));
     }
     error_log!(
         ENGINE,
@@ -237,35 +306,9 @@ fn spawn_error(exe: &std::path::Path, err: std::io::Error) -> EngineError {
 /// Reads `stderr` to the end, keeping only the last `CHILD_STDERR_TAIL`
 /// bytes: enough for diagnostics without buffering an unreadable-file
 /// warning per file in a large home folder without bound.
-async fn drain_stderr_tail(mut stderr: tokio::process::ChildStderr) -> String {
-    let mut tail: Vec<u8> = Vec::new();
-    let mut buffer = [0u8; 4096];
-    loop {
-        match stderr.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                tail.extend_from_slice(&buffer[..n]);
-                if tail.len() > CHILD_STDERR_TAIL {
-                    let excess = tail.len() - CHILD_STDERR_TAIL;
-                    tail.drain(..excess);
-                }
-            }
-        }
-    }
+async fn drain_stderr_tail(stderr: tokio::process::ChildStderr) -> String {
+    let tail = crate::bounded::read_tail_async(stderr, CHILD_STDERR_TAIL).await;
     String::from_utf8_lossy(&tail).into_owned()
-}
-
-/// The most recent `CHILD_STDERR_DETAIL` bytes of `text`, landing on a
-/// `char` boundary, for whatever goes into an error message or the log.
-fn tail_for_detail(text: &str) -> &str {
-    if text.len() <= CHILD_STDERR_DETAIL {
-        return text;
-    }
-    let start = text.len() - CHILD_STDERR_DETAIL;
-    let boundary = (start..=text.len())
-        .find(|&i| text.is_char_boundary(i))
-        .unwrap_or(text.len());
-    &text[boundary..]
 }
 
 /// Sleep until `deadline`, or forever without one.
@@ -276,18 +319,32 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-/// Wait for the child without holding its lock, so it can still be canceled.
+/// Wait for the child without holding its lock, so it can still be
+/// canceled. A canceled child that has not gone within `TERM_GRACE` of the
+/// SIGTERM — a hook of its own that will not finish, or a child from
+/// before `proc_signal` existed — has its whole group killed, once.
 async fn wait(handle: &ChildHandle) -> Result<std::process::ExitStatus, EngineError> {
     loop {
         let finished = handle
-            .0
+            .child
             .lock()
             .map_err(|_| EngineError::new(ErrorKind::Internal, "child lock poisoned"))?
             .try_wait()?;
         if let Some(status) = finished {
             return Ok(status);
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if let Some(at) = handle.canceled_at()
+            && at.elapsed() >= TERM_GRACE
+            && !handle.escalated.swap(true, Ordering::SeqCst)
+        {
+            debug_log!(
+                ENGINE,
+                "child did not stop within {}s of SIGTERM; killing its group",
+                TERM_GRACE.as_secs()
+            );
+            handle.kill_group();
+        }
+        tokio::time::sleep(PROCESS_POLL_INTERVAL).await;
     }
 }
 

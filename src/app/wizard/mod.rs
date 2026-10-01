@@ -17,7 +17,7 @@ use std::time::Instant;
 use cosmic::iced::{Alignment, Length};
 use cosmic::{Apply, Element, theme, widget};
 
-use crate::app::format;
+use crate::app::{errors, format};
 use crate::engine::{BackupRequest, EngineError, ExclusionBreakdown, Probe, Secret, SizeEstimate};
 use crate::fl;
 use crate::profile::{
@@ -63,7 +63,7 @@ impl Mode {
         }
     }
 
-    fn edits(&self) -> bool {
+    pub fn edits(&self) -> bool {
         matches!(
             self,
             Self::Edit { .. } | Self::Schedule { .. } | Self::Hooks { .. }
@@ -116,6 +116,8 @@ pub struct EstimateView {
     pub breakdown: Option<ExclusionBreakdown>,
     /// Size of each excluded folder that sits inside an included one.
     pub exclude_sizes: HashMap<PathBuf, u64>,
+    /// Why the estimate could not be worked out, if it could not.
+    pub failed: Option<EngineError>,
 }
 
 /// Progress of a size estimate, as it reaches the wizard.
@@ -125,9 +127,10 @@ pub enum EstimateEvent {
     Done(SizeEstimate),
     /// What the exclusions take out, with the sizes of these folders.
     Breakdown(Vec<PathBuf>, ExclusionBreakdown),
-    Failed(String),
+    Failed(EngineError),
 }
 
+#[derive(Debug)]
 pub struct Wizard {
     pub mode: Mode,
     pub step: Step,
@@ -256,6 +259,7 @@ pub enum Message {
 }
 
 /// Everything the wizard needs the application to do.
+#[derive(Debug)]
 pub enum Effect {
     PickFolders {
         excludes: bool,
@@ -280,6 +284,7 @@ pub enum Effect {
 }
 
 /// What to do when the wizard completes.
+#[derive(Debug)]
 pub struct Finish {
     pub mode: Mode,
     pub profile: Profile,
@@ -537,6 +542,7 @@ impl Wizard {
         self.cancel = Arc::new(AtomicBool::new(false));
         self.estimate.generation += 1;
         self.estimate.running = true;
+        self.estimate.failed = None;
         self.estimate.breakdown = None;
         self.estimate.exclude_sizes.clear();
         let exclude_folders = self
@@ -580,6 +586,7 @@ impl Wizard {
     /// ("finish later"), which leaves it running.
     pub fn discard(&self) {
         self.cancel.store(true, Ordering::Relaxed);
+        self.browse.stop();
     }
 
     /// What the "where" step needs to find at the destination.
@@ -650,22 +657,16 @@ impl Wizard {
         }
     }
 
-    fn finish(&mut self) -> Vec<Effect> {
-        let Some(destination) = self.destination() else {
-            return Vec::new();
-        };
-        let mut profile = match &self.base {
-            Some(base) => base.clone(),
-            None => {
-                let mut profile = Profile::new(
-                    self.name.trim().to_owned(),
-                    destination,
-                    self.sources.clone(),
-                );
-                profile.bandwidth_limit = self.place.bandwidth_limit.trim().to_owned();
-                profile
-            }
-        };
+    /// Copy what this wizard edited onto `profile`: everything, for a new
+    /// backup, and for an existing one only the fields its own steps showed.
+    ///
+    /// Separate from `finish` so it can be applied to the backup as it is
+    /// *now*, not as it was when the wizard opened — which can be long
+    /// before, with "finish later". Replacing the saved profile with the
+    /// wizard's own old copy rolled back a run that finished meanwhile, a
+    /// password command edited elsewhere, and brought back a backup that
+    /// had been removed.
+    pub fn apply_to(&self, profile: &mut Profile) {
         let steps = self.mode.steps();
         // A new profile takes everything the wizard holds, including folders
         // an import filled in without showing the What step; an edited one
@@ -700,6 +701,25 @@ impl Wizard {
             profile.append_only = self.append_only;
             profile.compression = self.compression;
         }
+    }
+
+    fn finish(&mut self) -> Vec<Effect> {
+        let Some(destination) = self.destination() else {
+            return Vec::new();
+        };
+        let mut profile = match &self.base {
+            Some(base) => base.clone(),
+            None => {
+                let mut profile = Profile::new(
+                    self.name.trim().to_owned(),
+                    destination,
+                    self.sources.clone(),
+                );
+                profile.bandwidth_limit = self.place.bandwidth_limit.trim().to_owned();
+                profile
+            }
+        };
+        self.apply_to(&mut profile);
         let secret = (!self.mode.edits()).then(|| Secret::new(self.password.clone()));
         self.busy_since = Some(Instant::now());
         vec![Effect::Finish(Box::new(Finish {
@@ -794,7 +814,10 @@ impl Wizard {
                             self.estimate.breakdown = Some(breakdown);
                             self.estimate.running = false;
                         }
-                        EstimateEvent::Failed(_) => self.estimate.running = false,
+                        EstimateEvent::Failed(error) => {
+                            self.estimate.running = false;
+                            self.estimate.failed = Some(error);
+                        }
                     }
                 }
                 Vec::new()
@@ -1064,11 +1087,21 @@ impl Wizard {
         let mut footer = widget::row::with_capacity(5)
             .spacing(spacing.space_xs)
             .align_y(Alignment::Center)
-            .push(widget::button::standard(fl!("cancel")).on_press(Message::Cancel))
+            // Not while the repository is being created or opened: Cancel
+            // cannot stop that (it runs to its end either way), and letting
+            // it discard the wizard meant the finished result arrived for a
+            // wizard that no longer existed.
+            .push(
+                widget::button::standard(fl!("cancel"))
+                    .on_press_maybe((!self.busy()).then_some(Message::Cancel)),
+            )
             .push_maybe(busy_note.map(widget::text::caption))
             .push(widget::space::horizontal());
         if self.position() > 0 {
-            footer = footer.push(widget::button::standard(fl!("back")).on_press(Message::Back));
+            footer = footer.push(
+                widget::button::standard(fl!("back"))
+                    .on_press_maybe((!self.busy()).then_some(Message::Back)),
+            );
         }
         footer = footer.push(
             widget::button::suggested(next_label)
@@ -1143,7 +1176,7 @@ impl Wizard {
                     .exclude_sizes
                     .get(path)
                     .filter(|bytes| **bytes > 0)
-                    .map(|bytes| format!("−{}", format::bytes(*bytes)))
+                    .map(|bytes| fl!("size-removed", size = format::bytes(*bytes)))
                     .unwrap_or_default()
             } else {
                 fl!("wizard-exclude-outside")
@@ -1171,7 +1204,7 @@ impl Wizard {
                 widget::settings::item::builder(pattern.clone()).control(
                     widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                         .tooltip(fl!("remove"))
-                        .name(fl!("remove"))
+                        .name(fl!("remove-item", item = pattern.clone()))
                         .on_press(Message::RemovePattern(index)),
                 ),
             );
@@ -1243,9 +1276,14 @@ impl Wizard {
                 )
             }
         });
-        let status = match (&self.estimate.total, self.estimate.running) {
-            (None, true) => fl!("wizard-estimate-counting"),
-            (Some(_), true) if self.estimate.breakdown.is_none() => {
+        let status = match (
+            &self.estimate.failed,
+            &self.estimate.total,
+            self.estimate.running,
+        ) {
+            (Some(error), ..) => errors::describe(&fl!("wizard-estimate-failed"), error),
+            (None, None, true) => fl!("wizard-estimate-counting"),
+            (None, Some(_), true) if self.estimate.breakdown.is_none() => {
                 fl!("wizard-estimate-adding-up")
             }
             _ => fl!("wizard-estimate-note"),
@@ -1398,7 +1436,7 @@ impl Wizard {
                     widget::settings::item::builder(network.clone()).control(
                         widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                             .tooltip(fl!("remove"))
-                            .name(fl!("remove"))
+                            .name(fl!("remove-item", item = network.clone()))
                             .on_press(Message::RemoveTrustedNetwork(index)),
                     ),
                 );
@@ -1427,10 +1465,10 @@ impl Wizard {
         for (index, hook) in self.hooks.iter().enumerate() {
             section = section.add(
                 widget::settings::item::builder(hook.name.clone())
-                    .description(format!(
-                        "{} · {}",
-                        hook_timing_label(hook.timing),
-                        hook.command
+                    .description(fl!(
+                        "hook-row",
+                        timing = hook_timing_label(hook.timing),
+                        command = hook.command.clone()
                     ))
                     .control(
                         widget::row::with_capacity(2)
@@ -1446,7 +1484,7 @@ impl Wizard {
                                     "edit-delete-symbolic",
                                 ))
                                 .tooltip(fl!("remove"))
-                                .name(fl!("remove"))
+                                .name(fl!("remove-item", item = hook.name.clone()))
                                 .on_press(Message::RemoveHook(index)),
                             ),
                     ),
@@ -1607,7 +1645,7 @@ fn path_row(path: &Path, detail: String, remove: Message) -> Element<'_, Message
         .control(
             widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                 .tooltip(fl!("remove"))
-                .name(fl!("remove"))
+                .name(fl!("remove-item", item = format::path(path)))
                 .on_press(remove),
         )
         .into()
@@ -1651,7 +1689,7 @@ fn source_row(path: &Path, detail: String, index: usize) -> Element<'_, Message>
                 .push(
                     widget::button::icon(widget::icon::from_name("edit-delete-symbolic"))
                         .tooltip(fl!("remove"))
-                        .name(fl!("remove"))
+                        .name(fl!("remove-item", item = format::path(path)))
                         .on_press(Message::RemoveSource(index)),
                 ),
         )
@@ -1991,6 +2029,26 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_estimate_is_kept_for_the_step_to_show_and_cleared_by_the_next() {
+        let (mut wizard, _) = Wizard::create(Some(Path::new("/home/dave")));
+        wizard.update(Message::SourcesChosen(vec!["/data".into()]));
+        let generation = wizard.estimate.generation;
+
+        wizard.update(Message::Estimate(
+            generation,
+            EstimateEvent::Failed(EngineError::new(ErrorKind::Io, "unreadable")),
+        ));
+        assert!(!wizard.estimate.running);
+        assert!(wizard.estimate.failed.is_some());
+
+        wizard.update(Message::SourcesChosen(vec!["/other".into()]));
+        assert!(
+            wizard.estimate.failed.is_none(),
+            "a new estimate starts clean"
+        );
+    }
+
+    #[test]
     fn excludes_outside_every_source_do_not_apply() {
         let (wizard, _) = Wizard::create(Some(Path::new("/home/dave")));
         assert!(wizard.exclude_applies(Path::new("/home/dave/.cache")));
@@ -2090,6 +2148,30 @@ mod tests {
             )
         );
         assert_eq!(saved.last_success, Some(42));
+    }
+
+    /// The wizard can stay open a long time ("finish later"); what it saves
+    /// must go onto the backup as it is by then, not roll back what changed
+    /// meanwhile — a run that finished, or a field edited through another
+    /// dialog — while still applying what this wizard itself edited.
+    #[test]
+    fn an_edit_is_applied_to_the_backup_as_it_is_now() {
+        let profile = scheduled_profile();
+        let (mut wizard, _) = Wizard::schedule(&profile);
+        wizard.update(Message::Automatic(false));
+
+        // Meanwhile, elsewhere: a newer run, and an edited password command.
+        let mut current = profile.clone();
+        current.last_success = Some(9_999);
+        current.password_command = "pass show backup".to_owned();
+        wizard.apply_to(&mut current);
+
+        assert_eq!(current.schedule, Schedule::Manual, "this wizard's own edit");
+        assert_eq!(current.last_success, Some(9_999), "not rolled back");
+        assert_eq!(
+            current.password_command, "pass show backup",
+            "a field this wizard never showed is left as it now is"
+        );
     }
 
     #[test]

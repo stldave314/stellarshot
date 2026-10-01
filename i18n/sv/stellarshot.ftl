@@ -104,6 +104,7 @@ wizard-estimate = { $size } · { $files ->
    *[other] { $files } filer
 }
 wizard-estimate-counting = Räknar…
+wizard-estimate-failed = Det gick inte att räkna ut storleken.
 wizard-estimate-note = Den första säkerhetskopian blir oftast mindre efter komprimering och deduplicering. Senare säkerhetskopior sparar bara det som ändrats.
 wizard-where-intro = Välj var säkerhetskopian ska förvaras: en tom mapp, helst på en annan enhet.
 wizard-where-title = Plats
@@ -133,12 +134,15 @@ back = Tillbaka
 next = Nästa
 edit = Editera
 remove = Ta bort
+remove-item = Ta bort { $item }
 dismiss = Avfärda
 delete = Ta bort
 cancel = Avbryt
 password = Lösenord
 remove-title = Ta bort ”{ $name }”?
 remove-body = Stellarshot glömmer den här säkerhetskopian och dess sparade lösenord. Säkerhetskopian och dess ögonblicksbilder raderas inte och kan öppnas igen senare.
+remove-keyring-failed = Säkerhetskopian togs bort, men dess sparade lösenord kunde inte tas bort från nyckelringen. Du kan ta bort det där själv.
+edit-backup-removed = Den här säkerhetskopian togs bort medan du redigerade den, så ingenting sparades.
 delete-title = Radera ”{ $name }” och all data?
 delete-body = Detta raderar säkerhetskopian och alla ögonblicksbilder i den permanent. Andra filer i samma mapp påverkas inte. Skriv { $name } för att bekräfta.
 delete-snapshot-title = Radera denna ögonblicksbild?
@@ -147,6 +151,8 @@ delete-snapshot-body = Ögonblicksbilden från { $time } raderas permanent. File
 # Errors
 error-title = Något gick fel
 error-details = Detaljer: { $details }
+error-settings-not-saved = Ändringen kunde inte sparas.
+error-config-unreadable = En del av Stellarshots inställningar kunde inte läsas, så inget kan sparas förrän detta är åtgärdat. En kopia av originalfilen sparades i { $path }.
 location-not-empty = { $path } innehåller redan andra filer. Välj en tom mapp, eller en mapp som redan innehåller en lagringsplats.
 create-repo-failed = Lagringsplatsen kunde inte skapas.
 delete-repo-failed = Lagringsplatsen kunde inte tas bort.
@@ -209,6 +215,7 @@ place-check-failed = Platsen kunde inte kontrolleras.
 place-check = Kontrollera
 place-no-drives = Inga flyttbara enheter är anslutna. Anslut en och gå sedan tillbaka och framåt igen.
 place-folder-on-drive = Mapp på enheten
+place-folder-invalid = Mappen måste vara ett vanligt namn eller en sökväg på enheten, utan ”.” eller ”..”.
 place-host = Server
 place-user = Användarnamn
 place-user-placeholder = Ditt användarnamn på den datorn
@@ -249,6 +256,10 @@ selected-count = { $count ->
    *[other] { $count } objekt markerade
 }
 restore-button = Återställ…
+restore-replace-button = { $count ->
+    [one] Ersätt 1 fil…
+   *[other] Ersätt { $count } filer…
+}
 search-placeholder = Sök i den här ögonblicksbilden
 search-results = { $count ->
     [one] 1 träff
@@ -465,7 +476,9 @@ error-invalid-remote = Den här säkerhetskopians molnfjärranslutning känns in
 error-unsafe-path = En fil i den här säkerhetskopian pekar på en plats utanför återställningsmappen ({ $path }), så inget återställdes.
 error-not-found = { $path } finns inte i den här säkerhetskopian.
 error-ambiguous = { $path } matchar fler än en säkerhetskopia. Använd ett längre prefix.
-error-too-busy = Webbgränssnittet har redan så många öppna förfrågningar mot den här säkerhetskopian som det tillåter samtidigt. Försök igen om en stund.
+error-too-large-to-open = Det här är för stort för att öppnas som en tillfällig kopia ({ $size }). Återställ det till en mapp i stället.
+error-duplicate-name = Två av de valda objekten heter båda ”{ $name }” och skulle hamna i samma mapp och skriva över varandra. Återställ dem ett i taget eller till olika mappar.
+error-too-busy = Den här säkerhetskopian har redan så många öppna åtgärder som tillåts samtidigt. Försök igen om en stund.
 place-checking-for = Kontrollerar… { $time }
 wizard-creating = Skapar… { $time }
 wizard-opening = Öppnar… { $time }
@@ -541,7 +554,7 @@ event-unmounted = Avmonterade ögonblicksbild { $snapshot }
 history-empty = Inget har hänt än.
 history-unknown-backup = (borttagen säkerhetskopia)
 history-truncated = Visar de senaste { $shown } av { $total }
-history-via-web = Webb
+history-via-other = Annat program
 notify-overdue = "{ $name }" har inte säkerhetskopierats på ett tag
 notify-overdue-body = Dess destination har inte varit nåbar vid de schemalagda tiderna. { $schedule } Kontrollera att den är ansluten, öppna sedan Stellarshot för att säkerhetskopiera nu.
 settings-backup-title = Säkerhetskopiera och återställ Stellarshots egna inställningar
@@ -571,6 +584,7 @@ settings-import-done-body = { $added ->
    *[other] { $rejected } kunde inte importeras säkert och hoppades över.
 }
 settings-import-failed = Inställningarna kunde inte importeras.
+settings-import-newer = Den här filen sparades av en nyare version av Stellarshot. Uppdatera Stellarshot och försök igen.
 settings-import-hooks-disabled = Importerade säkerhetskopior börjar med schema och krokar avstängda. Granska dem innan du slår på dem.
 home = Översikt
 home-backups-title = Säkerhetskopior
@@ -598,6 +612,7 @@ place-bandwidth-limit-placeholder = t.ex. 1M
 applet-tooltip = Stellarshot
 applet-none = Ingen säkerhetskopiering är inställd ännu.
 applet-open = Öppna Stellarshot
+applet-open-failed = Stellarshot kunde inte startas.
 wizard-exclude-caches = Utelämna cachemappar
 wizard-exclude-caches-description = Hoppa över mappar som märker sig själva som utbytbar cachedata med en CACHEDIR.TAG-fil.
 wizard-git-ignore = Följ .gitignore
@@ -620,68 +635,12 @@ settings-no-cache = Använd ingen cache alls
 settings-no-cache-description = Långsammare, men inget värt att spara på en dator med lite diskutrymme.
 settings-global-excludes-title = Utelämnat från varje säkerhetskopia
 settings-global-excludes-description = Globmönster som node_modules eller target, tillämpade på varje säkerhetskopia utan att lägga till dem i var och en.
-settings-web-title = Webbgränssnitt
-web-scope-off = Av
-web-scope-off-description = Webbgränssnittet är inte alls nåbart.
-web-scope-localhost = Endast den här datorn
-web-scope-localhost-description = Nåbart endast från den här datorn själv, till exempel via en egen SSH-tunnel.
-web-scope-lan = Nåbart på nätverket
-web-scope-lan-description = Nåbart från vilken annan enhet som helst på samma nätverk.
-web-port = Port
-web-port-description = Vilken port webbgränssnittet lyssnar på.
-web-port-invalid = Det är inte ett giltigt portnummer. Det måste vara mellan 1 och 65535.
-web-address-label = Kommer att lyssna på:
-web-auth-password = Delat lösenord
-web-auth-password-description = Ett lösenord, skilt från någon säkerhetskopias eget, som krävs för att logga in.
-web-password-set = Ange lösenordet
-web-password-placeholder = Nytt lösenord
-web-password-saved-body = Webbgränssnittet använder det nästa gång det startar.
-web-password-failed = Webbgränssnittets lösenord kunde inte sparas.
-web-password-length = { $count } av { $minimum ->
-    [one] { $minimum } tecken
-   *[other] { $minimum } tecken
-}
-web-auth-token = API-token
-web-auth-token-description = En genererad token för skriptad användning av webbgränssnittets API.
-web-token-generate = Token
-web-token-generate-button = Generera en ny token…
-web-token-exists = En token har genererats. Att generera en till ersätter den.
-web-token-none = Ingen token har genererats än.
-web-token-title = Ny API-token
-web-token-body = Kopiera den här token nu — den visas inte igen.
-web-token-copy = Kopiera
-web-token-regenerate-title = Ersätta den nuvarande token?
-web-token-regenerate-body = Allt som redan använder den nuvarande token slutar fungera så snart en ny genereras.
-web-token-regenerate-confirm = Generera igen
-
-    Detta visas bara en gång. Förvara den säkert: att generera en till token ersätter den här.
-web-auth-pam = Den här datorns egna inloggning
-web-auth-pam-description = Logga in med samma lösenord som används för att logga in på den här datorn.
-web-allowed-title = Tillåtna adresser
-web-allowed-description = Bara dessa adresser eller intervall får nå webbgränssnittet. Tomt betyder varje adress som inställningen ovan redan tillåter.
-web-allowed-placeholder = Adress eller intervall, till exempel 192.168.1.0/24
-web-allowed-invalid = Inte en giltig adress eller ett giltigt intervall, till exempel 192.168.1.0/24 eller 192.168.1.1
-web-tls-title = TLS-certifikat
-web-tls-description = Webbgränssnittet nås alltid via HTTPS. Som standard skapar och använder det ett eget självsignerat certifikat; en webbläsare behöver ett engångsundantag för det. Ange ett eget certifikat och en egen nyckel istället om du har ett, till exempel från en certifikatutfärdare som dina enheter redan litar på.
-web-tls-cert = Certifikat
-web-tls-key = Privat nyckel
-web-tls-default = Självsignerat (skapas automatiskt)
-web-tls-choose = Välj…
-web-tls-reset = Använd standard
-web-tls-cert-title = Välj en certifikatfil
-web-tls-key-title = Välj en privat nyckelfil
-web-daemon-title = Bakgrundstjänst
-web-daemon-status = Status
-web-daemon-status-active = Körs
-web-daemon-status-inactive = Stoppad
-web-daemon-status-failed = Start misslyckades
-web-daemon-status-unknown = Inte installerad
-web-daemon-start = Starta
-web-daemon-stop = Stoppa
-web-daemon-restart = Starta om
-web-daemon-action-failed = Webbgränssnittets bakgrundstjänst kunde inte styras.
-web-docs-link = Läs mer om webbgränssnittet och dess API
 pin-snapshot-failed = Ögonblicksbildens fästning kunde inte ändras.
 pin-snapshot = Fäst, så att uppstädning aldrig tar bort den här ögonblicksbilden
 unpin-snapshot = Lossa, så att uppstädning kan ta bort den här ögonblicksbilden igen
 delete-snapshot-row = Ta bort den här ögonblicksbilden
+snapshot-label = { $time } · { $id }
+hook-row = { $timing } · { $command }
+size-removed = −{ $size }
+compression-ratio = { $ratio }×
+list-separator = {", "}

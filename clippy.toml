@@ -1,0 +1,5 @@
+# Tests state their expectations with `unwrap`, `expect` and `panic!`: a
+# failure there is the point. The lints are for code that ships.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

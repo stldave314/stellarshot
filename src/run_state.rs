@@ -252,13 +252,19 @@ pub fn save(profile_id: &str, state: &RunState) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-/// Change one profile's state in place. Does nothing, rather than saving a
-/// fresh default over data this process could not read (see
-/// [`load_checked`]): there is nothing sensible to change without first
-/// knowing what the value actually was.
+/// Change one profile's state in place. Fails, rather than saving a fresh
+/// default over data this process could not read (see [`load_checked`]):
+/// there is nothing sensible to change without first knowing what the
+/// value actually was. It is an error, not a silent no-op, because the
+/// caller's own change genuinely did not happen — a passing check that
+/// could not clear `damaged` this way would otherwise report success while
+/// automatic pruning stayed paused indefinitely, with nothing in the log
+/// or the window saying why.
 pub fn update(profile_id: &str, change: impl FnOnce(&mut RunState)) -> Result<(), String> {
     let Ok(mut state) = load_checked(profile_id) else {
-        return Ok(());
+        return Err(format!(
+            "the run state for {profile_id} could not be read, so it was left as it was"
+        ));
     };
     change(&mut state);
     save(profile_id, &state)
@@ -392,6 +398,25 @@ mod tests {
         );
         state.last_success = Some(300);
         assert!(state.current_failure(None).is_none());
+    }
+
+    /// A run state written by a newer Stellarshot, with an `ErrorKind` this
+    /// one has never heard of. Without `#[serde(other)]` on the kind, the
+    /// whole file failed to parse; `load_checked` then (correctly) refused
+    /// to overwrite it, and `update` (correctly) refused to change it — so
+    /// a passing check could never clear `damaged`, and pruning stayed
+    /// paused with no way out short of a hand edit.
+    #[test]
+    fn a_failure_kind_from_a_newer_version_loads_as_unknown_not_as_unreadable() {
+        // A bare identifier, the way RON writes a unit variant (`kind: io`,
+        // `kind: canceled` in a real event log), not a quoted string.
+        let failure: Failure = ron::from_str(
+            r#"(time: 1, stage: Backup, kind: brand_new_kind, detail: "something newer")"#,
+        )
+        .expect("an unknown kind must not fail the whole value");
+
+        assert_eq!(failure.kind, ErrorKind::Unknown);
+        assert_eq!(failure.detail, "something newer", "the rest still loads");
     }
 
     #[test]

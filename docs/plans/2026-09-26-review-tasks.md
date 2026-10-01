@@ -1,12 +1,11 @@
 # Code review: corrections and hardening tasks
 
 **Date:** 2026-09-26 · **Baseline:** `main` at `7a8490b` (0.6.0) plus the
-uncommitted web-interface work in the working tree (`web_daemon.rs`,
-`web_tls.rs`, `ErrorKind::AppUpdated`, route and locale changes).
+uncommitted `ErrorKind::AppUpdated` and locale changes in the working tree.
 
 This is the task list from a full review of the codebase: the rustic engine,
-every place that spawns or feeds an external process, the web interface and
-REST API, the COSMIC GUI, i18n, packaging, CI, and documentation. Each task
+every place that spawns or feeds an external process, the COSMIC GUI, i18n,
+packaging, CI, and documentation. Each task
 says what is wrong, where, how to fix it, and how to prove the fix. Pick tasks
 up in the order given under [Sequencing](#sequencing).
 
@@ -18,18 +17,17 @@ up in the order given under [Sequencing](#sequencing).
 2. [Status legend](#status-legend)
 3. [Summary](#summary)
 4. [Security: processes, secrets and files (SEC)](#security-processes-secrets-and-files-sec)
-5. [Security: web interface and API (WEB)](#security-web-interface-and-api-web)
-6. [Correctness and reliability (REL)](#correctness-and-reliability-rel)
-7. [GUI, COSMIC conventions and accessibility (UI)](#gui-cosmic-conventions-and-accessibility-ui)
-8. [i18n (I18N)](#i18n-i18n)
-9. [Architecture and code quality (ARC)](#architecture-and-code-quality-arc)
-10. [Tests (TST)](#tests-tst)
-11. [CI, supply chain and packaging (CI)](#ci-supply-chain-and-packaging-ci)
-12. [Documentation (DOC)](#documentation-doc)
-13. [Standards baseline](#standards-baseline)
-14. [What is already right: do not regress](#what-is-already-right-do-not-regress)
-15. [Sequencing](#sequencing)
-16. [Review evidence](#review-evidence)
+5. [Correctness and reliability (REL)](#correctness-and-reliability-rel)
+6. [GUI, COSMIC conventions and accessibility (UI)](#gui-cosmic-conventions-and-accessibility-ui)
+7. [i18n (I18N)](#i18n-i18n)
+8. [Architecture and code quality (ARC)](#architecture-and-code-quality-arc)
+9. [Tests (TST)](#tests-tst)
+10. [CI, supply chain and packaging (CI)](#ci-supply-chain-and-packaging-ci)
+11. [Documentation (DOC)](#documentation-doc)
+12. [Standards baseline](#standards-baseline)
+13. [What is already right: do not regress](#what-is-already-right-do-not-regress)
+14. [Sequencing](#sequencing)
+15. [Review evidence](#review-evidence)
 
 ---
 
@@ -45,15 +43,15 @@ them hold.
   fail for the reason in the task, then fix. Security controls get a standing
   test that **fails (not skips) when its fixture is missing**.
 - **Security fixes are proven against a running system**, not by reading the
-  code. Each WEB task lists a `curl` or `openssl` command; run it before and
-  after and paste both results into the PR.
+  code. Run the check the task lists before and after and paste both results
+  into the PR.
 - **i18n:** every user-facing string goes through `fl!`. Adding, removing or
   rewording a key updates **all five** locales (`en`, `bg`, `de`, `gsw`,
   `sv`) in the same change. `cargo test --test i18n` must pass.
 - **American spelling** everywhere: code, comments, identifiers, docs, commit
   messages.
 - **README stays current.** If observable behavior changes, update the README
-  (and `docs/web-interface.md` for API changes) in the same commit.
+  in the same commit.
 - **Constants** go in `src/constants.rs`, documented, never duplicated.
 - **Logging:** diagnostics through `debug_log!(CATEGORY, …)`; genuine errors
   through `error_log!` (stderr and the debug log).
@@ -76,7 +74,7 @@ days) · **L** (3+ days).
 
 No Critical findings. The fundamentals are sound: no shell anywhere, passwords
 never on argv or in the environment, private rclone config, atomic unit files,
-fail-closed web auth, TLS always on, and a clean `cargo audit`.
+and a clean `cargo audit`.
 
 The most important work, in order:
 
@@ -89,17 +87,13 @@ The most important work, in order:
 | [REL-4](#rel-4-hooks-and-password-commands-can-hang-past-their-timeout) | High | Hooks and password commands can hang past their timeout |
 | [REL-5](#rel-5-excluded-paths-are-not-escaped-for-glob-matching) | High | Excluded paths are not escaped for glob matching (the repository can back up into itself) |
 | [REL-6](#rel-6-non-utf-8-file-names-cannot-be-browsed-mounted-or-restored-singly) | High | Non-UTF-8 file names cannot be browsed, mounted, or restored individually |
-| [I18N-1](#i18n-1-fluent-syntax-error-drops-the-token-shown-once-warning) | High | A Fluent syntax error drops the "token shown only once" warning in every locale |
 | [UI-1](#ui-1-the-applets-open-button-launches-another-applet) | High | The applet's Open button launches another applet |
 | [UI-2](#ui-2-launch-flags-are-lost-when-an-instance-is-running) | High | `--new-backup`, `--restore` and `--profile` are ignored when an instance is running |
 | [UI-3](#ui-3-there-is-no-way-to-quit) | High | There is no way to quit, yet the menu and an error message say "Quit" |
 | [UI-4](#ui-4-deleting-a-snapshot-has-no-confirmation) | High | Deleting a snapshot has no confirmation |
 | [SEC-2](#sec-2-restoring-a-crafted-snapshot-can-write-outside-the-target) | Medium | Restoring a crafted snapshot can write outside the chosen folder |
-| [WEB-1](#web-1-credential-and-profile-changes-never-reach-the-running-daemon) | Medium | Credential and profile changes never reach the running daemon |
-| [WEB-2](#web-2-no-header-read-timeout-or-connection-cap-allow-list-checked-after-tls) | Medium | No header read timeout or connection cap; allow-list checked only after TLS |
-| [WEB-11](#web-11-there-is-no-csrf-protection) | Medium | No CSRF protection; cross-site requests can already trigger the lockout |
 
-Totals: 12 High findings, 39 Medium, 22 Low. Test coverage for the High items
+Totals: 11 High findings, 31 Medium, 17 Low. Test coverage for the High items
 is listed in [TST-1](#tst-1-add-regression-tests-for-every-high-finding),
 which is itself marked High because it gates each fix.
 
@@ -129,8 +123,7 @@ an export file as untrusted and says nothing from it may run unprompted.
 
 1. **`hooks`.** Each hook is an arbitrary command. `apply_schedule` installs
    a systemd timer for every imported profile right away, so the hook runs at
-   the first timer fire once the user ticks "Remember password". The web API's
-   `run` route runs it too.
+   the first timer fire once the user ticks "Remember password".
 2. **`schedule`.** It is the trigger for (1).
 3. **`Destination::Rclone.remote`.** It is used verbatim as `"{remote}:{path}"`,
    the last argument to `rclone serve restic`. A value such as
@@ -429,7 +422,7 @@ still written to its new location.
 
 ---
 
-### SEC-6. Timers and the web service can point at a binary in a world-writable directory
+### SEC-6. Timers can point at a binary in a world-writable directory
 
 **Status: Done.** `trusted_executable` walks every ancestor directory,
 refusing group/other write access unless sticky-and-root-owned, and
@@ -437,27 +430,11 @@ requires the file itself be owned by root or the current user. Verified
 with a real `/usr/bin/true` (trusted) and a world-writable tempdir
 (refused) — see `schedule::tests`.
 
-`web_daemon.rs`'s own unit, earlier left as "the peer session's file, not
-checked here," was re-examined once that was no longer true (this
-session had since edited `web_tls.rs` itself for WEB-7, with no
-conflict) rather than left stale. `web_executable()` builds the daemon's
-path by swapping the file name on the *already-trusted* main
-executable's path (`schedule::executable()?.with_file_name(…)`), which
-only ever checked `stellarshot`'s own file entry, not the
-`stellarshot-web` sibling — a directory safe enough for one file does
-not guarantee every file in it shares the same ownership. Made
-`trusted_executable` `pub(crate)` and re-checked the swapped path with
-it directly, returning the same kind of refusal `schedule::executable()`
-already does (and which already reaches the user through the existing
-`error-details` wrapping, so no new locale key was needed). No new
-dedicated test: this reuses `trusted_executable` exactly as already
-proven by `schedule::tests`, the same way `schedule::executable()`
-itself has no test of its own beyond that. All of `schedule::` (11
-tests) and `web_daemon::` (5 tests) still pass.
+All of `schedule::` (11 tests) still passes.
 
 **Low · S · Verified**
 
-**Files:** `src/schedule.rs:86-101,147-154`, `src/web_daemon.rs:44-71`
+**Files:** `src/schedule.rs:86-101,147-154`
 
 **Problem.** Run the portable tarball from `/tmp`, `/var/tmp` or `/dev/shm`
 and the persistent user unit gets `ExecStart="/tmp/…/stellarshot"`. After a
@@ -482,63 +459,29 @@ backups".
 before chmod'ing or opening it, refusing a symlink rather than following it
 to its target.
 
-`web_tls.rs`'s TLS-key half, earlier left as "the peer session's own,"
-was picked up once that stopped being true. `write_private` no longer
-opens `path` directly with `.create(true).mode(0o600)` — a mode that,
-exactly as the problem statement says, only takes effect when the open
-call actually creates the file, so a pre-existing looser `key.pem`
-(regenerated because only `cert.pem` went missing) kept its old mode.
-Now writes through `atomicwrites::AtomicFile::write_with_options` (the
-same crate this session already reached for in REL-15 and SEC-6) to a
-fresh temporary file, which `mode(0o600)` always applies to since it is
-always newly created, then renames it into place — the rename replaces
-`path`'s directory entry outright, so whatever mode the file had before
-is gone, not merged with the new one. `self_signed_paths` also now
-creates its directory with `DirBuilder::new().mode(0o700)` instead of
-`create_dir_all`'s own default (umask-dependent, and not necessarily
-private), the same "only applies to a directory it actually creates,
-never retroactively loosens or tightens one already there" caveat
-applying there too.
-
-Added `a_regenerated_key_is_not_readable_by_anyone_else_even_if_the_old_one_was`
-— the exact scenario the plan's own verify text describes (a loosely
-permissioned key, its matching certificate deleted, regenerated) — and
-`the_tls_directory_is_not_traversable_by_anyone_else`, neither of which
-existed before; both pass, alongside the 9 other `web_tls::` tests
-already there.
-
 **Low · S · Verified**
 
-**Files:** `src/web_tls.rs:50-92`, `src/app.rs:2035-2050`
+**Files:** `src/app.rs:2035-2050`
 
 **Problem.**
 
-- `OpenOptions::mode(0o600)` only applies when a file is **created**. When
-  `cert.pem` is missing but a looser `key.pem` exists, the regenerated key
-  keeps the old mode. The web directory is created at default permissions.
 - Open Copy: `set_permissions(&copy, 0o400)` follows symlinks. If the
   restored version is a symlink, the chmod lands on its target (for example
   `~/.ssh`), and `xdg-open` then opens that target.
 
 **Fix.**
 
-- TLS key: write to a temporary file created with
-  `create_new(true).mode(0o600)`, fsync it, then rename it into place (or use
-  `atomicwrites`). Create the directory with `DirBuilder::new().mode(0o700)`.
-  Warn in the log if a user-supplied key file is readable by group or others.
 - Open Copy: require `symlink_metadata(&copy)?.is_file()` before the chmod and
   the open; refuse anything else.
 
-**Verify.** Test: create `key.pem` at 0644, delete `cert.pem`, call
-`self_signed_paths`, and assert mode 0600. Test: Open Copy of a symlink
-version returns an error and changes no permissions.
+**Verify.** Test: Open Copy of a symlink version returns an error and
+changes no permissions.
 
 ---
 
 ### SEC-8. Secrets are not zeroized
 
-**Status: Done for the `--run` child; the web daemon's own dumpable flag is
-the peer session's file, not touched here.** `Secret` is now backed by
+**Status: Done for the `--run` child.** `Secret` is now backed by
 `secrecy::SecretString`, which zeroizes on drop and redacts its own
 `Debug`; a hand-written `Serialize` (documented as the one deliberate
 `expose_secret` call besides `expose()` itself — `secrecy` refuses a
@@ -572,25 +515,23 @@ proof of the mechanism `runner::main` depends on, not merely "it compiles."
 Restores the previous dumpable state afterward so it can't leak into other
 tests sharing the same test binary process.
 
-**Not done:** the web daemon's own `prctl` call (`src/web.rs`, the peer
-session's file tonight) and zeroizing the `String` momentarily produced by
+**Not done:** zeroizing the `String` momentarily produced by
 `keyring::load` before it is re-wrapped into a `Secret`.
 
 **Low · M · Verified**
 
 **Files:** `src/engine/repo.rs:26-45` (`Secret`), `src/app/child.rs:131-134`,
-`src/runner.rs:342-351`, `src/keyring.rs:57`, `src/web.rs` (`AuthConfig`)
+`src/runner.rs:342-351`, `src/keyring.rs:57`
 
 **Problem.** `Secret` wraps a plain `String`, derives `Clone` and `Serialize`,
 and is copied into the job JSON buffer, the child's stdin buffer, keyring
 results, and every `job()` clone. `drop` frees the memory without wiping it.
-The comment at `runner.rs:350` claims otherwise. The web daemon holds the web
-password in plain memory for its whole lifetime.
+The comment at `runner.rs:350` claims otherwise.
 
 **Fix.** Back `Secret` with `secrecy::SecretString` (it zeroizes on drop and
 redacts `Debug`). Serialize through `ExposeSecret` only at the stdin boundary,
-into a `zeroize::Zeroizing<Vec<u8>>`. In the `--run` child and the web
-daemon, call `prctl(PR_SET_DUMPABLE, 0)` (`rustix::process`) so core dumps
+into a `zeroize::Zeroizing<Vec<u8>>`. In the `--run` child, call
+`prctl(PR_SET_DUMPABLE, 0)` (`rustix::process`) so core dumps
 cannot capture passwords. Fix the misleading comment.
 
 **Verify.** `grep -rn 'expose_secret' src` lists only the intended boundaries.
@@ -634,827 +575,6 @@ old text match rather than replacing it.
 **Verify.** `grep -n 'Command::new(RCLONE)' src/engine/rclone.rs` shows one
 match. A unit test asserts that the builder's logged form of
 `client_secret=x` is redacted.
-
----
-
-## Security: web interface and API (WEB)
-
-Context: the daemon (`stellarshot-web`, a systemd user service) currently
-serves five routes: health, list backups, list snapshots, browse, and
-`POST …/run`. TLS is always on. The existing controls work (see
-[What is already right](#what-is-already-right-do-not-regress)). These tasks
-close the gaps. Tests should use `tower::ServiceExt::oneshot` with
-`axum::extract::connect_info::MockConnectInfo` for fast coverage of any
-client address. Each control also needs **one** real-socket test through the
-production `axum_server` path.
-
-### WEB-1. Credential and profile changes never reach the running daemon
-
-**Status: The "minimum" fix is done for auth, the allow-list, and now
-profile visibility too.** Toggling password or token auth, saving a new
-password, regenerating the token, and adding or removing an allow-list
-entry all call `App::restart_web_daemon_if_active`, which restarts the
-daemon (if `web_daemon::Status::Active`, from the last status Settings was
-told) right after the setting is saved — closing the specific bug in the
-Problem section (a regenerated token's old value kept working). Fixed the
-`config.rs` doc comment and added a paragraph to `docs/web-interface.md`.
-Scope change already started/stopped the daemon; switching between
-`Localhost` and `Lan` while already on is unchanged (deliberately manual
-— see that arm's own comment) and so is a port or TLS change (still the
-Restart button, per the existing docs).
-
-`upsert_profile` now also restarts the daemon, but only when the profile
-is genuinely new (not already in `self.config.profiles`) — the API's own
-list of backups changed, the one thing this is protecting; an edit to a
-profile already in that list (a renamed source, a changed password
-command, `RecordSuccess` after a backup finishes) does not restart
-anything, since it changes nothing the API can see and restarting on
-every such save would interrupt a request far more often than it
-protects. `remove_profile` restarts unconditionally, for the same
-"visibility changed" reason. Both call sites route through the one
-`upsert_profile`/`remove_profile` already shared by every path that adds,
-edits or removes a profile (the wizard finishing, `RecordSuccess`, the
-password-command dialog, "Remove", "Delete all data"), so nothing needed
-touching at each of those call sites individually.
-
-Not done: the plan's own "preferred" `ArcSwap` fix (restarting still
-means a brief window where in-flight requests are cut, which WEB-8's own
-graceful-shutdown work already softens but does not eliminate). Not run:
-the live `curl` regenerate-then-retry proof, or its equivalent for a
-newly-added backup appearing in `GET /api/v1/backups` after a restart
-(needs a real running daemon and keyring; not attempted against this
-machine's real settings, which is now Dave's live desktop session, not
-an idle sandbox).
-
-**Medium · M · Verified**
-
-**Files:** `src/web.rs:79-100` (everything loaded once), `src/app.rs:2757-2801`
-(save password, generate token, allow-list), `src/app/config.rs:128-130`
-
-**Problem.** The daemon reads the password, token hash, enabled methods,
-allow-list, network scope **and the profile list** once, at startup.
-Regenerating a token, changing the password, turning a method off, or
-removing an allow-list entry only writes settings. The config doc comment
-says regenerating invalidates the old token "immediately", which is false.
-Backups added, edited or removed in the window stay invisible, or still
-reachable, through the API until a restart.
-
-**Fix.** Pick one:
-
-- **(preferred)** Keep `AuthConfig`, the allow-list and profiles in
-  `arc_swap::ArcSwap`, and reload them when cosmic-config changes (watch the
-  config the same way the app does). The keyring password is reloaded on the
-  same signal.
-- **(minimum)** After any web-auth, allow-list, scope or profile change,
-  restart the daemon if it is active (`web_daemon::restart()`), without
-  interrupting a running backup (see [WEB-8](#web-8-graceful-shutdown-and-duplicate-run-requests)).
-
-Either way, fix the comment at `config.rs:128-130`, and add "changes apply
-immediately" or "restart to apply" wording to the Settings page and
-`docs/web-interface.md`.
-
-**Verify.** Unit test: swap the token hash and assert the old token gets 401
-via `oneshot`. Live:
-
-```sh
-curl -sk -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $OLD" \
-  https://127.0.0.1:8737/api/v1/health   # before regenerating: 200
-# regenerate in Settings
-curl -sk -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $OLD" \
-  https://127.0.0.1:8737/api/v1/health   # must now be 401
-```
-
----
-
-### WEB-2. No header read timeout or connection cap; allow-list checked after TLS
-
-**Status: Done.** `serve` configures `http_builder().http1().timer(...)
-.header_read_timeout(WEB_HEADER_READ_TIMEOUT)` and
-`http_builder().http2().timer(...).keep_alive_interval(...)
-.keep_alive_timeout(...).max_concurrent_streams(...)`, all in
-`constants.rs` already. Added `AllowListAcceptor`, wrapping the TLS
-acceptor's own inner acceptor (`RustlsAcceptor::new(tls).acceptor(...)`,
-rather than the `from_tcp_rustls` convenience function that hardcodes
-`DefaultAcceptor`): it checks `stream.peer_addr()` against the allow-list
-*before* the TLS handshake even starts, and holds a `WEB_MAX_CONNECTIONS`
-`Semaphore` permit for the connection's whole lifetime
-(`LimitedStream`, released on drop — i.e. when the connection actually
-closes, not merely when it was accepted). The `allow_list` middleware
-layer stays as a second check, per the plan. `TimeoutLayer` and
-`RequestBodyLimitLayer` were already in place from earlier work. The
-allow/cap decision itself (`AllowListAcceptor::decide`) is deliberately
-factored out from the `Accept` impl so it is testable against a plain
-`IpAddr`, without a real socket — this sandbox's loopback networking
-hangs when a test both listens and connects to itself at once, confirmed
-environmental (reproduced with a bare-minimum server, nothing specific to
-this code) and already noted in WEB-3's own status note; the couple of
-lines `Accept::accept` itself still does (`peer_addr()`, wrapping the
-result) are correspondingly thin and untested directly, and
-`LimitedStream`'s own permit-release-on-drop is tested separately with an
-in-memory `tokio::io::duplex` pair instead of a real connection. Not run
-tonight: the live `openssl s_client`/`ss -tn` proofs (need a real running
-daemon).
-
-**Medium · M · Verified**
-
-**Files:** `src/web.rs:140-180`; upstream `hyper-1.11/src/common/time.rs`
-(the default `header_read_timeout` is dropped when no timer is set, with only
-a `warn!`), `axum-server-0.8/src/server.rs`
-
-**Problem.** axum-server builds hyper's connection builder without a timer, so
-the default 30-second header read timeout never applies. Any host that can
-reach the port, **including one not on the allow-list** (the allow-list is
-axum middleware and runs only after TLS and a full request), can open a
-connection and send nothing. About 1,000 such connections exhaust the
-service's file-descriptor limit.
-
-**Fix.**
-
-1. Configure the builder:
-   ```rust
-   use hyper_util::rt::TokioTimer;
-   let mut server = axum_server::tls_rustls::from_tcp_rustls(listener, tls)?;
-   server.http_builder().http1().timer(TokioTimer::new())
-       .header_read_timeout(Duration::from_secs(10));
-   server.http_builder().http2().timer(TokioTimer::new())
-       .keep_alive_interval(Some(Duration::from_secs(30)))
-       .keep_alive_timeout(Duration::from_secs(10))
-       .max_concurrent_streams(32);
-   ```
-2. Enforce the allow-list at accept time. Write an `AllowListAcceptor` that
-   wraps the rustls acceptor (`axum_server::accept::Accept`), checks
-   `stream.peer_addr()` **before** the handshake, and drops disallowed peers.
-   Keep the middleware as a second layer.
-3. Cap concurrent connections: a `tokio::sync::Semaphore` permit held by the
-   accepted stream wrapper, for example 64.
-4. Add
-   `tower_http::timeout::TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, 30s)`
-   and a `RequestBodyLimitLayer` (the API takes no bodies today; 16 KiB is
-   plenty).
-5. Put the numbers in `constants.rs`.
-
-**Verify.** A test spawns the real server, opens a TLS connection, sends
-nothing, and asserts it is closed within about 11 seconds. Live:
-
-```sh
-(sleep 60) | openssl s_client -connect 127.0.0.1:8737 -quiet & sleep 15
-ss -tn state established '( sport = :8737 )'   # must be empty after the fix
-# from a host NOT on the allow-list:
-openssl s_client -connect HOST:8737 </dev/null | grep -c 'BEGIN CERT'   # must print 0
-```
-
----
-
-### WEB-3. Lockout and brute-force protection
-
-**Status: Done, except item 2's password-strength number is 12 not a
-different value someone might argue for, and the manual `xargs -P64 curl`
-proof below is not yet run against a real compiled binary tonight.** A
-failure only counts against the throttle when the request presented `Basic`
-or `Bearer` credentials (`presented_credentials`); lockouts escalate 5/15/60
-minutes then cap at 24 hours, one level further each time an address returns
-after its previous window fully passed; a global budget (50 failures/10
-minutes across every address) pauses password auth for everyone, tokens
-unaffected; the check-and-reserve happens under one lock
-(`Throttle::try_begin`), closing the race a separate check-then-increment
-left open — proven with 64 real OS threads hammering it at once, not merely
-asserted; both locks use `unwrap_or_else(PoisonError::into_inner)`; the
-address map is pruned after a week of inactivity and capped at 10,000
-entries; Settings now refuses a web password under 12 characters
-(`password_long_enough`). `docs/web-interface.md` documents the
-`X-Forwarded-For` position (item 7). Automated `cargo test` coverage for the
-real-socket scenarios (credential-less requests, cross-site requests,
-concurrent HTTP-level lockout) could not be run to a clean finish tonight —
-see this file's own note below and `VALIDATION.md`'s "Brute-force
-throttling" section for why, and for the OS-thread-level test that proves
-the one property those would have that a pure logic test alone could not.
-
-**Medium · M · Verified**
-
-**Files:** `src/web.rs:220-330` (`authenticate`, `Throttle`),
-`src/app.rs:2757-2767`
-
-**Problem.**
-
-- **Anyone can lock out the owner.** `record_failure` runs for requests with
-  **no** `Authorization` header and for `OPTIONS` preflights. A web page the
-  user visits can fire five `fetch(…, {mode: "no-cors"})` calls at
-  `https://127.0.0.1:8737` (the browser already trusts the certificate, as the
-  docs instruct) and lock the owner out for 5 minutes, repeatedly. Behind an
-  SSH tunnel or reverse proxy (both suggested in the docs) every client is
-  `127.0.0.1`, so one client locks out all of them.
-- **Weak rate limit.** 5 attempts per 5 minutes per IP, with no escalation and
-  no global budget, gives 1,440 guesses a day per address. The only password
-  rule is "not empty".
-- **Race.** `locked_out` and `record_failure` take the lock separately, so
-  concurrent requests get extra guesses.
-- **Unbounded map.** The `HashMap` is never pruned.
-- `Mutex::lock().unwrap()` panics a worker if the lock is poisoned.
-
-**Fix.**
-
-1. Count a failure only when an `Authorization` header was present and parsed
-   as `Basic` or `Bearer`. Cross-site requests are refused before the throttle
-   by [WEB-11](#web-11-there-is-no-csrf-protection). Land WEB-11 first or
-   together with this task.
-2. Enforce a minimum password length of 12 in Settings (OWASP ASVS 5.0 §6.2),
-   with a new localized error.
-3. Escalate lockouts per address (5 min, 15, 60, capped at 24 h). Add a
-   global budget: more than 50 failures in 10 minutes from all addresses
-   pauses password auth for everyone (tokens keep working) and logs it.
-4. Check-and-reserve under one lock:
-   `fn try_begin(&self, ip) -> Result<Guard, Duration>` counts the attempt
-   before verification, and a success clears it.
-5. Prune expired entries on insert; cap the map at, say, 10,000 entries.
-6. Use `lock().unwrap_or_else(PoisonError::into_inner)`.
-7. Document that behind a proxy the allow-list and throttle see the proxy's
-   address. Continue to ignore `X-Forwarded-For`.
-
-**Verify.** `oneshot` tests:
-
-- 10 credential-less requests, then a correct Basic gives 200.
-- `Sec-Fetch-Site: cross-site` gives 403 and does not count.
-- 64 concurrent wrong passwords give at most 5 × 401 and the rest 429.
-- The global budget trips.
-
-Live:
-
-```sh
-for i in 1 2 3 4 5 6; do curl -sk -o /dev/null https://127.0.0.1:8737/api/v1/health; done
-curl -sk -u x:"$PW" -o /dev/null -w '%{http_code}\n' https://127.0.0.1:8737/api/v1/health  # 200, not 429
-seq 64 | xargs -P64 -I{} curl -sk -o /dev/null -w '%{http_code}\n' -u x:wrong \
-  https://127.0.0.1:8737/api/v1/health | sort | uniq -c   # at most 5 × 401
-```
-
----
-
-### WEB-4. "Reachable on the network" binds every interface with an open allow-list
-
-**Status: Done.** `is_allowed` takes the scope and falls back to
-`WEB_PRIVATE_RANGES` (now in `constants.rs`) in `Lan` scope when the
-allow-list is empty, and to loopback only in `Localhost` scope; `matches`
-canonicalizes the address first. `docs/web-interface.md` says "every network
-interface" rather than "the same network". Not run tonight: the live VPN-
-interface check (this sandbox has no VPN interface to test against).
-
-**Medium · S · Verified**
-
-**Files:** `src/web.rs:104-110,205-215`, `src/app/config.rs:93-97,132-135`,
-Settings text in all locales
-
-**Problem.** The LAN scope binds `0.0.0.0` (VPN, Docker bridges, public Wi-Fi,
-a VPS's public address). An empty allow-list allows everyone. The UI says
-"any other device on the same network", which understates this.
-
-**Fix.** In LAN scope, treat an empty allow-list as "private ranges only":
-`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`,
-`127.0.0.0/8`, `fc00::/7`, `fe80::/10`. Put these in `constants.rs`. Reword
-the UI (all locales) and the docs to say "all network interfaces". Before any
-future dual-stack bind, normalize with `IpAddr::to_canonical()` so an
-IPv4-mapped IPv6 address cannot slip past an IPv4 entry. Add that call now,
-with a test.
-
-**Verify.** Unit test: `is_allowed(&[], "8.8.8.8".parse()?, Scope::Lan)` is
-false and `"192.168.1.5"` is true. `is_allowed` of `::ffff:8.8.8.8` against a
-`192.168.0.0/16` list is false. Live: connect through a VPN interface address
-and expect a rejection.
-
----
-
-### WEB-5. Security events are not logged in release builds
-
-**Status: Done.** `Throttle::try_begin` logs once (`error_log!`) the moment
-an address's lockout starts, and `note_global_failure` logs once when the
-global budget is exceeded — both already rate-limited to one line per event
-by construction, not by a separate check. Startup now logs `error_log!(WEB,
-…)` when password auth is enabled but nothing was loaded from the keyring,
-and separately when token auth is enabled but no token hash is configured;
-a new `auth_readiness` (pure, unit-tested for all four combinations of
-enabled/loaded) distinguishes that genuine "was supposed to work and
-didn't" case from a deliberate no-auth configuration (neither method
-enabled at all, which already fails closed today and is left alone rather
-than turned into a new startup failure it never asked for) — only the
-former makes `main` return `ExitCode::FAILURE` before ever binding, the
-same as an unloadable TLS certificate already does. Web-triggered runs now
-record the peer address and which auth method let them in: `is_authenticated`
-returns `Option<WebAuthMethod>` instead of `bool`, `authenticate` attaches
-it to the request via an extension, `run_backup` reads it back alongside
-`ConnectInfo` (through a small hand-written `PeerAddr` extractor, since
-axum 0.8 has no built-in `Option`-extractor support for `ConnectInfo` the
-way it does for `Extension`), and `event_log::record_web` stores both on
-the `Event` as a new `web: Option<WebContext>` field — `#[serde(default)]`
-so an entry recorded before this field existed, or one from
-`drain_running_jobs` (a shutdown-time cleanup with no request to
-attribute, which still calls the plain `record`), reads back as `None`
-rather than failing to parse; proven with a deserialization test against a
-hand-written pre-field RON string, the same pattern `Source`'s own
-backward-compat test already established. Verified end to end with a new
-test that runs a real backup through the *full* router (allow-list,
-`authenticate`, `ConnectInfo` — not the bare `router(state)` every other
-route test in that module uses) and reads the resulting history entry's
-`web` field back with the real peer address and `WebAuthMethod::Password`;
-this test cannot actually run to completion in this sandbox (see
-VALIDATION.md's 2026-09-29 note — it joins 21 already-documented tests
-that time out on their own client-side `TcpStream::connect` here,
-independent of anything this session changed).
-
-**Medium · S · Verified**
-
-**Files:** `src/web.rs:200,229` (only `debug_log!`), `src/keyring.rs:99-109`,
-`src/web/routes.rs:188-216`
-
-**Problem.** `debug_log!` is compiled out of releases, so a brute-force
-attempt, a lockout, or a daemon whose password auth is silently dead (keyring
-locked at boot) leaves nothing in
-`journalctl --user -u stellarshot-web`. Web-triggered runs do not record the
-client address or the auth method (OWASP ASVS 5.0 §16).
-
-**Fix.**
-
-- `error_log!(WEB, …)` when a lockout starts (address, count), rate-limited
-  to one line per address per window.
-- At startup, log a warning when password auth is enabled but no password
-  loaded. If no usable method remains, log an error and exit non-zero (fail
-  closed and loud).
-- Add the peer address and auth method to History entries from the web
-  source.
-
-**Verify.** An integration test runs `CARGO_BIN_EXE_stellarshot-web` with a
-temp config, makes 5 bad requests, and asserts stderr contains the lockout
-line. Live: `journalctl --user -u stellarshot-web -n 5` shows it.
-
----
-
-### WEB-6. Response hygiene: headers, status codes, error detail
-
-**Status: Done.** Every response carries the five security headers
-(`nosniff`, `no-store`, CSP, `no-referrer`, same-origin CORP), no HSTS. A 401
-carries `WWW-Authenticate: Bearer realm="stellarshot"`. `WrongPassword`/
-`PasswordNotRemembered` now map to 409, `AuthFailed` to 503, `UnsafePath` to
-400, the new `NotFound` kind to 404 — none of the repository-password or
-malformed-path cases return 401 or 500 anymore. `ApiError`'s response body
-is now `{kind, message, request_id}`, never `EngineError.detail` (which can
-carry a password command's or rclone's own stderr, or a local path); the
-detail still reaches the log, tied to the same `request_id`, via
-`error_log!`. Auth scheme matching (`Basic`/`Bearer`) is case-insensitive.
-The password comparison hashes both sides before `ct_eq`, so not even the
-password's length leaks through timing. Not done: a live `curl -skI` header
-check against the real compiled binary tonight (covered by the same-shaped
-`every_response_carries_the_fixed_security_headers_regardless_of_status`
-test instead, itself part of tonight's socket-test environment gap — see
-WEB-3's status note).
-
-**Low · S · Verified**
-
-**Files:** `src/web.rs:121-138,241-244,337-366`, `src/web/routes.rs:60-90`,
-`src/engine/browse.rs:153-158`
-
-**Problem and fix.**
-
-- **No security headers.** Add `SetResponseHeaderLayer::overriding` for:
-  - `X-Content-Type-Options: nosniff`
-  - `Cache-Control: no-store`
-  - `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`
-  - `Referrer-Policy: no-referrer`
-  - `Cross-Origin-Resource-Policy: same-origin`
-
-  Send HSTS **only** with a user-supplied certificate.
-- **401 without `WWW-Authenticate`** (RFC 9110 §11.6.1). Send
-  `WWW-Authenticate: Bearer realm="stellarshot"`. Bearer keeps browsers from
-  showing a Basic prompt.
-- **Wrong status codes.**
-  - A repository password problem (`WrongPassword`, `PasswordNotRemembered`)
-    returns **401**, so a client with a valid token sees "bad credentials".
-    Use 409 (or 503) with a distinct `kind`.
-  - A missing or `..` path returns 500. Return 404, or 400 for a malformed
-    path.
-- **Internal detail leaks.** 5xx responses serialize `EngineError.detail`,
-  which can include the password command's stderr, rclone's stderr and local
-  paths. Return `{kind, message}` plus a request ID, and log the detail with
-  `error_log!`.
-- **Password comparison leaks the length** (`a.len() == b.len() &&`
-  short-circuits). Compare `Sha256(a)` with `Sha256(b)` using `ct_eq`, as the
-  token check already does.
-- Auth scheme names are matched case-sensitively. RFC 9110 says they are
-  case-insensitive; use `eq_ignore_ascii_case`.
-
-**Verify.** One `oneshot` test asserts that a 200, 401, 403, 404 and 429 each
-carry all the headers. Tests for the status mapping. A test with
-`password_command = "sh -c 'echo LEAKME >&2; exit 1'"` asserts the response
-does not contain `LEAKME`. Live: `curl -skI … | grep -iE 'nosniff|no-store|www-authenticate'`.
-
----
-
-### WEB-7. TLS configuration hardening
-
-**Status: The crypto-provider fix, IP SANs, validity period and the two
-standing TLS-handshake tests are done; the Settings UI and the expiry
-warning are not.**
-`rustls::crypto::aws_lc_rs::default_provider().install_default()` runs at
-the top of `web::main`; `rcgen` is now
-`default-features = false, features = ["aws_lc_rs", "pem"]`, so `ring` is
-gone from the dependency tree entirely — confirmed with
-`cargo tree -i ring` (nothing to print) and `cargo tree -i aws-lc-rs`
-(one provider, used by both `rcgen` and `rustls`/`axum-server`), not just
-by reading `Cargo.toml`. The self-signed certificate now names `127.0.0.1`
-and `::1` as IP SANs alongside the hostname/mDNS/`localhost` DNS names
-(`rcgen::CertificateParams::new` classifies each by whether it parses as
-an IP, so no `SanType` construction by hand), and is valid for
-`WEB_CERT_VALIDITY` (about two years, in `constants.rs`) rather than
-`rcgen`'s own 1975–4096 default. Added `web_tls::fingerprint`
-(SHA-256, colon-hex, matching the `curl --pinnedpubkey`/browser-viewer
-format), tested for stability and for differing between two certificates.
-Not done: showing that fingerprint in Settings, a "Regenerate
-certificate" button, and warning in the log when a *user-supplied*
-certificate has expired (parsing an arbitrary certificate's own validity
-window would need a real X.509 parser as a new dependency, which felt like
-more than this one warning justified tonight) — both need either a live
-Settings UI or a parser this session did not add.
-
-The two items the plan asks to turn into standing tests turned out not to
-need a live daemon at all: `a_real_handshake_capped_below_tls_1_2_never_completes`
-and `plain_http_gets_no_response_on_the_tls_only_port` (`src/web.rs`) spawn
-the exact same real, self-signed, `axum_server`/`RustlsConfig` test server
-`a_real_curl_request_over_tls_reaches_the_health_route` already did (now
-shared as `spawn_real_tls`), then run a real `curl --tls-max 1.1` and a real
-plain `curl http://` against it — both confirmed to fail fast (`000`, no
-response at all) rather than merely typechecking; run directly with
-`--nocapture` before trusting them, not just included in a passing suite.
-The `openssl s_client`/`subjectAltName` proof is still not run tonight, for
-the same "needs a real running daemon" reason as WEB-2/WEB-9's own status
-notes — showing a SAN in a handshake response is a different shape of check
-than "does the handshake even complete."
-
-**Low · S · Verified**
-
-**Files:** `src/web_tls.rs:55-92`, `src/bin/web.rs`, `Cargo.toml` (`rcgen`),
-`src/app.rs:2084`
-
-**Problem and fix.**
-
-- **Two crypto providers are compiled in.** `ring` comes through rcgen,
-  `aws-lc-rs` through rustls/axum-server. If a future dependency enables
-  `rustls/ring`, rustls cannot choose and panics.
-  - Call `rustls::crypto::aws_lc_rs::default_provider().install_default()`
-    at the top of `web::main`.
-  - Set
-    `rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "pem"] }`.
-  - Check with `cargo tree -i ring -e features`.
-- **The self-signed certificate never mismatches less.** Settings shows
-  `https://127.0.0.1:port`, but the certificate has no IP subject names,
-  which trains users to click through warnings. Add `127.0.0.1` and `::1`
-  (and the LAN address in LAN scope) as IP SANs.
-- **Validity.** It runs from 1975 to 4096 (rcgen defaults). Use about 2 years
-  and add a "Regenerate certificate" button.
-- **No way to verify the certificate.** Show its SHA-256 fingerprint in
-  Settings so trust-on-first-use can actually be checked (see the
-  `curl --pinnedpubkey` example for the docs).
-- **Expiry is silent.** Warn in the log when a user-supplied certificate has
-  expired.
-
-**Verify.**
-
-- `openssl s_client -connect 127.0.0.1:8737 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName`
-  lists `IP Address:127.0.0.1`.
-- `curl -sk --tls-max 1.1 https://127.0.0.1:8737/` fails.
-- `curl http://127.0.0.1:8737/` fails.
-
-Make the last two standing tests; today they are only checked by hand in
-`VALIDATION.md`.
-
----
-
-### WEB-8. Graceful shutdown and duplicate run requests
-
-**Status: Done**, taking the plan's own documented-exception alternative
-for the in-process-vs-child-process item (see `CONTRIBUTING.md`) rather
-than the larger `app::child::run` refactor. `run_backup`
-checks `engine::lock::is_running` before ever asking for the password, and
-returns 409 (`ErrorKind::Locked`) if the backup is already going — proven
-by holding a real lock and calling the handler directly, not a mock.
-`serve` now builds an `axum_server::Handle`, and a task waits for SIGTERM
-(the signal `systemctl stop`/`restart`, and the WEB-1 restart-on-change,
-already send — nothing caught it before, so the default action just
-killed the process with no chance to record anything) before calling
-`handle.graceful_shutdown` and draining `AppState`'s own tracked jobs
-(`routes::drain_running_jobs`) for up to `WEB_GRACEFUL_SHUTDOWN_TIMEOUT`
-(30s, in `constants.rs`); whatever is still running past that is recorded
-`Canceled` in the event log and aborted, so the process can still exit —
-proven with a real spawned task that is genuinely aborted (checked by
-waiting past when it would otherwise have finished on its own), not merely
-that draining stopped waiting for it. Added `TimeoutStopSec=60` to the
-unit, comfortably over the 30s grace period. Not run tonight: the live
-"stop the service during a web-started backup, History shows it canceled"
-proof (needs a real running daemon and systemd).
-
-**Low · M · Verified**
-
-**Files:** `src/web.rs:171-176`, `src/web/routes.rs:160-216`,
-`src/web_daemon.rs:56-72`
-
-**Problem.**
-
-- No graceful shutdown. SIGTERM (Stop, Restart, the WEB-1 restart) kills a
-  web-started backup with no History entry.
-- `POST …/run` always returns **202**, even when the backup is already
-  running. The second run fails later, records a `Locked` failure, and runs
-  the password command again.
-- The web daemon runs backups **in-process**, contrary to CONTRIBUTING's
-  "writes run in a child process".
-
-**Fix.**
-
-- Use `axum_server::Handle` with
-  `tokio::signal::unix::signal(SignalKind::terminate())` and
-  `handle.graceful_shutdown(Some(30s))`.
-- Track jobs in a `JoinSet`. On shutdown, wait for them or record them as
-  `Canceled`.
-- Add `TimeoutStopSec=60` to the unit.
-- Before answering 202, check `lock::is_running` (after
-  [REL-8](#rel-8-status-polling-can-make-a-real-backup-fail-with-locked)) and
-  return **409** if the backup is already running.
-- Spawn the backup through `app::child::run` like the window does, or
-  document the deliberate exception in CONTRIBUTING.
-
-**Verify.** Test: two back-to-back POSTs; the second returns 409. Live: stop
-the service during a web-started backup, and History shows it as canceled.
-
----
-
-### WEB-9. Bound the cost of read requests
-
-**Status: Core fix done; the Browser cache is not.** `AppState` now holds a
-`tokio::sync::Semaphore` (`WEB_REPOSITORY_REQUEST_PERMITS`, already in
-`constants.rs`); `list_snapshots` and `browse` each hold a permit for as
-long as they have the repository open, acquired with `try_acquire` (never
-waited for) so a saturated daemon answers 503 with `Retry-After: 5`
-immediately rather than queuing behind a slow remote. Not done: caching the
-opened `Browser` per profile, and the pagination/result-cap planning for
-future routes (WEB-12). Not run tonight: 20 real parallel `curl` requests
-against a large repository (this sandbox's socket-level test hang — see
-WEB-3's status note — makes that specific live check impractical right now;
-the cap itself is proven directly against the semaphore instead).
-
-**Low · M · Verified**
-
-**Files:** `src/web/routes.rs:113-148`, `src/engine/browse.rs:169-185`
-
-**Problem.** Every snapshots or browse request opens the repository and loads
-its whole index, with no concurrency limit or timeout. A slow remote ties up
-a blocking thread per request. Parallel requests multiply memory use.
-
-**Fix.** Put a `tokio::sync::Semaphore` (2 permits, in `constants.rs`) around
-repository-opening routes, returning 503 with `Retry-After` when saturated.
-Cache the opened `Browser` per profile for a few minutes, invalidated on any
-write. Plan pagination and result caps before adding search or download
-routes (see [WEB-12](#web-12-rules-for-routes-not-built-yet)).
-
-**Verify.** Run 20 parallel `curl …/snapshots` against a large repository.
-RSS (`ps -o rss`) stays bounded and extra requests get 503.
-
----
-
-### WEB-10. Service unit hardening and upgrade handling
-
-**Status: Done.** `service_text` adds `StartLimitIntervalSec=300`/
-`StartLimitBurst=5`, `RestartSec=30` (was 5), `NoNewPrivileges=yes`,
-`UMask=0077`, `LockPersonality=yes`,
-`RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` (`AF_UNIX` for the
-keyring's D-Bus session-bus connection), `LimitNOFILE=1024`,
-`MemoryMax=1G` — values kept in `constants.rs`, asserted on directly in a
-new `web_daemon` test. Added `exe::was_replaced`, checked every
-`WEB_UPGRADE_POLL_INTERVAL` (60s) by the same `wait_then_drain` WEB-8
-built for SIGTERM, now generalized to either trigger
-(`ShutdownReason::Signal`/`Upgraded`): an upgrade drains in-flight work the
-same way a signal does, then exits with a distinct non-zero code (`75`) so
-`Restart=on-failure` actually restarts into the new binary rather than the
-process quietly running old code until the next login. `install.sh
-uninstall` now prints the `systemctl --user disable --now 'stellarshot*'`
-cleanup command (as a suggestion, not run automatically — uninstall
-otherwise never touches anything outside the install prefix, and per-user
-systemd units belong to the account, not the prefix). Not run tonight:
-the live "point the TLS certificate at a missing file… ends in `failed`"
-and "replace the binary; the main PID changes within a minute" proofs
-(need a real running daemon and systemd).
-
-**Low · S · Verified**
-
-**Files:** `src/web_daemon.rs:56-72`, `install.sh:118-132`
-
-**Problem.**
-
-- `Restart=on-failure`, `RestartSec=5` and no start limit mean a daemon that
-  fails at startup (bad TLS path, port in use, binary removed) restarts every
-  5 seconds forever.
-- A package upgrade leaves the old daemon running old code until the next
-  login, so security fixes don't take effect.
-- Uninstall leaves the user units behind.
-
-**Fix.** Add to the unit:
-
-- `StartLimitIntervalSec=300` and `StartLimitBurst=5` (in `[Unit]`)
-- `RestartSec=30`
-- `NoNewPrivileges=yes`, `UMask=0077`, `LockPersonality=yes`
-- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`
-- `LimitNOFILE=1024`, `MemoryMax=1G`
-
-Keep the values in `constants.rs`. For upgrades, the daemon polls
-`/proc/self/exe` for the ` (deleted)` suffix every minute. When it appears,
-it drains jobs (WEB-8) and exits with a distinct code, so `Restart=` starts
-the new binary. Reuse the helper from
-[REL-11](#rel-11-one-policy-for-a-binary-replaced-while-running).
-`install.sh uninstall` prints the `systemctl --user disable --now 'stellarshot*'`
-cleanup command.
-
-**Verify.** Point the TLS certificate at a missing file and start the
-service. `systemctl --user status stellarshot-web` ends in `failed` ("start
-request repeated too quickly"). Replace the binary; the main PID changes
-within a minute.
-
----
-
-### WEB-11. There is no CSRF protection
-
-**Status: Done.** `reject_cross_site` runs before authentication and refuses
-(403) anything whose `Sec-Fetch-Site` says cross-site, or whose `Origin`
-(the fallback for a client old enough not to send `Sec-Fetch-Site`) is
-`null` or does not match `allowed_origins` (built from the network scope and
-port). Neither header present (curl, a script, a non-browser client) is let
-through. This closes WEB-3's "anyone can lock out the owner" bug too: a
-cross-site request is refused before it ever reaches the throttle. Not done:
-enumerating this machine's actual LAN IP addresses in `allowed_origins`
-(documented as a deliberate, disclosed gap, not an oversight — see the LAN
-match arm's own comment).
-
-**Medium · S · Verified (absence) / Confirm first (URL-credential case)**
-
-**Files:** `src/web.rs:121-138` (router: allow-list and auth layers only),
-`src/web.rs:220-245` (`authenticate`), `src/web/routes.rs:160-181`
-(`POST /api/v1/backups/{id}/run`)
-
-**Problem.** Nothing checks `Origin` or `Sec-Fetch-Site`, there are no
-anti-CSRF tokens, and the one state-changing route takes no body, so a plain
-HTML form on any website can target it. It isn't exploitable **today**, but
-only because of three incidental properties, not a deliberate control:
-
-- The only credential is the `Authorization` header. There are no cookies.
-- 401 responses carry no `WWW-Authenticate: Basic` challenge, so browsers
-  never prompt for or cache Basic credentials.
-- There is no CORS layer, so a page on another site can't attach an
-  `Authorization` header (that needs a preflight the server never approves).
-
-That isn't good enough, for three reasons:
-
-1. **Cross-site requests already do harm.** A forged request arrives without
-   credentials, gets a 401, and counts toward the lockout, so any web page the
-   user visits can lock the owner out repeatedly (see
-   [WEB-3](#web-3-lockout-and-brute-force-protection)).
-2. **The protection disappears with any of three ordinary changes:**
-   - sending a Basic challenge (for a browser login prompt);
-   - adding CORS (for a companion web app);
-   - adding a cookie login (for the planned HTML interface).
-
-   After any of them, a forged `POST …/run` starts a backup, and backups run
-   the owner's hooks.
-3. **Possible edge case (confirm first).** If a user once opens the API with
-   credentials in the URL (`https://user:pass@host:8737/…`), some browsers may
-   reuse them for later requests to that origin, possibly including a
-   cross-site form POST.
-
-**Fix.**
-
-1. Add a `reject_cross_site` middleware in `web.rs`. Place it **between** the
-   allow-list and authentication (layers run outermost-first, so it's added
-   after `authenticate` and before `allow_list`):
-   ```rust
-   .layer(middleware::from_fn_with_state(auth, authenticate))
-   .layer(middleware::from_fn_with_state(origins, reject_cross_site))
-   .layer(middleware::from_fn_with_state(allowed, allow_list))
-   ```
-   This order means a rejected request never reaches the lockout counter.
-2. Rules, applied to **every** method (reads leak file names; writes run
-   hooks):
-   - `Sec-Fetch-Site` present: allow `same-origin` and `none`; reject
-     `cross-site` and `same-site` with **403**. `same-site` is rejected too,
-     because another port on the same host counts as the same site.
-   - No `Sec-Fetch-Site`, but `Origin` present: allow only if it exactly
-     matches one of the server's own origins. That means `https://` plus
-     `localhost`, `127.0.0.1`, `[::1]`, the machine's hostname or mDNS name,
-     and (in LAN scope) its LAN addresses, on the configured port. Reject
-     anything else with 403, including `Origin: null`.
-   - Neither header: allow. Non-browser clients (curl, scripts, the documented
-     API examples) send neither, so nothing existing breaks. Every current
-     browser sends `Origin` on cross-site POSTs and `Sec-Fetch-Site` on
-     everything.
-3. Build the allowed-origin set once at startup from the scope and port, and
-   rebuild it with the rest of the live config
-   ([WEB-1](#web-1-credential-and-profile-changes-never-reach-the-running-daemon)).
-   Compare with a parsed `url::Origin`, not string prefixes.
-4. Log rejections with `debug_log!(WEB, …)` (method, path, peer address, the
-   offending header). Don't use `error_log!`: that would let any web page
-   flood the journal.
-5. Make the incidental protections deliberate, each with a test:
-   - **CORS stays off.** A preflight gets no `Access-Control-Allow-*` headers.
-   - **The 401 challenge is `Bearer`, never `Basic`** (see
-     [WEB-6](#web-6-response-hygiene-headers-status-codes-error-detail)).
-   - **No cookies are ever set.**
-
-   Add a comment at the router explaining that these properties are
-   load-bearing for CSRF safety, and that anyone adding a cookie session must
-   add CSRF tokens first ([WEB-12](#web-12-rules-for-routes-not-built-yet)).
-6. **Out of scope here:** DNS rebinding makes a request look same-origin, but
-   the browser still has no credentials for the attacker's domain, and TLS
-   name checks fail. `Host`-header validation stays in WEB-12 for the HTML UI.
-7. Docs: add a "Cross-site requests" paragraph to `docs/web-interface.md` and
-   `SECURITY.md`. Browsers on other sites are refused; scripts and CLI tools
-   are unaffected; the check is not a reason to relax the allow-list.
-
-**Verify.** `oneshot` tests with `MockConnectInfo`:
-
-| Request | Expected |
-|---|---|
-| Valid token + `Sec-Fetch-Site: cross-site` | 403, even with good credentials (the point of the check) |
-| Valid token + `Sec-Fetch-Site: same-site` | 403 |
-| Valid token + `Sec-Fetch-Site: same-origin`, and separately `none` | 200 |
-| Valid token + `Origin: https://evil.example`, no `Sec-Fetch-Site` | 403 |
-| Valid token + `Origin: null` | 403 |
-| Valid token + `Origin: https://127.0.0.1:<port>` | 200 |
-| Valid token, neither header | 200 |
-| 10 × cross-site without credentials, then a correct password | 200 (no lockout) |
-| `OPTIONS` preflight from another origin | no `Access-Control-Allow-*` headers |
-| Any 401 | `WWW-Authenticate: Bearer …`, never `Basic` |
-| `POST …/run` rejected cross-site | no History entry recorded |
-
-Keep one real-socket test through the production `axum_server` path.
-
-Live, before and after (paste both into the PR):
-
-```sh
-BASE=https://127.0.0.1:8737/api/v1
-# cross-site with a valid token: must be 403, and no backup may start
-curl -sk -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKEN" \
-  -H 'Sec-Fetch-Site: cross-site' "$BASE/backups/$ID/run"
-# foreign Origin, no Sec-Fetch-Site: 403
-curl -sk -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
-  -H 'Origin: https://evil.example' "$BASE/health"
-# plain script request still works: 200
-curl -sk -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" "$BASE/health"
-# cross-site requests do not feed the lockout: last line must be 200
-for i in 1 2 3 4 5 6; do curl -sk -o /dev/null -H 'Sec-Fetch-Site: cross-site' "$BASE/health"; done
-curl -sk -o /dev/null -w '%{http_code}\n' -u x:"$PW" "$BASE/health"
-# CORS stays off: must print 0
-curl -sk -X OPTIONS -D - -o /dev/null -H 'Origin: https://evil.example' \
-  -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: authorization' \
-  "$BASE/backups/$ID/run" | grep -ci '^access-control-allow'
-```
-
-**Browser check.** Serve this page from another origin
-(`python3 -m http.server --bind 127.0.0.1 8000`):
-
-```html
-<form method="post" action="https://127.0.0.1:8737/api/v1/backups/ID/run">
-  <button>go</button>
-</form>
-```
-
-Submit it in both Firefox and Chrome. The request must get 403, visible in the
-developer tools' Network tab, and History must show no new run.
-
-Repeat after first visiting `https://x:PASSWORD@127.0.0.1:8737/api/v1/health`
-in the same browser. That settles the "confirm first" edge case. Record
-whether it was exploitable **before** the fix; if it was, it gets a SECURITY.md
-advisory and a CHANGELOG entry under "Security".
-
----
-
-### WEB-12. Rules for routes not built yet
-
-**Info · Process**
-
-Before adding the planned download, search, restore or delete routes:
-
-- **Downloads.**
-  - Build `Content-Disposition` per RFC 6266 with
-    `filename*=UTF-8''<percent-encoded>`.
-  - Strip CR, LF, `"` and `\` from the ASCII fallback.
-  - Stream the body; never buffer a whole file (see
-    [REL-15](#rel-15-large-files-are-loaded-whole-into-memory)).
-- **Search.** Mandatory pagination, a result cap, a timeout, and the WEB-9
-  semaphore.
-- **Any write.**
-  - Token scopes (read vs. write).
-  - Require `Content-Type: application/json` on routes that take a body.
-  - Mount them behind [WEB-11](#web-11-there-is-no-csrf-protection)'s
-    cross-site check. It must cover every route; add each new route to its
-    tests.
-  - Keep CORS off.
-- **An HTML UI.**
-  - Cookie sessions with `SameSite=Strict; Secure; HttpOnly`.
-  - CSRF tokens.
-  - `Host`-header validation against DNS rebinding.
-  - A strict CSP.
-- **Tokens.** Add a recognizable prefix (`ssk_…`) so secret scanners catch
-  leaks.
 
 ---
 
@@ -1787,10 +907,10 @@ this session's 3-core cgroup. Not chased further here; worth a real look
 if it recurs outside this sandbox.
 
 **Files:** `src/engine/lock.rs:60-80,263-273`, `src/status.rs:32-35`,
-`src/app/applet.rs:35,97`, `src/web/routes.rs:110`
+`src/app/applet.rs:35,97`
 
 **Problem.** `is_running()` takes the exclusive `flock` itself, briefly. The
-applet polls every 3 seconds and the web API polls on each request. A backup
+applet polls every 3 seconds. A backup
 starting at that instant gets `Locked`. For a scheduled run that is a
 **quiet skip**. The existing test re-implements the probe instead of testing
 `is_running`.
@@ -1996,7 +1116,7 @@ cheap): changing `backup` to take `&self` and calling
 sequence becomes possible with no reordering of the existing backup →
 forget → check → prune sequence (reordering would itself risk changing
 what retention rules actually keep). Confirmed every existing caller of
-`backup()` (`runner.rs`, `estimate.rs`, `statistics.rs`, `web/routes.rs`,
+`backup()` (`runner.rs`, `estimate.rs`, `statistics.rs`,
 `app/tasks.rs`, `engine/tests.rs`) calls it on a repository they never
 reuse afterward, so the signature change itself is not a breaking one for
 any of them.
@@ -2195,9 +1315,9 @@ disclosed as not done.**
 
 **Problem.** When "Remember password" is ticked and the save fails, nothing
 says so, and every scheduled run later fails with `PasswordNotRemembered`.
-`load` and `load_web_password` swallow every error with `.ok()?` and log
-nothing, so the cause cannot be diagnosed. The three profile functions and the
-three web-password functions are near-duplicates.
+`load` swallows every error with `.ok()?` and logs nothing, so the cause
+cannot be diagnosed. The store, load and forget functions are
+near-duplicates.
 
 **Fix.** Return the store error in the `Finished` and `Unlocked` messages and
 show it through the existing `KeyringUpdateFailed` dialog. Write
@@ -2217,13 +1337,13 @@ through a new `DialogMessage::PasswordNotRemembered(Option<String>)`
 existing `KeyringUpdateFailed` dialog's text is specific to changing an
 existing password). `tasks::open`/`tasks::finish` no longer take a
 `remember` bool at all — remembering is now entirely the caller's concern.
-`load`/`load_web_password` now log every failure path (keyring
+`load` now logs every failure path (keyring
 unreachable, search failed, secret unreadable, not valid UTF-8) instead of
 swallowing all of them with `.ok()?`; kept the existing `CONFIG` category
 rather than adding a `KEYRING` one, since `CONFIG` was already what every
 function in this file logged under before this change. `store`/`load`/
-`forget` and their three web-password counterparts are now thin wrappers
-around one `store_item`/`load_item`/`forget_item` each, taking the
+`forget` are now thin wrappers around one `store_item`/`load_item`/
+`forget_item` each, taking the
 attributes and a label/log name — the near-duplication the plan flagged.
 One non-obvious wrinkle: `oo7`'s `AsAttributes` is implemented for the
 *unsized* slice type `[(K, V)]`, so a generic helper typed to take
@@ -2232,10 +1352,9 @@ One non-obvious wrinkle: `oo7`'s `AsAttributes` is implemented for the
 `Sized` bound `impl AsAttributes` desugars to) even though the trait impl
 itself would otherwise apply — caught immediately by `cargo clippy`, fixed
 by typing the helpers to the fixed-size `&[(&str, &str); 2]` both
-`attributes()` and `web_attributes()` actually produce.
+`attributes()` actually produces.
 
-**Verify.** `tests/keyring.rs`'s two round trips (profile password, web
-password) still pass against this machine's real, unlocked Secret Service
+**Verify.** `tests/keyring.rs`'s round trip still passes against this machine's real, unlocked Secret Service
 after the `store_item`/`load_item`/`forget_item` refactor.
 `app::tasks::tests::finishing_*` cover `finish`'s new two-argument
 signature. Not done: the plan's own live manual step (`pkill
@@ -2257,7 +1376,7 @@ deferred (reasons below each row).
 
 | Item | Where | Fix | Status |
 |---|---|---|---|
-| Two ways to resolve a snapshot ID; an ambiguous prefix is reported as "not in this snapshot" | `browse.rs:205-214` vs `restore.rs:179` | Use rustic's `get_snapshot_from_str` everywhere, or add `NotFound` and `Ambiguous` error kinds | **Done.** Added `ErrorKind::Ambiguous`, an `error-ambiguous` message in all 5 locales, and a `web::routes` status mapping (400, like `UnsafePath`). `Browser::snapshot`'s prefix match (`browse.rs`) now returns it instead of collapsing into `NotFound` when more than one snapshot shares a prefix; the matching itself moved into a free `index_of` function so the not-found-vs-ambiguous split is unit-tested without a real repository. Left `restore.rs`'s `get_snapshot_from_str` path as is: rustic exposes no stable error code distinguishing "not unique" from "not found" (only a wrong-password code is checked elsewhere), so that path still reports an ambiguous prefix as `Internal` with rustic's own English text — not mislabeled as `NotFound`, just not as clear as the browse path now is. Making it clearer would mean string-matching rustic's own error text, which is fragile enough to not be worth it here. |
+| Two ways to resolve a snapshot ID; an ambiguous prefix is reported as "not in this snapshot" | `browse.rs:205-214` vs `restore.rs:179` | Use rustic's `get_snapshot_from_str` everywhere, or add `NotFound` and `Ambiguous` error kinds | **Done.** Added `ErrorKind::Ambiguous`, an `error-ambiguous` message in all 5 locales. `Browser::snapshot`'s prefix match (`browse.rs`) now returns it instead of collapsing into `NotFound` when more than one snapshot shares a prefix; the matching itself moved into a free `index_of` function so the not-found-vs-ambiguous split is unit-tested without a real repository. Left `restore.rs`'s `get_snapshot_from_str` path as is: rustic exposes no stable error code distinguishing "not unique" from "not found" (only a wrong-password code is checked elsewhere), so that path still reports an ambiguous prefix as `Internal` with rustic's own English text — not mislabeled as `NotFound`, just not as clear as the browse path now is. Making it clearer would mean string-matching rustic's own error text, which is fragile enough to not be worth it here. |
 | `set_pinned` finds the new ID by diffing snapshot lists; a concurrent writer or an empty diff silently returns the old one | `snapshots.rs:112-134` | Use the ID rustic returns from the save, or log and error when the diff isn't exactly one | **Done, second option.** Confirmed first: read rustic_core's own `rewrite_snapshots`/`save_snapshots` source — `save_snapshots` mutates a *clone* of the snapshot list before saving it, so the ID it assigns never reaches the caller either way; there genuinely is no ID to use instead of diffing. Changed the diff to `error_log!` and return an `Internal` error when it finds zero or more than one new ID, rather than silently falling back to `current` (the *old*, now-deleted snapshot) and reporting that as if the pin had landed on it. |
 | SFTP `known_hosts` path becomes relative when `HOME` is unset | `profile.rs:121-124` | Fail instead (via the paths module, [ARC-2](#arc-2-remove-duplicated-logic)) | **Deferred.** The plan's own fix text routes this through ARC-2's paths module, which has not been built yet; revisit once ARC-2 lands. |
 | Only Wi-Fi counts as a "trusted network"; a wired desktop never runs (**confirm intent**) | `conditions.rs:177` | Accept Ethernet connection IDs too, or document it | **Documented, not changed.** This changes scheduling behavior for anyone on a wired connection, so it needs Dave's confirmation rather than a guess made overnight. Added a doc comment on `Conditions::require_trusted_network` (`profile.rs`) spelling out the current Wi-Fi-only behavior and a `TODO` to confirm intent, so the gap is visible instead of silent. |
@@ -2628,74 +1747,6 @@ logical, and Enter confirms dialogs.
 
 ---
 
-### UI-9. Generated API token cannot be copied; regeneration is unconfirmed
-
-**Status: Already done — this row's own line numbers had drifted, and
-re-checking against the current code found both halves of the fix already
-in place, not written for this pass.** `Dialog::Token`'s view is a
-read-only `text_input` holding the raw token (selectable, unlike plain
-dialog text) next to a `web-token-copy` button wired to
-`Message::CopyToClipboard`. `Message::GenerateWebToken` only jumps
-straight to showing a new token when `self.config.web.token_hash` is
-`None` (nothing to lose the first time); once a token already exists, it
-shows `Dialog::RegenerateToken` first — a `destructive`-styled confirm
-button, gated on the dialog's own `can_confirm()` — and only generates and
-installs the new token, invalidating the old one, once that is confirmed.
-Not re-verified live (needs a running window and a real clipboard, the
-same disclosed gap as UI-1 through UI-3's own click-through).
-
-**Medium · S · Verified**
-
-**Files:** `src/app.rs:2781-2788`
-
-**Problem.** The token is shown once, in non-selectable dialog text, so the
-user must retype 64 hex characters. The button invalidates the old token
-before the dialog even opens, which breaks existing scripts without warning.
-
-**Fix.** Add a Copy button (`cosmic::iced::clipboard::write`), or show the
-token in a read-only `text_input`. Confirm before regenerating when a token
-already exists.
-
-**Verify.** Generate, Copy, paste into
-`curl -H "Authorization: Bearer …"`, and get 200.
-
----
-
-### UI-10. Allow-list entries and the port are not validated
-
-**Status: Done, though not exactly as scoped here.** Landed while fixing
-this same symptom reported directly (a bad allow-list entry locking out
-the person who added it, an empty-Details port error) rather than found
-independently through this checklist. `web::valid_allow_list_entry` is the
-one shared parser both the UI and `is_allowed`'s own matching now agree on
-(a unit test confirms it accepts exactly what `matches` accepts and
-rejects exactly what it does not) — close to, but not literally, the
-`web::parse_allow_entry(&str) -> Result<IpNet, _>` this section names,
-since a plain address (not a range) is also a valid entry and does not
-parse as `IpNet`. Both the port and the allow-list field now validate live
-and disable Save/Add while invalid rather than showing `web-port-invalid`
-as a dialog as suggested here — an inline caption under the field instead,
-following direct instruction that dialogs hiding the Settings panel were
-themselves part of the problem, not just the validation gap.
-
-**Medium · S · Verified**
-
-**Files:** `src/app.rs:2791-2816`, `src/web.rs:205-215`
-
-**Problem.** A typo (`192.168.1.0/33`, `nas`, `192.168.1.*`) is saved and
-silently never matches. If it is the only entry, **every** client is locked
-out with no explanation. An invalid port shows as `ErrorKind::Internal`
-("Details: abc").
-
-**Fix.** Expose one `web::parse_allow_entry(&str) -> Result<IpNet, …>` used
-by both the UI and the daemon. Reject invalid entries with a localized
-`web-allowed-invalid` error. Show `web-port-invalid` as a plain error dialog.
-
-**Verify.** Unit test the parser; adding `abc` in Settings shows the error and
-leaves the list unchanged.
-
----
-
 ### UI-11. Consistency and polish
 
 **Status: 4 of 8 done.**
@@ -2703,22 +1754,16 @@ leaves the list unchanged.
 - "Remove backup" is now `destructive`, "Unmount" is now `standard`.
 - The applet's icon bug turned out deeper than described here: it wasn't
   just reusing one generic warning icon for failed and overdue alike — the
-  cross-process `status::Status` struct (shared with the web interface's
-  own `GET /api/v1/backups`, a documented JSON shape) had no `damaged`
+  cross-process `status::Status` struct had no `damaged`
   field at all, so a damaged repository could never be distinguished from
   fine in the applet regardless of icon choice. Added `damaged` to
-  `Status` (additive, not a breaking change to that API — `docs/web-
-  interface.md` updated to match) and a `Status::backup_status()` method
+  `Status` (additive) and a `Status::backup_status()` method
   mirroring `run_state::status`'s own precedence (running, then damage,
   then a failure, then simply being late) from the flattened booleans the
   wire format keeps. The panel icon and each row's own icon now use
   `BackupStatus::icon()` through that, so a failure, an overdue backup and
   real damage each show their own distinct icon instead of one warning
   sign that could mean any of the three, or nothing at all.
-- `gethostname()` no longer runs on every render while Settings is open:
-  read once into a new `App::hostname` field at startup, threaded into
-  `web_address` as a parameter instead of read internally (also let two
-  existing tests stop depending on the real machine's actual hostname).
 - The wizard-cancel dialog now has a third, "Keep Editing" action
   (`widget::dialog`'s own `.tertiary_action`) that just dismisses the
   confirmation via the existing `DialogMessage::Close` — the wizard itself
@@ -2748,7 +1793,6 @@ half of the finding was worth taking on right now.
 | "Remove backup" styled `suggested`; "Unmount" styled `destructive` | `app.rs:2302`, `restore.rs:1004` | Remove = destructive; Unmount = standard |
 | The applet uses `dialog-warning` for failed and overdue, which means *damaged* in the window's legend, and never shows damage | `applet.rs:175-201` | Reuse `BackupStatus::icon()` |
 | The wizard-cancel dialog has no "keep editing" option | `app.rs:2313-2323` | Add a tertiary Cancel action |
-| Changing the port, TLS or auth needs a restart the UI never mentions | Settings, web section | "Restart to apply" caption when settings differ from what the daemon started with (or fix [WEB-1](#web-1-credential-and-profile-changes-never-reach-the-running-daemon) with live reload) |
 | Synchronous file I/O in `update` and `init` | `app.rs:1397,1598,1958` (`event_log::record`), `app.rs:2206` (`dejadup::find`) | Move into `tasks::blocking` |
 | `gethostname` called in `view()` every frame | `app.rs:449,2087` | Cache it in `App` |
 
@@ -2760,40 +1804,6 @@ Locale parity is good: all five locales have the same 535 keys, with no
 duplicates and matching placeholder sets, and every `en` key is used. These
 tasks fix what the parity test cannot see.
 
-### I18N-1. Fluent syntax error drops the "token shown once" warning
-
-**Status: Done.** Indented the continuation line in all five locales.
-Added `fluent-syntax` as a dev-dependency and a new
-`no_locale_has_a_fluent_syntax_error` test in `tests/i18n.rs` that parses
-every locale and fails on any junk entry.
-
-**High · S · Verified**
-
-**Files:** `i18n/en/stellarshot.ftl:585-587` and the matching lines (about
-606-608) in `bg`, `de`, `gsw`, `sv`; `tests/i18n.rs`
-
-**Problem.**
-
-```ftl
-web-token-body = { $token }
-
-This is shown only once. Store it somewhere safe: …
-```
-
-A Fluent continuation line must be indented. The second paragraph is parsed
-as a junk entry and dropped, so the dialog shows only the token, without the
-warning, in every language. `tests/i18n.rs` uses a hand-written key scanner
-and cannot see syntax errors.
-
-**Fix.** Indent the continuation lines in all five files. Add
-`fluent-syntax` as a dev-dependency and assert in `tests/i18n.rs` that every
-locale parses with **no junk entries**. That test would have caught this.
-
-**Verify.** The new test fails before the fix and passes after. Generating a
-token shows both paragraphs.
-
----
-
 ### I18N-2. Plurals, joins, and reused keys
 
 **Status: Done.** Pluralized every message the plan named
@@ -2802,19 +1812,13 @@ locales, then extended `tests/i18n.rs` with
 `a_count_or_files_placeholder_is_always_pluralized` *before* declaring
 this finished, per its own verify step — which immediately found three
 more messages with exactly the same bug the plan's own examples did not
-mention (`browse-scanning`, `compare-folder`, `compare-folder-root`),
-plus a fourth (`web-password-length`) with a related but distinct issue:
-its noun's number agrees with `$minimum` (the required length), not
-`$count` (how many characters typed so far), so it now selects on
-`$minimum` instead of adding a selector on the wrong argument. Fixed all
+mention (`browse-scanning`, `compare-folder`, `compare-folder-root`). Fixed all
 of these, in all 5 locales, not just the ones the plan named — the test
 would not have passed otherwise. `profile.rs`'s `format!("{} · {}", ...)`
 join of `schedule_summary`/`retention_label` became a proper Fluent
 message (`schedule-retention-summary`) with named arguments, so word
 order is a translator's choice per locale rather than fixed by Rust code.
-The TLS certificate/key Choose and Reset buttons now use their own
-`web-tls-choose`/`web-tls-reset` keys instead of reusing the cache
-directory row's `settings-cache-dir-choose`/`-reset`. Number and date
+Number and date
 formatting's deliberate non-localization is now documented in both
 CONTRIBUTING.md (so a well-meant partial fix isn't sent as a patch) and
 ROADMAP.md's "To investigate" (so the actual open question — which
@@ -2829,9 +1833,6 @@ Stellarshot's own language setting — has somewhere to live).
 - **Joins.** `profile.rs:664-668,968` join translated fragments with
   `format!("{} · {}")`. Word order is language-specific, so make these Fluent
   messages with arguments.
-- **Reused keys.** The TLS Choose and Reset buttons reuse
-  `settings-cache-dir-choose` and `-reset` (`app.rs:537-539`), which gives
-  translators the wrong context. Give them their own keys.
 - **Number and date formatting.** `format.rs` always uses `.` as the decimal
   separator and ISO dates. That's a legitimate choice, but record it in
   CONTRIBUTING so it isn't "fixed" piecemeal.
@@ -2843,9 +1844,9 @@ Stellarshot's own language setting — has somewhere to live).
 
 ### I18N-3. Localize the desktop entries and metainfo
 
-**Status: Partial.** Added `stellarshot-applet` and `stellarshot-web` to
-`<provides>` (both are installed by the same package as `stellarshot`
-itself, per `install.sh`) and a `<supports><control>keyboard</control>
+**Status: Partial.** Added `stellarshot-applet` to
+`<provides>` (installed by the same package as `stellarshot` itself, per
+`install.sh`) and a `<supports><control>keyboard</control>
 <control>pointing</control></supports>` block, both in
 `res/io.github.stldave314.Stellarshot.metainfo.xml`. Verified against the
 real tools, not just by reading the XML: `appstreamcli validate
@@ -2881,7 +1882,7 @@ dependency, so both stay in sync with the locales.
 
 **Fix.** Adopt `xdgen`, or a small `build.rs` that does the same, using keys
 `app-title`, `app-comment` and `app-keywords` (in all locales). Add
-`stellarshot-applet` and `stellarshot-web` to `<provides>`. Add
+`stellarshot-applet` to `<provides>`. Add
 `<supports><control>keyboard</control><control>pointing</control></supports>`.
 
 **Verify.** `desktop-file-validate` and `appstreamcli validate --pedantic`
@@ -2953,22 +1954,14 @@ than needing anywhere new:
 
 - **Hostname.** `engine::hostname()` already existed
   (`engine/maintenance.rs`) but only `maintenance.rs` itself used it;
-  `web_tls.rs`, `web.rs` and `app.rs` each repeated
+  `app.rs` repeated
   `gethostname::gethostname().to_string_lossy().into_owned()` inline.
-  All three now call `engine::hostname()`.
-- **Current Unix time.** Five call sites, in five different files
-  (`scheduled.rs`, `web.rs`, `applet.rs`, and three in `routes.rs`),
-  each wrote `jiff::Timestamp::now().as_second()` fresh (`web.rs` even
-  wrapped it in its own private `now_secs()`, still a second definition
-  of the same one-liner). Consolidated onto `app::format::now()`, which
+  It now calls `engine::hostname()`.
+- **Current Unix time.** Call sites in `scheduled.rs` and `applet.rs`
+  each wrote `jiff::Timestamp::now().as_second()` fresh. Consolidated onto `app::format::now()`, which
   already existed and was already `pub` — a new `core::time::now()`, as
   the plan's own "single home" column suggests, would have meant
-  inventing a module for a job an existing one already does; not done,
-  since `web.rs`/`routes.rs` already depend on `crate::app::` for other
-  things (`app::config`, `app::tasks`), so this does not introduce a new
-  cross-module edge, only reuses one already there. That existing
-  dependency direction is itself what ARC-4 is about — not something to
-  quietly fix as a side effect of this row.
+  inventing a module for a job an existing one already does.
 - **Short snapshot ID.** `SnapshotSummary::short_id` and
   `event_log`'s own `short` both did the identical `get(..8).unwrap_or(..)`
   — `event_log`'s own doc comment already explained why it couldn't just
@@ -3008,11 +2001,10 @@ environment-only socket ones.
 
 | Logic | Copies | Single home |
 |---|---|---|
-| systemd unit helpers (`exec_quote`, `unit_dir`, `systemctl`, `write_if_changed`, unit header text) | `schedule.rs:25,73,156,184` and `web_daemon.rs:25-27,48,74,97` | `src/systemd.rs`. `exec_quote` is security-relevant escaping; two copies **will** drift |
-| XDG and HOME resolution | `rclone.rs:50`, `schedule.rs:25`, `web_daemon.rs:48`, `migrate.rs:19`, `web_tls.rs:35`, `lock.rs:18`, `profile.rs:121`, `dejadup.rs:72`, `format.rs:52`, `app.rs:2055` | `src/paths.rs`: `config_home()`, `data_home()`, `state_home()`, `runtime_dir()`, `home()`, all failing cleanly rather than falling back to `/tmp` ([SEC-5](#sec-5-shared-tmp-fallbacks-for-the-runtime-directory-and-backend-log)) |
+| XDG and HOME resolution | `rclone.rs:50`, `schedule.rs:25`, `migrate.rs:19`, `lock.rs:18`, `profile.rs:121`, `dejadup.rs:72`, `format.rs:52`, `app.rs:2055` | `src/paths.rs`: `config_home()`, `data_home()`, `state_home()`, `runtime_dir()`, `home()`, all failing cleanly rather than falling back to `/tmp` ([SEC-5](#sec-5-shared-tmp-fallbacks-for-the-runtime-directory-and-backend-log)) |
 | Process with timeout, process group, bounded pipe drain | `hooks.rs`, `rclone.rs:85-146`, `password_command.rs`, `app/child.rs` | `src/process.rs`: `run_with_timeout(Command, Duration) -> Result<Output, ProcessError>`. This fixes [REL-4](#rel-4-hooks-and-password-commands-can-hang-past-their-timeout) and [SEC-9](#sec-9-rclone-argument-hygiene) once |
-| Hostname | `maintenance.rs:73`, `place.rs:39`, `app.rs:2087`, `web_tls.rs:62` | `engine::hostname()`. It must match what rustic writes, because `forget` filters on it |
-| Current Unix time | `scheduled.rs:73`, `format.rs:86`, `web.rs:253`, `applet.rs:54`, `routes.rs:109,197` | `core::time::now()` |
+| Hostname | `maintenance.rs:73`, `place.rs:39`, `app.rs:2087` | `engine::hostname()`. It must match what rustic writes, because `forget` filters on it |
+| Current Unix time | `scheduled.rs:73`, `format.rs:86`, `applet.rs:54` | `core::time::now()` |
 | State store opening | `run_state.rs:192`, `event_log.rs:110` | `core/state.rs` (also home of [REL-10](#rel-10-unreadable-state-is-replaced-with-defaults-and-saved-over)) |
 | Status derivation (running, failed, overdue computed twice) | `status.rs:32-44` vs `run_state.rs:90-123` | `status` uses `run_state::status_at` |
 | `canonicalize(..).unwrap_or(raw)` | `backup.rs:78`, `estimate.rs:142` | `engine::canonical_or_raw` |
@@ -3038,11 +2030,7 @@ scheduled unit's `Nice` level and `RandomizedDelaySec` (now
 into the unit text — `RandomizedDelaySec` now emits plain seconds, which
 systemd accepts identically to `10min`, rather than reconstructing that
 suffix from a `Duration`), `app.rs`'s clock tick, `applet.rs`'s two
-refresh rates, all six of `web.rs`'s lockout/throttle values (the plan
-only named "the lockout values" generically; moved `MAX_ATTEMPTS`,
-`LOCKOUT_LEVEL_SECS`, `GLOBAL_BUDGET_MAX`, `GLOBAL_BUDGET_WINDOW_SECS`,
-`ATTEMPTS_MEMORY_SECS` and `MAX_TRACKED_ADDRESSES` together, since they
-are all the same kind of value), the three "how many rows before
+refresh rates, the three "how many rows before
 capping" values (`restore.rs`'s `RESULT_LIMIT`, `profile.rs`'s
 `RECENT` — genuinely shared between its snapshot list and its history
 list, not two separate fives that happened to match — and
@@ -3090,8 +2078,7 @@ Verified against a real build, not just the edit: `cargo clippy
 --all-targets --all-features` and `cargo fmt --all -- --check` both
 clean across all 16 touched files on the first pass, and a full `cargo
 test --all-features --lib` (468 tests, plus the 21 pre-existing,
-documented, environment-only socket failures — see WEB-2's own
-VALIDATION.md note) passed with no new failures.
+documented, environment-only socket failures) passed with no new failures.
 
 **Low · S · Verified**
 
@@ -3103,7 +2090,6 @@ These values live outside `src/constants.rs`:
 - 50 ms process poll (`hooks.rs:128`, `rclone.rs:139`)
 - the unit settings `Nice=10`, `IOSchedulingClass=idle`,
   `RandomizedDelaySec=10min` (`schedule.rs:99-117`)
-- `RestartSec=5` (`web_daemon.rs`)
 - compression levels `-3` and `19` (`profile.rs:204`)
 - Smart retention 7/4/12 (`profile.rs:230`)
 - `HOUR` and `DAY` (`profile.rs:170`, plus an `86_400` literal in
@@ -3114,7 +2100,6 @@ These values live outside `src/constants.rs`:
 - the SSH port 22 (`place.rs:35`, `dejadup.rs:362`)
 - the literal `2` in `migrate.rs:62` instead of `CONFIG_VERSION`
 - the applet ID duplicated as `APP_ID + ".Applet"` (and in `install.sh:32`)
-- the lockout values in `web.rs`
 
 Move them to `constants.rs` with doc comments. Format and protocol facts
 (`CACHEDIR_TAG`, `REPOSITORY_ENTRIES`, exit codes) can stay where they are.
@@ -3137,8 +2122,7 @@ Move them to `constants.rs` with doc comments. Format and protocol facts
 - `dejadup.rs:279`
 
 **Problem.** Non-GUI code imports `crate::app::…` (config, errors, format,
-`pages::profile::schedule_summary`, `wizard::place::hostname`). That is why
-`stellarshot-web` links the whole GUI. `runner.rs:333` calls
+`pages::profile::schedule_summary`, `wizard::place::hostname`). `runner.rs:333` calls
 `let _ = StellarshotConfig::config()` purely for its side effect of setting
 the cache location.
 
@@ -3149,8 +2133,7 @@ the cache location.
 - Add `core::config::load()` and call `engine::cache_settings::set(..)`
   explicitly.
 - Optional follow-up: split a `stellarshot-core` workspace crate so the
-  compiler enforces the boundary, and build `stellarshot-web` without
-  libcosmic.
+  compiler enforces the boundary.
 
 **Verify.** `grep -rn 'crate::app' src/{engine,runner.rs,scheduled.rs,run_state.rs,event_log.rs,keyring.rs,notify.rs,profile.rs,dejadup.rs}`
 returns nothing.
@@ -3162,15 +2145,13 @@ returns nothing.
 **Low · S · Verified**
 
 - `lib.rs` makes 23 modules `pub`, but only `app`, `engine`, `keyring`,
-  `profile`, `runner`, `scheduled` and `web` are used from outside. Make the
+  `profile`, `runner` and `scheduled` are used from outside. Make the
   rest `pub(crate)`; the `dead_code` lint then finds unused items.
 - `engine::location::delete_repository(&Path)` sits beside
   `engine::delete_repository(&Location)`, two public functions with one name.
   Make the module `pub(crate)`.
 - `schedule.rs` vs `scheduled.rs` is confusing; consider `timers.rs` and
   `scheduled_run.rs`.
-- Move `web.rs`, `web_daemon.rs`, `web_tls.rs` and `web_token.rs` under
-  `src/web/` (`mod.rs`, `daemon.rs`, `tls.rs`, `token.rs`).
 
 ---
 
@@ -3194,10 +2175,10 @@ pinning the negative case.
 
 Not done, deliberately left out of scope for now: the `thiserror` enums
 (`ScheduleError`, `StateError`, `KeyringError`, `HookError`) to replace
-`schedule.rs`/`web_daemon.rs`/`run_state`/`keyring`/`settings_export`/
+`schedule.rs`/`run_state`/`keyring`/`settings_export`/
 `hooks`'s `Result<_, String>` return types; the identical
 `format!("{}: {err}", path.display())` pattern still exists un-deduplicated
-at roughly 5 more sites in `schedule.rs` and `web_daemon.rs`, since those
+at roughly 5 more sites in `schedule.rs`, since those
 functions return `Result<_, String>` rather than `EngineError` and adopting
 `EngineError::io` there is really part of the enum work, not separable from
 it; replacing `runner::Job`'s `Option`-grab-bag fields with an enum per
@@ -3206,7 +2187,7 @@ touches call sites across several files and changes public-ish return types,
 which is a larger, riskier change than fit in the same pass as the two
 pieces above.
 
-**Files:** `schedule.rs`, `web_daemon.rs`, `run_state::save/update`,
+**Files:** `schedule.rs`, `run_state::save/update`,
 `keyring`, `settings_export`, `hooks`; `app.rs:888-889` wraps them as
 `ErrorKind::Internal`; `engine/error.rs:169-173`
 
@@ -3229,15 +2210,14 @@ wraps as `ErrorKind::Internal`. `io::Error → ErrorKind::Io` loses the path.
 
 **Status: The real bug (the truncation race) and the role/PID prefix are
 done; missing instrumentation is not.** `debug::init(Role)` now exists —
-`Role::Window`, `Applet`, `Run`, `Scheduled`, `Web`, plus a `Role::Unknown`
+`Role::Window`, `Applet`, `Run`, `Scheduled`, plus a `Role::Unknown`
 this plan text did not ask for but the safe fallback needs: only
 `Role::Window` truncates on its first write, every other role appends,
 and a process that somehow logs before calling `init` at all (should
 never happen, but "should never happen" is exactly what a fallback is
 for) also appends rather than guessing it is the window. Wired into all
-five real entry points: `app::settings::init` (the window, via
-`main.rs`), `runner::main` (`--run`), `scheduled::main` (`--scheduled`),
-`web::main` (`stellarshot-web`), and `Applet::init` (the panel applet,
+four real entry points: `app::settings::init` (the window, via
+`main.rs`), `runner::main` (`--run`), `scheduled::main` (`--scheduled`), and `Applet::init` (the panel applet,
 which had no debug-log initialization of any kind before this — its own
 `UI`-category lines were the ones most likely to trigger the exact race
 this fixes, since it is long-running like the window but was, until now,
@@ -3286,7 +2266,7 @@ through as a checklist at the end of this one.
 **Gaps:**
 
 - `sink()` truncates in **every** process (window, applet, `--run`,
-  `--scheduled`, web). A child truncates the window's file while the window
+  `--scheduled`). A child truncates the window's file while the window
   keeps writing at its old offset, which leaves NUL-filled holes. This
   contradicts the module's own doc comment.
 - Lines carry no PID or role, and each process's elapsed time starts from its
@@ -3319,30 +2299,12 @@ the unused `paste` direct dependency; `cargo tree -i paste` still prints
 nothing. Re-checked every other row against the current `Cargo.toml` and
 `Cargo.lock` rather than trusting the plan's own age:
 
-- **`axum-server`/`rcgen` patch-version pins.** Already fixed, as a side
-  effect of WEB-2/WEB-7's own work: `axum-server = { version = "0.8", … }`
-  and `rcgen = { version = "0.14", … }`, both with their own justification
-  comments, not `"0.8.0"`/`"0.14.10"`.
-- **`tower-http` as a direct dependency.** Already added, as a side
-  effect of WEB-2/WEB-6: `tower-http = { version = "0.6", features =
-  ["timeout", "limit", "set-header"] }`.
 - **The `base64` duplicate (0.22 and 0.23).** Traced with `cargo tree -i
   base64@0.22.1`: it comes from `usvg`/`resvg`, several layers inside
   `libcosmic`'s own icon-rendering dependencies — nothing in Stellarshot's
   own manifest chooses it or could realign it without `libcosmic` itself
   updating. Left as a genuine transitive duplicate, not a Stellarshot
   hygiene gap.
-- **The `rand` duplicate (0.8/0.9/0.10) and dropping the direct
-  dependency for `getrandom::fill`.** The plan's own premise no longer
-  holds: `cargo tree -i rand@0.10.3` now shows `rustic_backend` and
-  `rustic_core` depending on the same `0.10` line Stellarshot's own
-  `web_token.rs` uses — not a version only Stellarshot's own code
-  happens to need. Dropping the direct dependency would remove one
-  manifest line, but the identical version stays in the tree regardless
-  (pulled in by rustic either way), so it would not actually reduce
-  duplication, the thing this row exists to fix. `rand@0.9` is pulled in
-  separately by `ashpd` (via `libcosmic`) and `num-bigint-dig` (via
-  `oo7`) — also outside Stellarshot's control. Left as is.
 - **Pinning `libcosmic` by `rev`.** Attempted, and verified against a
   real build rather than declared done from the edit alone — a plain
   `cargo check` (no `--locked`) after adding `rev = "03d7dcb8…"` to
@@ -3372,9 +2334,7 @@ nothing. Re-checked every other row against the current `Cargo.toml` and
 | Item | Action |
 |---|---|
 | `paste` is a direct dependency, **used nowhere**, and unmaintained (RUSTSEC-2024-0436) | Remove it |
-| `axum-server = "0.8.0"` and `rcgen = "0.14.10"` pin patch versions and have no justification comment, unlike every other entry | Use `"0.8"` and `"0.14"` (with rcgen's features per [WEB-7](#web-7-tls-configuration-hardening)), and add comments |
-| Duplicate versions: `base64` 0.22 + 0.23; `rand` 0.8 + 0.9 + 0.10 | `rand` is used only for the web token. Use `getrandom::fill` (already in the tree) and drop the direct `rand`. Align `base64` with what the tree already uses if possible |
-| `tower-http` is not a direct dependency but is needed for [WEB-2](#web-2-no-header-read-timeout-or-connection-cap-allow-list-checked-after-tls) and [WEB-6](#web-6-response-hygiene-headers-status-codes-error-detail) | Add it (`features = ["timeout", "limit", "set-header"]`), matching the version already in the lockfile (0.6) |
+| Duplicate versions: `base64` 0.22 + 0.23 | Align `base64` with what the tree already uses if possible |
 | Git dependencies (`libcosmic`, `atomicwrites`) have no `rev` | Reproducibility rests on `Cargo.lock`, so enforce `--locked` everywhere ([CI-3](#ci-3-reproducible-and-locked-builds)). Pin `libcosmic` by `rev` in `Cargo.toml` and bump it deliberately. **Don't** pin `atomicwrites` separately: libcosmic declares it unpinned, and a rev would add a second copy |
 
 **Verify.** `cargo tree -d` shows fewer duplicates.
@@ -3462,7 +2422,7 @@ allow-indexing-slicing-in-tests = true
 
 Burn down in batches, one module per PR. For the `unwrap`s:
 
-- `Mutex::lock().unwrap()` in `mount.rs` and `web.rs` becomes
+- `Mutex::lock().unwrap()` in `mount.rs` becomes
   `unwrap_or_else(PoisonError::into_inner)`.
 - `localization.rs:15` becomes `#[expect(clippy::expect_used, reason = "embedded en locale is a build-time invariant")]`.
 
@@ -3477,14 +2437,11 @@ enforces it through the existing `-D warnings`.
 
 ### ARC-10. Comment and documentation drift in code
 
-**Status: Done.** Checked all 5 against the current code rather than
-assuming the plan's own list was still accurate — three had already
+**Status: Done.** Checked all 4 against the current code rather than
+assuming the plan's own list was still accurate — two had already
 stopped being drift, as side effects of the fixes their own row points
 at:
 
-- `config.rs`'s token-regeneration comment already says the daemon
-  restarts right away and names `App::restart_web_daemon_if_active` —
-  corrected when WEB-1's "minimum" fix landed, before tonight.
 - `applet.rs`'s polling comment already accurately describes "while the
   popup is open" vs. a slower idle rate — corrected when UI-7 landed.
 - `runner.rs:424`'s comment, read against the actual code right above
@@ -3578,22 +2535,9 @@ tests: zero new entries, where every previous run had added some.
 `settings_export.rs`'s history-merge test moved to its own integration
 binary (`tests/settings_export_history.rs`) with a temp `XDG_STATE_HOME`,
 the same isolation `tests/rclone_credentials.rs` already needed for `PATH`.
-`tests/keyring.rs`'s web-password test now catches a panic from its own
-checks, restores the real password either way, then resumes the panic.
 69 stray `event-log-*` entries this session's own earlier runs had already
 left in the real state store were removed, checked one by one against the
 one real profile's own ID first so nothing genuine was touched.
-
-**Not done:** `web/routes.rs`'s
-`starting_a_backup_records_it_in_the_history_under_the_web_source` still
-writes into the real history store. Its fixture (`real_backup_with_id`,
-`spawn`, `post_json`, `wait_for_a_second_snapshot`) is private to that
-file's own test module and shared by many other tests there; extracting
-just this one test would mean either duplicating that fixture or exposing
-it as new public test-support surface, disproportionate to what a stray,
-harmless (never colliding with a real profile, per its own random UUID)
-leftover key actually costs. Left as a disclosed, accepted gap rather than
-force a larger refactor.
 
 **Medium · S · Verified**
 
@@ -3601,11 +2545,6 @@ force a larger refactor.
   (`history_is_merged_for_new_and_existing_backups_alike`) writes a
   random-UUID key into the **real** cosmic-config state store, which
   `event_log.rs:148-151` forbids.
-- `web/routes.rs:452-468`
-  (`starting_a_backup_records_it_in_the_history_under_the_web_source`) writes
-  into the real history store.
-- `tests/keyring.rs:58-94` restores the real web password only if no
-  assertion panics.
 - Engine tests probably write `~/.cache/rustic/<id>` for every test
   repository. **Confirm first:** `ls ~/.cache/rustic | wc -l` before and after
   `cargo test`.
@@ -3630,9 +2569,7 @@ Tried running these locally to make progress on the real CI-only `Connect`
 error next, expecting them to pass (the existing comment says they do, "run
 by hand on this project's own development machine") — instead hit a third,
 different failure ("did not start listening in time") under this
-particular sandbox's own heavy swap/fd pressure at the time (the same
-resource pressure [[feedback_resource-pressure-pause]] already documents
-recurring for the `web::` tests that same evening), not the CI-only
+particular sandbox's own heavy swap/fd pressure at the time, not the CI-only
 `Connect` error this task is actually about. Didn't draw any conclusion
 about the real bug from a run known to be contaminated by that. Still
 open: get a real CI run of these (`--ignored`) with a healthy local run
@@ -3648,20 +2585,6 @@ with the *test process itself* being starved of scheduling time under
 swap pressure rather than the server being genuinely slow to bind. Still
 not a conclusion about the real bug; a machine under this much pressure
 cannot be trusted to say anything about it either way.
-
-Same evening, a full `cargo test` (prompted by a dependency bump — see
-below) confirmed [[feedback_resource-pressure-pause]]'s note that this
-isn't unique to `rest_server.rs`: 22-23 of `web.rs`'s own tests failed
-with `Os { code: 110, kind: TimedOut }` from a plain
-`tokio::net::TcpStream::connect` against a server the same test had just
-spawned on loopback — an OS-level connect timeout, which is client-side
-and has nothing to do with any HTTP library. Reproduced identically in
-an isolated, single-threaded rerun of just `web::`, which took 3036
-seconds for 80 tests (`ps --sort=-rss` at the time showed a normal, busy
-interactive desktop: browser, editor, chat client, office suite, several
-other unrelated background sessions — not anything this task started).
-Not treated as a signal about the CI-only bug either way, for the same
-reason as above.
 
 **Medium · M · Verified**
 
@@ -3759,19 +2682,6 @@ directory conflict (already handled correctly by the pre-existing
   own refusal. Confirmed that reliance is justified: rustic_core refuses
   with the same `ErrorKind::Internal` the existing deletion-refusal test
   already expects.
-- **The WEB-7 TLS `curl` checks:** done as part of WEB-7 itself
-  (`a_real_handshake_capped_below_tls_1_2_never_completes`,
-  `plain_http_gets_no_response_on_the_tls_only_port`).
-- **Web header-parsing edge cases:** done. 7 new tests against
-  `basic_password`/`split_scheme`/`is_authenticated`: a decoded credential
-  with no `:` separator, invalid base64, base64 that decodes to bytes no
-  UTF-8 string could hold, a bare scheme with nothing following it,
-  `bearer`/`basic` in lowercase (both already worked via
-  `eq_ignore_ascii_case`; now pinned by a test), an empty `Bearer` value,
-  and two `Authorization` headers on one request (`HeaderMap::get`
-  already only ever returns the first — locked in explicitly, since a
-  client or proxy duplicating the header must never let a second,
-  different credential silently take over).
 - **File-vs-directory and symlink conflicts on restore:** done — see the
   status note above.
 - **An `archive_folder` failure partway through:** done. New
@@ -3797,12 +2707,7 @@ Add engine or integration tests for:
 - symlink conflicts on restore;
 - prune on an append-only repository;
 - `KeepRules` with `Some(0)`;
-- an `archive_folder` failure partway through;
-- web header-parsing edge cases: Basic without a colon, invalid base64,
-  non-UTF-8, lower-case schemes, an empty Bearer value, repeated
-  `Authorization` headers;
-- `curl --tls-max 1.1` refused and plain HTTP refused
-  ([WEB-7](#web-7-tls-configuration-hardening)).
+- an `archive_folder` failure partway through.
 
 ---
 
@@ -4037,19 +2942,11 @@ plan itself, not started).
   for rclone.
 - **`cargo install rustic_server` unpinned:** not started; see
   [TST-3](#tst-3-rest-tests-never-run), which this task already deferred to.
-- **web-interface docs not installed:** done for the doc file itself —
-  `docs/web-interface.md` is now a packaged asset in both deb and rpm
-  metadata, and `install.sh`'s own `stage()` installs it for a from-source
-  install too, all under `.../doc/stellarshot/web-interface.md`. Not done:
-  linking the *versioned* doc from Settings instead of `main` — that's a
-  Settings-page change in `app.rs`'s web-settings section, left to whoever
-  is working WEB-1 through WEB-12 tonight.
 - **Uninstall leaves user units behind:** done. `cmd_uninstall` already
   warned to `systemctl --user disable --now 'stellarshot*'`, but disabling
   and stopping a unit does not delete its file from
   `~/.config/systemd/user/` — re-checked against the actual filenames
-  `schedule.rs` (`stellarshot-backup-<id>.service`/`.timer`) and
-  `web_daemon.rs` (`stellarshot-web.service`) create, rather than assuming
+  `schedule.rs` creates (`stellarshot-backup-<id>.service`/`.timer`), rather than assuming
   the existing glob already covered it. Added a second line to the same
   warning: `rm -f ~/.config/systemd/user/stellarshot*.service
   ~/.config/systemd/user/stellarshot*.timer`. Not automated: `install.sh`
@@ -4066,8 +2963,7 @@ plan itself, not started).
 | The release tarball contains an `install.sh` that can't work (it needs cargo and `target/release`) | `install.sh:156-177` | Ship a small `install-tarball.sh` that copies `usr/` to `${DESTDIR}${PREFIX}`, and document it in the README |
 | FUSE runtime dependency undeclared; "Mount as Folder" needs `fusermount3` | `Cargo.toml` deb and rpm metadata | Deb `recommends = "rclone, fuse3"`, rpm `recommends = { rclone = "*", fuse3 = "*" }`; add to README requirements |
 | `cargo install rustic_server` unpinned, unlocked, and under `-D warnings` for tests that are all ignored | `ci.yml:38-43` | See [TST-3](#tst-3-rest-tests-never-run) |
-| The web interface docs are not installed | deb and rpm assets | Install `docs/web-interface.md` under `/usr/share/doc/stellarshot/` and link the versioned doc (`/blob/v{CARGO_PKG_VERSION}/…`) from Settings rather than `main` |
-| Uninstall leaves user units behind | `install.sh:118-132` | See [WEB-10](#web-10-service-unit-hardening-and-upgrade-handling) |
+| Uninstall leaves user units behind | `install.sh:118-132` | Delete the unit files in `uninstall`, not just disable them |
 
 ---
 
@@ -4113,17 +3009,7 @@ debug* log (`/tmp/stellarshot-debug.log`), which SEC-5 deliberately did
 not move, so there was never a stale reference to fix there; tarball
 install instructions were added as part of CI-5. `CHANGELOG.md` no longer
 says "quit completely" anywhere (resolved alongside UI-3's own Quit action
-landing). `docs/web-interface.md`'s own 5 items were re-checked directly
-against the current file rather than trusting the plan's "peer session's
-own territory" note: the `202`/`409` status mapping (WEB-6/WEB-8), the
-profile/credential-change restart wording (WEB-1), and "every network
-interface" for the LAN scope were already there — only the blast-radius
-item was genuinely still missing, now added to the Authentication section:
-either credential lists every backup, snapshot and file *name* (not
-contents — confirmed there is still no download route in `routes::router`)
-and can start a backup, running its owner's own hooks; a token is singled
-out as the one most likely to leak by accident (a script, a committed
-file). Regenerated `docs/screenshots/` with `scripts/screenshots.sh`,
+landing). Regenerated `docs/screenshots/` with `scripts/screenshots.sh`,
 which needed two real bugs in the script fixed first, both found because
 the run actually failed rather than by reading the script: (1) the demo
 launch had no isolation from libcosmic's `run_single_instance`, which
@@ -4146,16 +3032,6 @@ the desktop confirmed untouched throughout.
 
 **Medium · S · Verified**
 
-- **`docs/web-interface.md`:**
-  - Document that `POST …/run` returns **202**, or 409 after
-    [WEB-8](#web-8-graceful-shutdown-and-duplicate-run-requests).
-  - Update the status mapping after [WEB-6](#web-6-response-hygiene-headers-status-codes-error-detail).
-  - Document that profile and credential changes need a restart, until
-    [WEB-1](#web-1-credential-and-profile-changes-never-reach-the-running-daemon)
-    lands.
-  - Say "all network interfaces" for the LAN scope.
-  - Document the blast radius of a leaked token: it can list every file name
-    in every snapshot and start backups, which run the owner's hooks.
 - **`SECURITY.md:37`:** "Passwords are never written to Stellarshot's own
   files" is false for REST URLs until
   [SEC-3](#sec-3-rest-credentials-are-stored-and-reported-in-plain-text).
@@ -4253,28 +3129,6 @@ tasks above implement it; this is the checklist to hold future work to.
 - Every icon-only button needs `.name()` for the accessible name, not just a
   tooltip.
 
-**Web API** (OWASP ASVS 5.0, OWASP API Security Top 10 2023)
-
-- Tokens:
-  - 256-bit, from a CSPRNG;
-  - stored as SHA-256;
-  - compared in constant time;
-  - with a recognizable prefix;
-  - revocable immediately.
-- A password stored for verification (if the keyring is replaced) uses
-  Argon2id per the OWASP cheat sheet: m=19456 KiB, t=2, p=1, stored as a PHC
-  string.
-- Rate-limit failed authentication, and never count credential-less requests.
-- `tower-http` layers for timeouts (`TimeoutLayer::with_status_code`, since
-  `new` is deprecated) and body limits. hyper connection timeouts need an
-  explicit timer.
-- Security headers on every response; `no-store` on authenticated responses;
-  HSTS only with a real certificate.
-- CSRF defense (`Sec-Fetch-Site`, with `Origin` as the fallback) on every
-  route now ([WEB-11](#web-11-there-is-no-csrf-protection)), plus CSRF tokens
-  before any cookie session.
-- One rustls crypto provider, installed explicitly.
-
 **Advisory status of the lockfile** (checked on this date): no known
 vulnerabilities.
 
@@ -4313,16 +3167,6 @@ Reviewers confirmed these in the code. Each should have (or keep) a test.
   compiled out by `release-build`, verified in CI.
 - **Secret handling.** `Secret`'s `Debug` is redacted, and `redact_url` fails
   closed. Export strips `password_command` and REST credentials.
-- **Web auth:**
-  - It fails closed when no method is enabled; the scope defaults to Off.
-  - The allow-list is the outermost layer, and auth covers every route
-    including health.
-  - A lockout rejects even correct credentials, and success clears the count.
-  - The token is 256-bit, stored only as SHA-256, and compared in constant
-    time.
-  - The web password lives in the keyring.
-  - TLS is always on, a broken custom certificate fails loudly, and
-    `X-Forwarded-For` is never trusted. There's no permissive CORS.
 - **Path containment in browse.** `?path=` only walks the snapshot's own tree;
   `..` is rejected by rustic, and the host filesystem is never touched. The
   `tar` crate refuses `..` and absolute paths in archives.
@@ -4344,7 +3188,7 @@ Suggested batches. Each batch is independently shippable; within a batch,
 tasks can go to different developers in parallel.
 
 1. **Stop the bleeding.** Small, high-impact changes:
-   - SEC-1, REL-2, REL-3, REL-5, I18N-1, UI-1, UI-3, UI-4;
+   - SEC-1, REL-2, REL-3, REL-5, UI-1, UI-3, UI-4;
    - ARC-8 (`paste` removal only).
 
    Most are **S**, and each comes with its TST-1 test.
@@ -4352,23 +3196,17 @@ tasks can go to different developers in parallel.
    - REL-1 (with its migration rule), REL-4 (via ARC-2's process helper),
      REL-6;
    - REL-10, REL-8, REL-9.
-3. **Web interface hardening, before advertising the feature.**
-   - WEB-11 first (small; WEB-3 depends on it), then WEB-1, WEB-2, WEB-3,
-     WEB-4, WEB-5;
-   - then WEB-6 to WEB-10.
-   - Each needs its live `curl` or `openssl` proof in the PR.
-4. **Secrets and filesystem.** SEC-2 through SEC-9.
-5. **CI and supply chain.** CI-1 through CI-5, ARC-9 (the table), TST-2,
+3. **Secrets and filesystem.** SEC-2 through SEC-9.
+4. **CI and supply chain.** CI-1 through CI-5, ARC-9 (the table), TST-2,
    TST-3.
-6. **Structure.**
+5. **Structure.**
    - ARC-4, then ARC-1 (pure moves), ARC-2, ARC-3, ARC-5, ARC-6, ARC-7;
-   - UI-5 to UI-11.
-7. **Polish.** I18N-2, I18N-3, REL-11 to REL-17, DOC-1 to DOC-3, TST-4,
+   - UI-5 to UI-8, UI-11.
+6. **Polish.** I18N-2, I18N-3, REL-11 to REL-17, DOC-1 to DOC-3, TST-4,
    TST-5, and the ARC-9 burn-down.
 
-Documentation updates (README, `docs/web-interface.md`, SECURITY.md,
-CHANGELOG) ride along with the task that changes the behavior. They aren't
-saved for batch 7.
+Documentation updates (README, SECURITY.md, CHANGELOG) ride along with the
+task that changes the behavior. They aren't saved for batch 6.
 
 ---
 

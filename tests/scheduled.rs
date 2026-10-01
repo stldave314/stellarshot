@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! `stellarshot --scheduled <id>`, run the way its systemd timer runs it:
 //! settings read from cosmic-config, the password from the keyring, the

@@ -156,6 +156,77 @@ fn round_trip_preserves_tree() {
     );
 }
 
+/// What the small tree in [`awkward_tree`] does not cover: a file larger than
+/// rustic's largest chunk (so it is stored as several, and read back through
+/// all of them), modification times, a directory's own mode, two names for
+/// one file, and a FIFO, which is a file type with no content at all.
+#[test]
+fn a_large_file_and_the_metadata_around_it_survive_a_round_trip() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::FileTypeExt;
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("locked")).unwrap();
+    let big = pseudo_random(20 * 1024 * 1024, 7);
+    fs::write(fixture.source.join("locked/big.bin"), &big).unwrap();
+    fs::write(fixture.source.join("one.txt"), b"two names").unwrap();
+    fs::hard_link(
+        fixture.source.join("one.txt"),
+        fixture.source.join("two.txt"),
+    )
+    .unwrap();
+    let fifo = fixture.source.join("pipe");
+    let fifo_name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `fifo_name` is a valid NUL-terminated path.
+    assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+    let then = filetime::FileTime::from_unix_time(1_600_000_000, 0);
+    filetime::set_file_mtime(fixture.source.join("one.txt"), then).unwrap();
+    fs::set_permissions(
+        fixture.source.join("locked"),
+        fs::Permissions::from_mode(0o750),
+    )
+    .unwrap();
+    filetime::set_file_mtime(fixture.source.join("locked"), then).unwrap();
+
+    back_up(&fixture, &sources(&fixture.source));
+    let destination = fixture.work.join("restore");
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source);
+    assert!(
+        fs::read(restored.join("locked/big.bin")).unwrap() == big,
+        "a file larger than one chunk comes back byte for byte"
+    );
+    let mtime =
+        |path: &Path| filetime::FileTime::from_last_modification_time(&fs::metadata(path).unwrap());
+    assert_eq!(mtime(&restored.join("one.txt")), then, "file mtime");
+    assert_eq!(mtime(&restored.join("locked")), then, "directory mtime");
+    assert_eq!(
+        fs::metadata(restored.join("locked"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o750,
+        "directory mode"
+    );
+    assert_eq!(fs::read(restored.join("one.txt")).unwrap(), b"two names");
+    assert_eq!(
+        fs::read(restored.join("two.txt")).unwrap(),
+        b"two names",
+        "both names of a hard-linked file are restored with their content"
+    );
+    assert!(
+        fs::symlink_metadata(restored.join("pipe"))
+            .unwrap()
+            .file_type()
+            .is_fifo(),
+        "a FIFO is restored as a FIFO"
+    );
+}
+
 #[test]
 fn excluded_folder_is_not_in_the_snapshot() {
     let fixture = fixture();
@@ -986,6 +1057,42 @@ fn search_all_ignores_case_and_an_empty_query_finds_nothing() {
 }
 
 #[test]
+fn an_unreadable_repository_is_an_error_in_versions_not_a_shorter_list() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let browser = browser(&fixture);
+
+    let damaged =
+        browser.versions_with(|_| Err(EngineError::new(ErrorKind::Internal, "a pack is missing")));
+    assert!(
+        damaged.is_err(),
+        "a repository that cannot be read must not look like a file with no history"
+    );
+
+    let absent = browser
+        .versions_with(|_| Err(EngineError::new(ErrorKind::NotFound, "/nope")))
+        .unwrap();
+    assert!(
+        absent.is_empty(),
+        "a snapshot without the file is just a gap"
+    );
+}
+
+#[test]
+fn a_path_with_a_parent_component_is_refused_not_resolved_to_another_file() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    // Every component up to the `..` exists in the snapshot.
+    let sneaky = fixture.source.join("../source/plain.txt");
+
+    let err = browser(&fixture).versions(&sneaky).unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::UnsafePath);
+}
+
+#[test]
 fn versions_collapse_identical_content() {
     let fixture = fixture();
     awkward_tree(&fixture.source);
@@ -1112,6 +1219,28 @@ fn missing_finds_deleted_files_with_their_last_snapshot() {
     );
 }
 
+/// The "is it gone" check stats the live filesystem. It must never run with
+/// the repository lock held, or one stalled mount freezes the whole browser.
+#[test]
+fn missing_never_holds_the_repository_lock_while_checking_the_disk() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let browser = browser(&fixture);
+    let mut checked = 0;
+
+    let missing = browser
+        .missing_where(&fixture.source, 0, 100, |_| {
+            checked += 1;
+            assert!(browser.is_unlocked(), "lock held during the disk check");
+            true
+        })
+        .unwrap();
+
+    assert!(checked > 0, "the check never ran");
+    assert_eq!(missing.len(), checked);
+}
+
 #[test]
 fn dump_file_writes_exactly_that_files_bytes() {
     let fixture = fixture();
@@ -1138,8 +1267,8 @@ fn dump_file_refuses_a_folder() {
         .unwrap_err();
 
     // Not `Internal`: a wrong-type path is reported the same way a path
-    // that plain doesn't exist is, so the web API (WEB-6) can answer 404
-    // for both rather than a bare 500.
+    // that plain doesn't exist is, so a caller can answer "not found" for
+    // both rather than a bare internal error.
     assert_eq!(err.kind, ErrorKind::NotFound);
     assert!(!destination.exists(), "nothing is written on failure");
 }
@@ -1679,6 +1808,74 @@ fn fixture_with_a_directory_blocked_by_an_existing_file() -> (Fixture, PathBuf) 
     (fixture, target)
 }
 
+/// A symlink already sitting in the restore folder must never be written
+/// *through*: `restore` would otherwise follow it (the filesystem calls
+/// rustic makes do) and put the snapshot's file wherever it points — outside
+/// the folder the user chose. Two restores of a shared repository's
+/// snapshots are enough to set this up: the first lays down a symlink,
+/// the second carries a file "inside" it.
+#[test]
+fn restore_never_writes_through_a_symlink_already_in_the_destination() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("a/x")).unwrap();
+    fs::write(fixture.source.join("a/x/f.txt"), b"from the snapshot").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+    let outside = fixture.work.join("outside");
+    fs::create_dir_all(target.join("a")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, target.join("a/x")).unwrap();
+
+    let result = open(&fixture.repo, &secret()).unwrap().restore(
+        &restore_request(
+            vec![fixture.source.join("a")],
+            Target::Folder(target.clone()),
+            ConflictPolicy::Overwrite,
+        ),
+        Arc::new(NoProgress),
+    );
+
+    assert_eq!(
+        result.unwrap_err().kind,
+        ErrorKind::UnsafePath,
+        "Overwrite must refuse, not follow the symlink"
+    );
+    assert!(
+        !outside.join("f.txt").exists(),
+        "nothing may land outside the chosen folder"
+    );
+}
+
+/// Keep Both and Skip do not fail for the same situation: they leave the
+/// symlinked part alone, count it as a conflict, and restore the rest.
+#[test]
+fn skip_leaves_a_symlinked_folder_alone_and_reports_it() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("a/x")).unwrap();
+    fs::write(fixture.source.join("a/x/f.txt"), b"from the snapshot").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("elsewhere");
+    let outside = fixture.work.join("outside");
+    fs::create_dir_all(target.join("a")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink(&outside, target.join("a/x")).unwrap();
+
+    let preview = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(
+            &restore_request(
+                vec![fixture.source.join("a")],
+                Target::Folder(target),
+                ConflictPolicy::Skip,
+            ),
+            Arc::new(NoProgress),
+        )
+        .unwrap();
+
+    assert!(preview.conflicts >= 1);
+    assert!(!outside.join("f.txt").exists());
+}
+
 /// Before this fix, a snapshot directory whose own path was blocked by an
 /// existing file (or, as here, a file whose *parent* path was blocked by
 /// one) was never recognized as a conflict at all: `on_disk.symlink_metadata()`
@@ -1840,6 +2037,34 @@ fn preview_counts_match_the_restore() {
 }
 
 #[test]
+fn two_items_with_the_same_name_are_refused_before_anything_is_written() {
+    let fixture = fixture();
+    fs::create_dir_all(fixture.source.join("a")).unwrap();
+    fs::create_dir_all(fixture.source.join("b")).unwrap();
+    fs::write(fixture.source.join("a/notes.txt"), b"from a").unwrap();
+    fs::write(fixture.source.join("b/notes.txt"), b"from b").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    let target = fixture.work.join("out");
+    let request = restore_request(
+        vec![
+            fixture.source.join("a/notes.txt"),
+            fixture.source.join("b/notes.txt"),
+        ],
+        Target::Folder(target.clone()),
+        ConflictPolicy::Overwrite,
+    );
+
+    let err = open(&fixture.repo, &secret())
+        .unwrap()
+        .restore(&request, Arc::new(NoProgress))
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::DuplicateName);
+    assert_eq!(err.detail, "notes.txt");
+    assert!(!target.exists(), "nothing was written");
+}
+
+#[test]
 fn preview_creates_nothing() {
     let fixture = fixture();
     awkward_tree(&fixture.source);
@@ -1939,15 +2164,16 @@ fn forget_applies_the_rules() {
 }
 
 #[test]
-fn keep_last_zero_removes_every_unpinned_snapshot() {
+fn keep_last_zero_is_rejected_rather_than_forgetting_everything() {
     // `Some(0)` ("keep the 0 most recent") is a real, reachable value from
     // the retention settings page (a spinner with no built-in minimum other
     // than 0), distinct from `None` ("this rule is off"): `count()` in
-    // `KeepRules::options` maps both to *some* `i32`, so it would be easy
-    // for `Some(0)` to accidentally behave like "unlimited" if a future
-    // change swapped `Option::map` for `Option::unwrap_or(i32::MAX)` or
-    // similar. Every other field stays `None` (off), so nothing else keeps
-    // a snapshot alive either.
+    // `KeepRules::options` maps both to *some* `i32`, so a caller could
+    // easily read `Some(0)` as "unlimited" rather than "keep none of the
+    // unpinned snapshots this rule governs, including the newest one" —
+    // which is what it would actually do if `forget` did not reject it
+    // outright. `KeepRules::validate` is the gate that catches this before
+    // any snapshot is even looked up.
     let fixture = fixture();
     daily_history(&fixture);
     let rules = KeepRules {
@@ -1955,7 +2181,7 @@ fn keep_last_zero_removes_every_unpinned_snapshot() {
         ..KeepRules::default()
     };
 
-    let report = open(&fixture.repo, &secret())
+    let err = open(&fixture.repo, &secret())
         .unwrap()
         .forget(
             &rules,
@@ -1963,10 +2189,14 @@ fn keep_last_zero_removes_every_unpinned_snapshot() {
             "",
             std::slice::from_ref(&fixture.source),
         )
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!((report.removed, report.kept), (4, 0));
-    assert!(snapshot_ids(&fixture).is_empty());
+    assert_eq!(err.kind, ErrorKind::Internal);
+    assert_eq!(
+        snapshot_ids(&fixture).len(),
+        4,
+        "a rejected rule must remove nothing"
+    );
 }
 
 #[test]

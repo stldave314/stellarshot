@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use stellarshot::app::{App, Launch, settings};
+use stellarshot::app::{App, Launch, startup};
 
 fn main() -> ExitCode {
     // `args()` panics outright on a non-UTF-8 argument; `args_os()` never
@@ -20,7 +20,7 @@ fn main() -> ExitCode {
         _ => {}
     }
 
-    let (settings, mut flags) = settings::init();
+    let (settings, mut flags) = startup::init();
     // `--new-backup` opens the setup wizard straight away: the desktop
     // entry's "New Backup" action.
     flags.start_wizard = args.iter().any(|arg| arg == "--new-backup");

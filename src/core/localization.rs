@@ -12,6 +12,9 @@ struct Localizations;
 
 pub static LANGUAGE_LOADER: LazyLock<FluentLanguageLoader> = LazyLock::new(|| {
     let loader: FluentLanguageLoader = fluent_language_loader!();
+    // Embedded at build time: failing here is a broken build, not a runtime
+    // condition anyone could handle.
+    #[allow(clippy::expect_used, reason = "the fallback locale is compiled in")]
     loader
         .load_fallback_language(&Localizations)
         .expect("i18n/en must be present and valid; it is embedded at build time");

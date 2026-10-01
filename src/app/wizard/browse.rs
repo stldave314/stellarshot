@@ -16,12 +16,15 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cosmic::iced::{Alignment, Length};
 use cosmic::{Element, theme, widget};
 
 use crate::app::format;
-use crate::engine::DiskEntry;
+use crate::constants::BROWSE_ROW_LIMIT;
+use crate::engine::{DiskEntry, EngineError};
 use crate::fl;
 
 #[derive(Debug, Clone)]
@@ -36,7 +39,7 @@ pub enum Message {
     Progress(PathBuf, usize),
     /// `path`'s children, sized and sorted largest first.
     Listed(PathBuf, Vec<DiskEntry>),
-    Failed(PathBuf, String),
+    Failed(PathBuf, EngineError),
     /// Mark `path` excluded (`true`) or included (`false`). Only offered
     /// for a folder that is not already beneath an excluded ancestor.
     Mark(PathBuf, bool),
@@ -44,8 +47,10 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub enum Effect {
-    /// List `path`'s immediate children with their sizes.
-    List(PathBuf),
+    /// List `path`'s immediate children with their sizes, stopping early if
+    /// the flag is set (the browser was closed or reopened, or the wizard
+    /// discarded, so nobody is waiting for the answer).
+    List(PathBuf, Arc<AtomicBool>),
     /// The user asked to exclude or re-include `path`; the wizard's own
     /// `excludes` list is not this module's to hold, so the change bubbles
     /// up rather than being applied here.
@@ -60,7 +65,7 @@ struct Node {
     children: Option<Vec<PathBuf>>,
     loading: bool,
     scanned: usize,
-    failed: Option<String>,
+    failed: Option<EngineError>,
 }
 
 /// Whether a folder is going into the backup, being left out, or a mix.
@@ -76,13 +81,9 @@ pub enum Mark {
 pub struct Browse {
     root: Option<PathBuf>,
     nodes: BTreeMap<PathBuf, Node>,
+    /// Shared with every scan started since the browser was last opened.
+    cancel: Arc<AtomicBool>,
 }
-
-/// Hard cap on rows rendered at once: expanding enough folders to need more
-/// than this is rare, and re-walking tens of thousands of them into fresh
-/// widgets on every keystroke or tick — `view()` runs on both — is not
-/// something a tree this deep should ever cost.
-const ROW_LIMIT: usize = 500;
 
 impl Browse {
     pub fn is_open(&self) -> bool {
@@ -93,9 +94,21 @@ impl Browse {
         self.root.as_deref()
     }
 
+    /// Stop every scan still running and let the next one start fresh.
+    fn cancel_scans(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel = Arc::new(AtomicBool::new(false));
+    }
+
+    /// Stop every scan still running, for good: the wizard is discarded.
+    pub fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::Open(root) => {
+                self.cancel_scans();
                 self.nodes.clear();
                 self.nodes.insert(
                     root.clone(),
@@ -105,11 +118,12 @@ impl Browse {
                         ..Node::default()
                     },
                 );
-                let effect = Effect::List(root.clone());
+                let effect = Effect::List(root.clone(), self.cancel.clone());
                 self.root = Some(root);
                 vec![effect]
             }
             Message::Close => {
+                self.cancel_scans();
                 self.root = None;
                 Vec::new()
             }
@@ -125,7 +139,7 @@ impl Browse {
                 } else {
                     node.loading = true;
                     node.failed = None;
-                    vec![Effect::List(path)]
+                    vec![Effect::List(path, self.cancel.clone())]
                 }
             }
             Message::Progress(path, scanned) => {
@@ -152,10 +166,10 @@ impl Browse {
                 }
                 Vec::new()
             }
-            Message::Failed(path, detail) => {
+            Message::Failed(path, error) => {
                 if let Some(node) = self.nodes.get_mut(&path) {
                     node.loading = false;
-                    node.failed = Some(detail);
+                    node.failed = Some(error);
                 }
                 Vec::new()
             }
@@ -206,7 +220,7 @@ impl Browse {
         excludes: &'a [PathBuf],
         under_excluded_ancestor: bool,
     ) {
-        if rows.len() >= ROW_LIMIT {
+        if rows.len() >= BROWSE_ROW_LIMIT {
             return;
         }
         let Some(node) = self.nodes.get(path) else {
@@ -217,7 +231,7 @@ impl Browse {
         rows.push(self.row(path, node, depth, mark, excludes, under_excluded_ancestor));
         if let Some(children) = &node.children {
             for child in children {
-                if rows.len() >= ROW_LIMIT {
+                if rows.len() >= BROWSE_ROW_LIMIT {
                     break;
                 }
                 self.push_rows(
@@ -238,11 +252,11 @@ impl Browse {
                     )))
                     .into(),
             );
-        } else if let Some(detail) = &node.failed {
+        } else if let Some(error) = &node.failed {
             rows.push(
                 widget::row::with_capacity(1)
                     .padding([0.0, 0.0, 0.0, indent(depth + 1)])
-                    .push(widget::text::caption(detail.clone()))
+                    .push(widget::text::caption(crate::app::errors::explain(error)))
                     .into(),
             );
         }
@@ -387,7 +401,7 @@ mod tests {
         let mut browse = Browse::default();
         let effects = browse.update(Message::Open(PathBuf::from("/home/alex")));
         assert!(
-            matches!(effects.as_slice(), [Effect::List(path)] if path == Path::new("/home/alex"))
+            matches!(effects.as_slice(), [Effect::List(path, _)] if path == Path::new("/home/alex"))
         );
         assert!(browse.is_open());
     }
@@ -405,7 +419,7 @@ mod tests {
 
         assert!(matches!(
             effects.as_slice(),
-            [Effect::List(path)] if path == Path::new("/home/alex/Documents")
+            [Effect::List(path, _)] if path == Path::new("/home/alex/Documents")
         ));
     }
 
@@ -498,6 +512,33 @@ mod tests {
             Mark::Partial
         );
         assert_eq!(mark_of(Path::new("/home/alex"), &excludes), Mark::Partial);
+    }
+
+    #[test]
+    fn closing_or_reopening_stops_the_scans_that_were_running() {
+        let mut browse = Browse::default();
+        let effects = browse.update(Message::Open("/home/alex".into()));
+        let Some(Effect::List(_, first)) = effects.into_iter().next() else {
+            panic!("opening lists the root");
+        };
+        assert!(!first.load(Ordering::Relaxed));
+
+        browse.update(Message::Close);
+        assert!(
+            first.load(Ordering::Relaxed),
+            "Close stops the running scan"
+        );
+
+        let effects = browse.update(Message::Open("/home/alex".into()));
+        let Some(Effect::List(_, second)) = effects.into_iter().next() else {
+            panic!("opening lists the root");
+        };
+        assert!(
+            !second.load(Ordering::Relaxed),
+            "the next scan is not born canceled"
+        );
+        browse.update(Message::Open("/home/alex/Documents".into()));
+        assert!(second.load(Ordering::Relaxed), "reopening stops it too");
     }
 
     #[test]

@@ -17,6 +17,7 @@ use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::format;
+use crate::constants::DELETED_WINDOW_DAYS;
 use crate::constants::RESTORE_RESULT_LIMIT as RESULT_LIMIT;
 use crate::engine::mount::Mount;
 use crate::engine::{
@@ -26,9 +27,6 @@ use crate::engine::{
 };
 use crate::fl;
 use crate::runner::Event;
-
-/// How far back "Deleted files" looks by default, in days.
-const DELETED_WINDOW_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -85,11 +83,15 @@ impl Sheet {
 }
 
 /// A restore running in a child process.
+#[derive(Debug)]
 struct Running {
     handle: Option<ChildHandle>,
     progress: Option<ProgressEvent>,
     /// Requests still to run after this one.
     queue: VecDeque<RestoreRequest>,
+    /// What the parts finished so far restored, added up: one restore of
+    /// several selections runs as several requests, one after another.
+    total: RestorePreview,
 }
 
 /// A live FUSE mount of a snapshot. Unmounting happens when the last handle
@@ -121,6 +123,7 @@ impl From<Mount> for MountHandle {
     }
 }
 
+#[derive(Debug)]
 pub struct RestorePage {
     pub profile_id: String,
     browser: Option<Arc<Browser>>,
@@ -154,7 +157,17 @@ pub struct RestorePage {
     // Restoring
     sheet: Option<Sheet>,
     running: Option<Running>,
-    busy: bool,
+    // What each background search is answering, so a result for something
+    // the user has since moved on from is recognized and dropped rather than
+    // shown under whatever is selected now. `Some` while one is in flight.
+    /// Browse search: (snapshot, query).
+    searching: Option<(String, String)>,
+    /// Deleted files: (scope, since).
+    finding_missing: Option<(PathBuf, i64)>,
+    /// Compare: (from, to).
+    comparing: Option<(String, String)>,
+    /// Search across every snapshot: the query.
+    global_searching: Option<String>,
     labels: Vec<String>,
     // Mounting
     mounted: Option<MountHandle>,
@@ -167,28 +180,28 @@ pub enum Message {
     PickSnapshot(usize),
     Open(PathBuf),
     Up,
-    Listed(PathBuf, Result<Vec<TreeEntry>, EngineError>),
+    Listed(String, PathBuf, Result<Vec<TreeEntry>, EngineError>),
     Search(String),
     SearchNow,
-    Found(Result<Vec<TreeEntry>, EngineError>),
+    Found(String, String, Result<Vec<TreeEntry>, EngineError>),
     ShowVersions(PathBuf),
     VersionsLoaded(PathBuf, Result<Vec<FileVersion>, EngineError>),
     Toggle(PathBuf, bool),
     ChooseScope,
     ScopeChosen(PathBuf),
     FindMissing,
-    MissingFound(Result<Vec<MissingEntry>, EngineError>),
+    MissingFound(PathBuf, i64, Result<Vec<MissingEntry>, EngineError>),
     ToggleMissing(PathBuf, bool),
     PickFrom(usize),
     PickTo(usize),
     Compare,
-    Compared(Result<Vec<DiffEntry>, EngineError>),
+    Compared(String, String, Result<Vec<DiffEntry>, EngineError>),
     ToggleDiff(PathBuf, bool),
     /// Expand or collapse one folder's changes in the Compare tab.
     ToggleDiffFolder(PathBuf),
     GlobalSearch(String),
     GlobalSearchNow,
-    GlobalFound(Result<Vec<GlobalMatch>, EngineError>),
+    GlobalFound(String, Result<Vec<GlobalMatch>, EngineError>),
     /// Jump to `path`'s folder, in `snapshot`, on the Browse tab.
     JumpToMatch(String, PathBuf),
     /// Open the restore sheet for the current tab's selection.
@@ -222,6 +235,7 @@ pub enum Message {
     Close,
 }
 
+#[derive(Debug)]
 pub enum Effect {
     Load,
     List {
@@ -305,7 +319,10 @@ impl RestorePage {
             global_results: None,
             sheet: None,
             running: None,
-            busy: false,
+            searching: None,
+            finding_missing: None,
+            comparing: None,
+            global_searching: None,
             labels: Vec::new(),
             mounted: None,
         };
@@ -431,7 +448,13 @@ impl RestorePage {
                 self.labels = self
                     .snapshots
                     .iter()
-                    .map(|s| format!("{} · {}", format::local_time(s.time), s.short_id()))
+                    .map(|s| {
+                        fl!(
+                            "snapshot-label",
+                            time = format::local_time(s.time),
+                            id = s.short_id()
+                        )
+                    })
                     .collect();
                 self.browser = Some(browser);
                 if self.snapshots.is_empty() {
@@ -455,6 +478,7 @@ impl RestorePage {
                 // A selection belongs to one snapshot.
                 self.selection.clear();
                 self.results = None;
+                self.searching = None;
                 self.list()
             }
             Message::Open(dir) => {
@@ -468,8 +492,8 @@ impl RestorePage {
                 }
                 self.list()
             }
-            Message::Listed(dir, result) => {
-                if dir != self.dir {
+            Message::Listed(snapshot, dir, result) => {
+                if dir != self.dir || self.snapshot_id().as_deref() != Some(&snapshot) {
                     return Vec::new();
                 }
                 match result {
@@ -503,16 +527,17 @@ impl RestorePage {
             }
             Message::SearchNow => match self.snapshot_id() {
                 Some(snapshot) if !self.search.trim().is_empty() => {
-                    self.busy = true;
-                    vec![Effect::Search {
-                        snapshot,
-                        query: self.search.trim().to_owned(),
-                    }]
+                    let query = self.search.trim().to_owned();
+                    self.searching = Some((snapshot.clone(), query.clone()));
+                    vec![Effect::Search { snapshot, query }]
                 }
                 _ => Vec::new(),
             },
-            Message::Found(result) => {
-                self.busy = false;
+            Message::Found(snapshot, query, result) => {
+                if self.searching != Some((snapshot, query)) {
+                    return Vec::new();
+                }
+                self.searching = None;
                 match result {
                     Ok(found) => {
                         self.results = Some(found);
@@ -556,16 +581,20 @@ impl RestorePage {
                 self.update(Message::FindMissing)
             }
             Message::FindMissing => {
-                self.busy = true;
+                let since = format::now() - DELETED_WINDOW_DAYS * 86_400;
+                self.finding_missing = Some((self.scope.clone(), since));
                 self.missing = None;
                 self.missing_selection.clear();
                 vec![Effect::Missing {
                     scope: self.scope.clone(),
-                    since: format::now() - DELETED_WINDOW_DAYS * 86_400,
+                    since,
                 }]
             }
-            Message::MissingFound(result) => {
-                self.busy = false;
+            Message::MissingFound(scope, since, result) => {
+                if self.finding_missing != Some((scope, since)) {
+                    return Vec::new();
+                }
+                self.finding_missing = None;
                 match result {
                     Ok(found) => {
                         self.missing = Some(found);
@@ -585,11 +614,13 @@ impl RestorePage {
             Message::PickFrom(index) => {
                 self.from = Some(index);
                 self.diff = None;
+                self.comparing = None;
                 Vec::new()
             }
             Message::PickTo(index) => {
                 self.to = Some(index);
                 self.diff = None;
+                self.comparing = None;
                 Vec::new()
             }
             Message::Compare => {
@@ -599,16 +630,17 @@ impl RestorePage {
                 ) else {
                     return Vec::new();
                 };
-                self.busy = true;
+                let (from, to) = (from.id.clone(), to.id.clone());
+                self.comparing = Some((from.clone(), to.clone()));
                 self.diff_selection.clear();
                 self.diff_expanded.clear();
-                vec![Effect::Diff {
-                    from: from.id.clone(),
-                    to: to.id.clone(),
-                }]
+                vec![Effect::Diff { from, to }]
             }
-            Message::Compared(result) => {
-                self.busy = false;
+            Message::Compared(from, to, result) => {
+                if self.comparing != Some((from, to)) {
+                    return Vec::new();
+                }
+                self.comparing = None;
                 match result {
                     Ok(diff) => {
                         self.diff = Some(Diff::new(diff));
@@ -640,13 +672,16 @@ impl RestorePage {
                     self.global_results = None;
                     return Vec::new();
                 }
-                self.busy = true;
+                self.global_searching = Some(self.global_query.clone());
                 vec![Effect::GlobalSearch {
                     query: self.global_query.clone(),
                 }]
             }
-            Message::GlobalFound(result) => {
-                self.busy = false;
+            Message::GlobalFound(query, result) => {
+                if self.global_searching.as_ref() != Some(&query) {
+                    return Vec::new();
+                }
+                self.global_searching = None;
                 match result {
                     Ok(results) => {
                         self.global_results = Some(results);
@@ -663,6 +698,7 @@ impl RestorePage {
                 self.snapshot = Some(index);
                 self.selection.clear();
                 self.results = None;
+                self.searching = None;
                 self.expanded = None;
                 self.dir = path
                     .parent()
@@ -769,6 +805,7 @@ impl RestorePage {
                     handle: None,
                     progress: None,
                     queue,
+                    total: RestorePreview::default(),
                 });
                 vec![Effect::Restore(first)]
             }
@@ -828,16 +865,18 @@ impl RestorePage {
                 Vec::new()
             }
             ChildEvent::Event(Event::Done { restored, .. }) => {
+                running.total += restored.unwrap_or_default();
                 if let Some(next) = running.queue.pop_front() {
                     running.handle = None;
                     running.progress = None;
                     return vec![Effect::Restore(next)];
                 }
+                let total = running.total;
                 self.running = None;
                 self.selection.clear();
                 self.missing_selection.clear();
                 self.diff_selection.clear();
-                let mut effects = vec![Effect::Restored(restored.unwrap_or_default())];
+                let mut effects = vec![Effect::Restored(total)];
                 // What was missing may not be any more.
                 if self.tab == Tab::Deleted && self.missing.is_some() {
                     effects.extend(self.update(Message::FindMissing));
@@ -1126,12 +1165,17 @@ impl RestorePage {
                     .on_press(Message::ChooseScope),
             )
             .push(
-                widget::button::suggested(fl!("deleted-find"))
-                    .on_press_maybe((!self.busy).then_some(Message::FindMissing)),
+                widget::button::suggested(fl!("deleted-find")).on_press_maybe(
+                    self.finding_missing
+                        .is_none()
+                        .then_some(Message::FindMissing),
+                ),
             );
         let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
         match &self.missing {
-            None if self.busy => list = list.push(widget::text::body(fl!("restore-searching"))),
+            None if self.finding_missing.is_some() => {
+                list = list.push(widget::text::body(fl!("restore-searching")))
+            }
             None => list = list.push(widget::text::body(fl!("deleted-intro"))),
             Some(found) if found.is_empty() => {
                 list = list.push(widget::text::body(fl!("deleted-none")));
@@ -1172,15 +1216,17 @@ impl RestorePage {
             .spacing(spacing.space_s)
             .align_y(Alignment::Center)
             .push(widget::dropdown(&self.labels, self.from, Message::PickFrom))
-            .push(widget::text::body("→"))
+            .push(widget::icon::from_name("go-next-symbolic").size(16))
             .push(widget::dropdown(&self.labels, self.to, Message::PickTo))
             .push(
                 widget::button::suggested(fl!("compare-button"))
-                    .on_press_maybe((!self.busy).then_some(Message::Compare)),
+                    .on_press_maybe(self.comparing.is_none().then_some(Message::Compare)),
             );
         let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
         match &self.diff {
-            None if self.busy => list = list.push(widget::text::body(fl!("restore-searching"))),
+            None if self.comparing.is_some() => {
+                list = list.push(widget::text::body(fl!("restore-searching")))
+            }
             None => list = list.push(widget::text::body(fl!("compare-intro"))),
             Some(diff) if diff.is_empty() => {
                 list = list.push(widget::text::body(fl!("compare-none")))
@@ -1291,7 +1337,9 @@ impl RestorePage {
             .width(Length::Fill);
         let mut list = widget::column::with_capacity(8).spacing(spacing.space_xxxs);
         match &self.global_results {
-            None if self.busy => list = list.push(widget::text::body(fl!("restore-searching"))),
+            None if self.global_searching.is_some() => {
+                list = list.push(widget::text::body(fl!("restore-searching")))
+            }
             None => list = list.push(widget::text::body(fl!("search-all-intro"))),
             Some(results) if results.is_empty() => {
                 list = list.push(widget::text::body(fl!("search-all-none")));
@@ -1452,6 +1500,15 @@ impl RestorePage {
             }
         };
         let ready = matches!(sheet.preview, Some(Ok(_))) && !sheet.previewing;
+        // Overwriting files where they are is the one restore that destroys
+        // something: say how much, on the button itself, in the color that
+        // means it.
+        let start = match files_replaced_in_place(sheet) {
+            Some(count) => {
+                widget::button::destructive(fl!("restore-replace-button", count = (count as i64)))
+            }
+            None => widget::button::suggested(fl!("restore-button")),
+        };
         widget::column::with_capacity(6)
             .spacing(spacing.space_m)
             .push(widget::text::title4(fl!(
@@ -1472,13 +1529,23 @@ impl RestorePage {
                     .spacing(spacing.space_s)
                     .push(widget::button::standard(fl!("cancel")).on_press(Message::CancelSheet))
                     .push(widget::space::horizontal())
-                    .push(
-                        widget::button::suggested(fl!("restore-button"))
-                            .on_press_maybe(ready.then_some(Message::StartRestore)),
-                    ),
+                    .push(start.on_press_maybe(ready.then_some(Message::StartRestore))),
             )
             .apply(widget::scrollable)
             .into()
+    }
+}
+
+/// How many existing files the restore in `sheet` would overwrite where they
+/// are, if it is that kind of restore and there are any.
+fn files_replaced_in_place(sheet: &Sheet) -> Option<u64> {
+    match (&sheet.preview, &sheet.target, sheet.policy) {
+        (Some(Ok(preview)), TargetChoice::Original, ConflictPolicy::Overwrite)
+            if !sheet.previewing && preview.conflicts > 0 =>
+        {
+            Some(preview.conflicts)
+        }
+        _ => None,
     }
 }
 
@@ -1520,6 +1587,7 @@ fn common_ancestor<'a>(paths: impl Iterator<Item = &'a Path>) -> PathBuf {
 /// recomputed on every render — a full pass over a 50,000-entry diff is not
 /// something `view()` should pay for again on every message, including the
 /// once-a-second tick, just to redraw the same result.
+#[derive(Debug)]
 struct Diff {
     added: usize,
     removed: usize,
@@ -1747,6 +1815,32 @@ mod tests {
     }
 
     #[test]
+    fn only_overwriting_in_place_with_conflicts_is_marked_as_replacing() {
+        let mut sheet = Sheet {
+            requests: Vec::new(),
+            target: TargetChoice::Original,
+            policy: ConflictPolicy::Overwrite,
+            verify_existing: false,
+            ownership: Ownership::Preserve,
+            preview: Some(Ok(RestorePreview {
+                conflicts: 4,
+                ..RestorePreview::default()
+            })),
+            previewing: false,
+        };
+        assert_eq!(files_replaced_in_place(&sheet), Some(4));
+
+        sheet.policy = ConflictPolicy::KeepBoth;
+        assert_eq!(files_replaced_in_place(&sheet), None, "nothing is lost");
+        sheet.policy = ConflictPolicy::Overwrite;
+        sheet.target = TargetChoice::Folder(Some("/tmp/out".into()));
+        assert_eq!(files_replaced_in_place(&sheet), None, "a separate folder");
+        sheet.target = TargetChoice::Original;
+        sheet.preview = Some(Ok(RestorePreview::default()));
+        assert_eq!(files_replaced_in_place(&sheet), None, "no conflicts");
+    }
+
+    #[test]
     fn a_multi_part_restore_runs_every_part_in_turn() {
         let mut page = page_with_snapshots();
         page.sheet = Some(Sheet {
@@ -1780,7 +1874,12 @@ mod tests {
         let done = || {
             Message::Restore(ChildEvent::Event(Event::Done {
                 report: None,
-                restored: Some(RestorePreview::default()),
+                restored: Some(RestorePreview {
+                    files: 3,
+                    bytes: 100,
+                    unchanged: 1,
+                    conflicts: 2,
+                }),
                 forgotten: None,
                 pruned: None,
                 pinned: None,
@@ -1791,7 +1890,18 @@ mod tests {
         assert!(page.is_restoring());
 
         let finished = page.update(done());
-        assert!(matches!(finished.as_slice(), [Effect::Restored(_)]));
+        assert!(
+            matches!(
+                finished.as_slice(),
+                [Effect::Restored(RestorePreview {
+                    files: 6,
+                    bytes: 200,
+                    unchanged: 2,
+                    conflicts: 4,
+                })]
+            ),
+            "both parts' counts are reported, not just the last one's"
+        );
         assert!(!page.is_restoring());
     }
 
@@ -1801,6 +1911,7 @@ mod tests {
         page.running = Some(Running {
             handle: None,
             progress: None,
+            total: RestorePreview::default(),
             queue: VecDeque::from(vec![RestoreRequest {
                 snapshot: "aaaaaaaa".into(),
                 paths: vec!["/b".into()],
@@ -1838,11 +1949,130 @@ mod tests {
     fn a_stale_listing_is_ignored() {
         let mut page = page_with_snapshots();
         page.update(Message::Open("/home/alex/Documents".into()));
-        page.update(Message::Listed("/home/alex".into(), Ok(Vec::new())));
+        page.update(Message::Listed(
+            "bbbbbbbb".into(),
+            "/home/alex".into(),
+            Ok(Vec::new()),
+        ));
         assert!(
             page.entries.is_none(),
             "the answer for a folder we left is dropped"
         );
+    }
+
+    #[test]
+    fn a_listing_for_another_snapshot_is_ignored() {
+        let mut page = page_with_snapshots();
+        page.update(Message::PickSnapshot(1));
+        page.update(Message::Listed(
+            "bbbbbbbb".into(),
+            "/home/alex".into(),
+            Ok(Vec::new()),
+        ));
+        assert!(
+            page.entries.is_none(),
+            "the old snapshot's folder is not shown under the new one"
+        );
+    }
+
+    fn entry(path: &str) -> TreeEntry {
+        TreeEntry {
+            name: path.rsplit('/').next().unwrap_or_default().to_owned(),
+            path: path.into(),
+            kind: EntryKind::File,
+            size: 1,
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn a_search_answered_for_another_snapshot_is_dropped() {
+        let mut page = page_with_snapshots();
+        page.search = "notes".into();
+        page.update(Message::SearchNow);
+        page.update(Message::PickSnapshot(1));
+
+        page.update(Message::Found(
+            "bbbbbbbb".into(),
+            "notes".into(),
+            Ok(vec![entry("/home/alex/notes.txt")]),
+        ));
+
+        assert!(
+            page.results.is_none(),
+            "snapshot b's hits are not shown under a"
+        );
+    }
+
+    #[test]
+    fn a_search_answered_for_an_older_query_is_dropped() {
+        let mut page = page_with_snapshots();
+        page.search = "old".into();
+        page.update(Message::SearchNow);
+        page.search = "new".into();
+        page.update(Message::SearchNow);
+
+        page.update(Message::Found(
+            "bbbbbbbb".into(),
+            "old".into(),
+            Ok(vec![entry("/home/alex/old.txt")]),
+        ));
+        assert!(page.results.is_none());
+        assert!(page.searching.is_some(), "still waiting for the newer one");
+
+        page.update(Message::Found(
+            "bbbbbbbb".into(),
+            "new".into(),
+            Ok(vec![entry("/home/alex/new.txt")]),
+        ));
+        assert_eq!(page.results.as_ref().map(Vec::len), Some(1));
+        assert!(page.searching.is_none());
+    }
+
+    #[test]
+    fn a_deleted_files_answer_for_another_folder_is_dropped() {
+        let mut page = page_with_snapshots();
+        page.update(Message::FindMissing);
+        let (scope, since) = page.finding_missing.clone().unwrap();
+        page.update(Message::ScopeChosen("/home/alex/other".into()));
+
+        page.update(Message::MissingFound(scope, since, Ok(Vec::new())));
+
+        assert!(
+            page.missing.is_none(),
+            "the first folder's list is not shown"
+        );
+        assert!(page.finding_missing.is_some());
+    }
+
+    #[test]
+    fn a_comparison_answered_after_the_pick_changed_is_dropped() {
+        let mut page = page_with_snapshots();
+        page.update(Message::Compare);
+        page.update(Message::PickFrom(0));
+
+        page.update(Message::Compared(
+            "aaaaaaaa".into(),
+            "bbbbbbbb".into(),
+            Ok(Vec::new()),
+        ));
+
+        assert!(page.diff.is_none());
+        assert!(page.comparing.is_none(), "and Compare can be pressed again");
+    }
+
+    #[test]
+    fn a_global_search_answered_for_an_older_query_is_dropped() {
+        let mut page = page_with_snapshots();
+        page.global_query = "old".into();
+        page.update(Message::GlobalSearchNow);
+        page.global_query = "new".into();
+        page.update(Message::GlobalSearchNow);
+
+        page.update(Message::GlobalFound("old".into(), Ok(Vec::new())));
+
+        assert!(page.global_results.is_none());
+        assert!(page.global_searching.is_some());
     }
 
     #[test]
@@ -1856,19 +2086,27 @@ mod tests {
             ))
         };
 
-        let effects = page.update(Message::Listed("/home/alex/gone".into(), failed()));
+        let effects = page.update(Message::Listed(
+            "bbbbbbbb".into(),
+            "/home/alex/gone".into(),
+            failed(),
+        ));
         assert!(
             matches!(effects.as_slice(), [Effect::List { dir, .. }] if dir == Path::new("/home/alex")),
             "first back to where browsing started"
         );
 
-        let effects = page.update(Message::Listed("/home/alex".into(), failed()));
+        let effects = page.update(Message::Listed(
+            "bbbbbbbb".into(),
+            "/home/alex".into(),
+            failed(),
+        ));
         assert!(
             matches!(effects.as_slice(), [Effect::List { dir, .. }] if dir == Path::new("/")),
             "then to the top"
         );
 
-        let effects = page.update(Message::Listed("/".into(), failed()));
+        let effects = page.update(Message::Listed("bbbbbbbb".into(), "/".into(), failed()));
         assert!(
             matches!(effects.as_slice(), [Effect::ShowError(..)]),
             "and only then an error, never a loop"

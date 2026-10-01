@@ -7,6 +7,7 @@
 //! drive the engine and the child process directly.
 
 pub mod app;
+pub mod bounded;
 pub mod conditions;
 pub mod constants;
 pub mod core;
@@ -20,6 +21,8 @@ pub mod hooks;
 pub mod keyring;
 pub mod notify;
 pub mod password_command;
+pub mod paths;
+pub mod proc_signal;
 pub mod profile;
 pub mod run_state;
 pub mod runner;
@@ -27,7 +30,13 @@ pub mod schedule;
 pub mod scheduled;
 pub mod settings_export;
 pub mod status;
-pub mod web;
-pub mod web_daemon;
-pub mod web_tls;
-pub mod web_token;
+
+/// Make this process's memory unreadable through a core dump, for a process
+/// that holds a repository password (a `--run` child, a `--scheduled` run).
+/// Best-effort: a failure (an old kernel without this `prctl`, say) is not
+/// itself a reason to refuse to run a backup. Not for the window: the file
+/// chooser and other portals identify a process through `/proc/<pid>`,
+/// which a non-dumpable process hides from them.
+pub fn harden_process() {
+    let _ = rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
+}

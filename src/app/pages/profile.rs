@@ -12,7 +12,8 @@ use cosmic::{Apply, Element, theme, widget};
 
 use crate::app::child::{ChildEvent, ChildHandle};
 use crate::app::errors;
-use crate::app::format::{self, Ago};
+use crate::app::format;
+use crate::app::pages::row;
 use crate::app::wizard::retention_label;
 use crate::constants::{PROFILE_RECENT_ROWS as RECENT, STALL_NOTICE};
 use crate::engine::{
@@ -53,6 +54,7 @@ enum ModifyContext {
 }
 
 /// A write running in a child process. Only one runs at a time.
+#[derive(Debug)]
 pub struct Running {
     work: Work,
     handle: Option<ChildHandle>,
@@ -104,6 +106,7 @@ pub enum SizeEstimateEvent {
 }
 
 /// Everything the page knows beyond the profile's saved settings.
+#[derive(Debug)]
 pub struct ProfileState {
     secret: Option<Secret>,
     keyring_checked: bool,
@@ -179,6 +182,7 @@ pub enum Message {
 }
 
 /// What the page needs the application to do.
+#[derive(Debug)]
 pub enum Effect {
     LoadKeyring,
     /// Move keyboard focus into the unlock field: no password was found in
@@ -339,7 +343,6 @@ impl ProfileState {
                     time: now,
                     kind: kind.clone(),
                     source: crate::event_log::Source::Desktop,
-                    web: None,
                 });
             }
         }
@@ -873,12 +876,7 @@ impl ProfileState {
             .or(profile.last_success);
         let headline = match last {
             None => fl!("never-backed-up"),
-            Some(time) => match format::ago(now, time) {
-                Ago::JustNow => fl!("backed-up-just-now"),
-                Ago::Minutes(count) => fl!("backed-up-minutes-ago", count = count),
-                Ago::Hours(count) => fl!("backed-up-hours-ago", count = count),
-                Ago::Days(count) => fl!("backed-up-days-ago", count = count),
-            },
+            Some(time) => format::backed_up_ago(now, time),
         };
         let detail = match &self.snapshots {
             Some(snapshots) => {
@@ -1050,11 +1048,7 @@ impl ProfileState {
             if paths.is_empty() {
                 fl!("summary-none")
             } else {
-                paths
-                    .iter()
-                    .map(|path| format::path(path))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                format::list(paths.iter().map(|path| format::path(path)))
             }
         };
         let mut section = widget::settings::section()
@@ -1101,7 +1095,7 @@ impl ProfileState {
             (Some(Ok(stats)), false) => {
                 let ratio = stats.compression_ratio().map_or_else(
                     || fl!("statistics-no-ratio"),
-                    |ratio| format!("{ratio:.1}×"),
+                    |ratio| fl!("compression-ratio", ratio = format!("{ratio:.1}")),
                 );
                 section = section
                     .add(row(
@@ -1125,16 +1119,6 @@ impl ProfileState {
         };
         section.into()
     }
-}
-
-fn row(title: String, detail: String) -> Element<'static, Message> {
-    let spacing = theme::active().cosmic().spacing;
-    widget::column::with_capacity(2)
-        .spacing(spacing.space_xxxs)
-        .padding([spacing.space_xxs, spacing.space_none])
-        .push(widget::text::body(title))
-        .push(widget::text::caption(detail))
-        .into()
 }
 
 /// How often a backup runs, as a sentence.
@@ -1174,12 +1158,7 @@ fn trouble<'a>(
         )
     } else {
         let failure = run.current_failure(profile.last_success)?;
-        let when = match format::ago(now, failure.time) {
-            Ago::JustNow => fl!("failed-just-now"),
-            Ago::Minutes(count) => fl!("failed-minutes-ago", count = count),
-            Ago::Hours(count) => fl!("failed-hours-ago", count = count),
-            Ago::Days(count) => fl!("failed-days-ago", count = count),
-        };
+        let when = format::failed_ago(now, failure.time);
         let title = match failure.stage {
             Stage::Backup => fl!("scheduled-backup-failed", when = when),
             Stage::Cleanup => fl!("scheduled-cleanup-failed", when = when),
@@ -1590,14 +1569,12 @@ mod tests {
             time: 500,
             kind: EventKind::BackedUp,
             source: crate::event_log::Source::Desktop,
-            web: None,
         });
 
         let loaded = vec![crate::event_log::Event {
             time: 100,
             kind: EventKind::Checked { damaged: false },
             source: crate::event_log::Source::Desktop,
-            web: None,
         }];
         state.update(Message::HistoryLoaded(loaded), &profile());
 

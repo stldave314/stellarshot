@@ -304,11 +304,9 @@ A new backup engine behind one module, on the current rustic release.
       history section: every backup, check, clean-up, restore, snapshot
       deletion, pin change, password change, and mount/unmount, merged and
       shown newest first, on its own entry in the sidebar. Each entry also
-      now records where the action came from (`event_log::Source`, currently
-      always the desktop or a scheduled run), shown as a "Web" badge once
-      something records one — groundwork for the web interface below, so
-      that feature does not need its own separate log or a later migration
-      of everything already recorded
+      records where the action came from (`event_log::Source`: the desktop
+      or a scheduled run, or another program recording into the same
+      history, shown as an "Other program" badge)
 - [x] **Restore checks existing files by content**, not only by size and date
       (`verify_existing`), as a toggle in the restore sheet's Advanced
       section; proven with a test that corrupts a file without changing its
@@ -549,100 +547,6 @@ A new backup engine behind one module, on the current rustic release.
       D-Bus activation — launching `stellarshot` again (from the applet,
       or a second launcher click) reopens or refocuses the same window
       rather than starting a second one
-
-## 0.6 — Remote access
-
-A web interface, reachable over the LAN, for looking at and controlling a
-backup without sitting at the machine, plus a REST API behind it.
-
-- [x] **An audit trail ready for it**: every history entry already records
-      whether it came from the desktop (or a scheduled run) or the web
-      (`event_log::Source`), so the web interface's own actions land in the
-      same History page other actions do, marked as such, from the moment it
-      exists — see 0.3's History page entry
-- [x] **A daemon**: a new `stellarshot-web` binary (axum), binding according
-      to the network scope setting and chosen port, and enforcing the IP
-      allow-list before any route is reached — proven against a real socket,
-      both by an integration test that serves the real router on an
-      ephemeral port and by running the actual compiled binary and reaching
-      it (and failing to reach it) with real `curl` requests. Installed and
-      managed as a per-user systemd service (`stellarshot-web.service`), the
-      same way `crate::schedule` already does for backup timers: turning the
-      network scope on or off starts or stops it immediately, and Settings
-      shows its live status (`crate::web_daemon::status`, over the session
-      D-Bus, the same way a scheduled backup's next run time is read) with
-      explicit Start/Stop/Restart controls
-- [x] **A network scope setting**: off, localhost-only, or LAN-reachable, as
-      a choice in Settings (`StellarshotConfig.web.scope`) and now genuinely
-      enforced by the daemon above. Defaults to off, proven with a test that
-      a fresh config never comes up any other way, and confirmed for real: a
-      `Localhost`-scoped daemon answers `curl` on `127.0.0.1` and refuses a
-      connection on the machine's own LAN address, not merely "untested but
-      presumably fine"
-- [x] **A configurable port** (`StellarshotConfig.web.port`, defaulting to
-      8737), validated in Settings before it is saved (not `0`, not out of
-      `u16` range) and shown as part of the full address ("Will listen at
-      `https://…`") so there is never a guessing game about where to connect
-- [x] **TLS**, always: the daemon is only ever reached over `https://`, never
-      plain HTTP. A self-signed certificate is generated once and reused
-      after (`crate::web_tls`) — regenerating it on every restart would
-      invalidate a browser's trust exception for the previous one — or a
-      certificate and key of the user's own can be set instead. Proven
-      against a real socket: a real `curl` TLS handshake, through the exact
-      function the daemon's own entry point calls, not merely that a
-      `rustls::ServerConfig` can be built in isolation
-- [x] **Password and token authentication**: the shared password (HTTP
-      Basic; the username is ignored) and the API token
-      (`Authorization: Bearer`) are both genuinely checked by the daemon now,
-      in constant time so a wrong guess's rejection cannot be timed for
-      information, either or both usable if enabled. **PAM is not wired up
-      yet**: its checkbox exists and its setting persists, but the daemon
-      does not call into it — verifying that a Linux user's password
-      actually works from an unprivileged per-user service (it does, via
-      `unix_chkpwd`, so long as it is only ever checking its own user) is
-      design research done ahead of building it, not yet a real check. If
-      **no** method is enabled, the daemon fails closed: every request is
-      rejected rather than the one route becoming open by omission, proven
-      against a real request with no credentials at all. Not yet decided or
-      built: the daemon reads the shared password from the keyring once at
-      startup, so changing it currently needs a restart to take effect —
-      whether that is good enough long-term, or the daemon should notice a
-      change without one, is unresolved
-- [x] **Brute-force throttling**: 5 failed attempts from one address within 5
-      minutes locks that address out for the rest of the window, including a
-      subsequently *correct* credential — otherwise an attacker's next guess
-      would simply be let through the moment it happened to be right — with a
-      `429` and a `Retry-After` header, and a real end-to-end test proving it
-      against real HTTP requests, not only the pure lockout-window logic. A
-      correct credential clears an address's count, so a few mistyped
-      attempts do not linger against the real owner. Kept in memory only: a
-      daemon restart (or Settings' own Restart button) clears every address
-- [x] **An IP allow-list**: addresses or CIDR ranges, added and removed in
-      Settings the same way a global exclusion pattern is, and enforced by
-      the daemon before any route runs — proven both by an integration test
-      and by a real `curl` request rejected with a real `403` from the
-      actual running binary
-- [x] **A REST API**: `GET /api/v1/backups` (every backup's status),
-      `GET /api/v1/backups/{id}/snapshots` (a backup's snapshots),
-      `GET /api/v1/backups/{id}/snapshots/{snapshot}/browse?path=...` (a
-      folder's contents in a snapshot), and `POST /api/v1/backups/{id}/run`
-      (start an existing backup, answering before it finishes; recorded in
-      History under `Source::Web`) — every one of them calling the same
-      `engine`/`runner` code the desktop window already reads and writes
-      through, off the async runtime the same way the window's own
-      background reads are. Proven against a real repository: a real backup
-      is made, a real server on a real socket answers real HTTP requests for
-      it, and the response — including a genuinely new snapshot after
-      `run` — is checked against what actually happened, not a fixture
-      standing in for it. **Not built yet**: creating a new backup or
-      restoring one — deliberately excluded from the first pass — or reading
-      the History page's own data over the API. `search`, `versions`,
-      `diff` and `missing` are not routes yet either, and several of their
-      types need a `Serialize` derive first. The list of backups is read
-      once at daemon startup, like its auth settings — a backup added after
-      the daemon starts needs a restart to appear
-- [ ] **A web UI** on top of the API: browse, restore, and see the same
-      History page the desktop app shows. Not started
 
 ## 1.0 — Hardening
 

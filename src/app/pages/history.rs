@@ -60,8 +60,8 @@ fn row<'a>(profile_name: String, event: &'a Event) -> Element<'a, Message> {
             widget::container(widget::text::body(event_log::describe(&event.kind)))
                 .width(Length::Fill),
         );
-    if event.source == Source::Web {
-        line = line.push(widget::text::caption(fl!("history-via-web")));
+    if event.source == Source::Other {
+        line = line.push(widget::text::caption(fl!("history-via-other")));
     }
     line.into()
 }

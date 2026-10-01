@@ -39,6 +39,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0 # tags: validate-metadata.sh checks every release has an entry
           persist-credentials: false
 
       - name: Install build dependencies
@@ -48,19 +49,37 @@ jobs:
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
             desktop-file-utils appstream dbus gnome-keyring rclone rpm2cpio
 
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      # The tag is what names the release and its notes; the version in
+      # Cargo.toml is what names the files. They must be the same, or
+      # `v0.9.0` would publish `stellarshot_0.8.2` packages under it.
+      - name: Check the tag matches Cargo.toml
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [[ "${TAG#v}" != "$version" ]]; then
+            echo "tag $TAG does not match Cargo.toml version $version" >&2
+            exit 1
+          fi
 
-      # `lookup-only: true`: a release build only ever reads a cache another
-      # (branch) workflow run already produced, never writes one of its own.
-      # A tag push is exactly the kind of run a cache-poisoning attack would
-      # target to plant a cache entry a future run trusts.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          lookup-only: true
+          components: clippy
+
+      # No build cache, deliberately: a release build that restores one
+      # trusts whatever an earlier run left there, and a tag push is exactly
+      # the run a cache-poisoning attack would aim at.
 
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
-          tool: cargo-deb,cargo-generate-rpm
+          tool: cargo-deb,cargo-generate-rpm,cargo-auditable
+
+      # CI's own checks, repeated: a tag can be pushed on a commit CI never
+      # saw, or one that has since gone red.
+      - name: Clippy
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo clippy --all-targets --all-features --locked
 
       # The metainfo's newest release must be the version being shipped, or
       # software centers advertise an old version indefinitely.
@@ -91,6 +110,16 @@ jobs:
       - name: Verify the shipped packages strip debug logging
         run: ./scripts/verify-packaged-binaries-strip-logging.sh
 
+      # `cargo audit bin` only lists dependencies if the binary was built
+      # with `cargo auditable`; run against each package's own binary, it
+      # proves all three formats got that, not just the first.
+      - name: Verify the shipped binaries carry their dependency data
+        run: ./scripts/verify-packaged-binaries-auditable.sh
+
+      # For anyone without `gh`: a checksum to compare a download against.
+      - name: Checksums
+        run: cd dist && sha256sum *.deb *.rpm *.tar.gz > SHA256SUMS
+
       - name: List artifacts
         run: ls -lh dist/
 
@@ -101,7 +130,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: "dist/*.deb,dist/*.rpm,dist/*.tar.gz"
+          subject-path: "dist/*.deb,dist/*.rpm,dist/*.tar.gz,dist/SHA256SUMS"
 
       # The release notes are the version's section of CHANGELOG.md, so the
       # release page says what changed rather than listing commits. A tag
@@ -138,9 +167,21 @@ jobs:
   # The only job with `contents: write`, and the only one that touches
   # anything outside this run: it does not build anything itself, only
   # downloads what `build` already produced and tested.
+  # The same advisory, license and source checks CI runs, repeated for the
+  # tagged commit: a new advisory may have landed since CI last passed.
+  deny:
+    name: Advisories, licenses and sources
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, deny]
     runs-on: ubuntu-24.04
     permissions:
       contents: write # only this job needs it, to create the GitHub release
@@ -169,4 +210,4 @@ jobs:
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file release-notes.md \
-            dist/*.deb dist/*.rpm dist/*.tar.gz
+            dist/*.deb dist/*.rpm dist/*.tar.gz dist/SHA256SUMS

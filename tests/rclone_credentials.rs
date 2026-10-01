@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! `sign_in`'s OAuth client ID and secret must never reach argv (readable by
 //! any local user through `/proc/<pid>/cmdline` for as long as the process
@@ -50,6 +56,9 @@ fn the_client_secret_reaches_rclone_through_the_environment_not_argv() {
     // file, not just this function.
     unsafe { std::env::set_var("PATH", std::env::join_paths(paths).unwrap()) };
 
+    // SAFETY: as above, this is the only test in the binary.
+    unsafe { std::env::set_var("RCLONE_DRY_RUN", "true") };
+
     let config = dir.path().join("rclone.conf");
     std::fs::write(&config, "").unwrap();
     std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -82,6 +91,14 @@ fn the_client_secret_reaches_rclone_through_the_environment_not_argv() {
     assert!(
         env.contains("RCLONE_DRIVE_CLIENT_SECRET=hunter2"),
         "the secret must reach rclone through the environment: {env:?}"
+    );
+
+    // The user's own `RCLONE_*` environment must not reach commands run
+    // against Stellarshot's configuration: `RCLONE_DRY_RUN=true` would turn a
+    // delete into a no-op that still reports success.
+    assert!(
+        !env.contains("RCLONE_DRY_RUN"),
+        "an inherited RCLONE_ variable reached rclone: {env:?}"
     );
 
     // Case 2: no credentials at all — signing in with rclone's own default

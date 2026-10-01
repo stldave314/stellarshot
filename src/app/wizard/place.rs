@@ -35,11 +35,12 @@ pub enum Kind {
 /// The machine's name, used for default folder names so two computers
 /// backing up to the same drive do not collide.
 pub fn hostname() -> String {
-    std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|name| name.trim().to_owned())
-        .ok()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "computer".to_owned())
+    let name = crate::engine::hostname();
+    if name.trim().is_empty() {
+        "computer".to_owned()
+    } else {
+        name.trim().to_owned()
+    }
 }
 
 /// The folder a new backup gets inside a drive or cloud account.
@@ -78,7 +79,7 @@ pub struct Place {
     checking: Option<(Destination, Instant)>,
     probe: Option<(Destination, Result<Probe, EngineError>)>,
     /// A problem to show under the form: a failed sign-in or copy.
-    pub problem: Option<String>,
+    pub problem: Option<EngineError>,
     /// Select the drive with this UUID once drives are listed (an import).
     pub preferred_drive: Option<String>,
     /// Pick the user remote with this name once remotes are listed (an import).
@@ -120,6 +121,7 @@ pub enum Message {
     RestUrl(String),
 }
 
+#[derive(Debug)]
 pub enum Effect {
     PickFolder,
     ListDrives,
@@ -180,6 +182,15 @@ impl Default for Place {
     }
 }
 
+/// Whether `folder` stays inside whatever it is joined onto: only plain
+/// names, no `..` (which would step out of the drive's mount point and make
+/// a backup, and "Delete everything", act on the internal disk) and no `.`.
+fn is_plain_folder(folder: &str) -> bool {
+    std::path::Path::new(folder)
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
 impl Place {
     /// What to look up when the step is shown.
     pub fn enter(&self) -> Vec<Effect> {
@@ -193,7 +204,7 @@ impl Place {
             Kind::Drive => {
                 let drive = self.drives.get(self.drive?)?;
                 let folder = self.drive_folder.trim().trim_matches('/');
-                (!folder.is_empty()).then(|| Destination::Removable {
+                (!folder.is_empty() && is_plain_folder(folder)).then(|| Destination::Removable {
                     uuid: drive.uuid.clone(),
                     relative_path: PathBuf::from(folder),
                     label: drive.label.clone(),
@@ -386,7 +397,7 @@ impl Place {
                         self.check()
                     }
                     Err(err) => {
-                        self.problem = Some(err.detail);
+                        self.problem = Some(err);
                         Vec::new()
                     }
                 }
@@ -398,7 +409,7 @@ impl Place {
             Message::RemotesListed(result) => {
                 match result {
                     Ok(remotes) => self.user_remotes = remotes,
-                    Err(err) => self.problem = Some(err.detail),
+                    Err(err) => self.problem = Some(err),
                 }
                 let preferred = self
                     .preferred_remote
@@ -426,7 +437,7 @@ impl Place {
                         self.user_remote = Some((index, Some(copy)));
                     }
                     Ok(_) => {}
-                    Err(err) => self.problem = Some(err.detail),
+                    Err(err) => self.problem = Some(err),
                 }
                 Vec::new()
             }
@@ -557,7 +568,7 @@ impl Place {
             column = column.push(widget::text::body(verdict));
         }
         if let Some(problem) = &self.problem {
-            column = column.push(widget::text::body(problem.as_str()));
+            column = column.push(widget::text::body(crate::app::errors::explain(problem)));
         }
         column.into()
     }
@@ -597,7 +608,9 @@ impl Place {
                             .radio(index, self.drive, Message::PickDrive),
                     );
                 }
-                widget::column::with_capacity(3)
+                let folder = self.drive_folder.trim().trim_matches('/');
+                let invalid = !folder.is_empty() && !is_plain_folder(folder);
+                widget::column::with_capacity(4)
                     .spacing(spacing.space_xs)
                     .push(section)
                     .push(
@@ -606,6 +619,7 @@ impl Place {
                             .on_input(Message::DriveFolder)
                             .on_submit(|_| Message::Check),
                     )
+                    .push_maybe(invalid.then(|| widget::text::caption(fl!("place-folder-invalid"))))
                     .push(check)
                     .into()
             }
@@ -754,6 +768,27 @@ mod tests {
             label: "Backup".into(),
             mount_point: "/media/alex/Backup".into(),
         }
+    }
+
+    #[test]
+    fn a_drive_folder_that_steps_out_of_the_drive_is_not_a_destination() {
+        for bad in ["../x", "a/../../x", "./x", ".."] {
+            let mut place = Place::default();
+            place.update(Message::Kind(Kind::Drive));
+            place.update(Message::DrivesListed(vec![drive()]));
+            place.update(Message::PickDrive(0));
+            place.drive_folder = bad.to_owned();
+            assert!(
+                place.destination().is_none(),
+                "{bad:?} must not be accepted"
+            );
+        }
+        let mut place = Place::default();
+        place.update(Message::Kind(Kind::Drive));
+        place.update(Message::DrivesListed(vec![drive()]));
+        place.update(Message::PickDrive(0));
+        place.drive_folder = "Backups/laptop".to_owned();
+        assert!(place.destination().is_some());
     }
 
     #[test]

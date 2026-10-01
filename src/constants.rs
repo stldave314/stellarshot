@@ -100,6 +100,25 @@ pub const PASSWORD_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::f
 /// was meant to make safe forever.
 pub const HOOK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// How long a run that has been told to stop (SIGTERM: Cancel in the
+/// window, `systemctl --user stop`, logout, shutdown) gets to run its
+/// `After` hooks and report itself canceled before it is killed outright:
+/// one hook's own timeout, plus a margin for the rest. The window's
+/// `ChildHandle::cancel` escalates to SIGKILL after this, and the scheduled
+/// unit's `TimeoutStopSec` is this too, so both paths give the hooks the
+/// same chance. See `proc_signal`.
+pub const TERM_GRACE: std::time::Duration =
+    std::time::Duration::from_secs(HOOK_TIMEOUT.as_secs() + 10);
+
+/// Longest a scheduled run may take before systemd gives up on it. A
+/// `Type=oneshot` unit has no start timeout at all by default, so a run
+/// stuck on a hard NFS mount or a stalled `rclone serve` would otherwise
+/// stay "activating" forever, and every later timer fire would be skipped
+/// without a word. A day: a first backup of a large folder over a slow
+/// connection can genuinely take most of one.
+pub const SCHEDULED_UNIT_TIMEOUT_START: std::time::Duration =
+    std::time::Duration::from_secs(24 * 3600);
+
 /// How often a scheduled backup also checks the repository for damage. A
 /// check reads every index and tree, which is slow on a large backup behind
 /// a slow connection, so it runs after a backup at most this often.
@@ -108,85 +127,6 @@ pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3
 /// How long a scheduled run waits for the user to click its failure
 /// notification before exiting. Clicking opens the backup in Stellarshot.
 pub const NOTIFICATION_WAIT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-
-/// How long the web interface's server waits for a client to finish sending
-/// its request headers before giving up on the connection. Without an
-/// explicit timer, `axum_server`'s TLS listener has none at all (only a
-/// `warn!` that the default was dropped), so a client that opens a
-/// connection and sends nothing ties up a file descriptor forever — enough
-/// of those exhaust the service.
-pub const WEB_HEADER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-pub const WEB_HTTP2_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-pub const WEB_HTTP2_KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-pub const WEB_HTTP2_MAX_CONCURRENT_STREAMS: u32 = 32;
-/// Connections held open at once, across every client: past this, a new one
-/// is refused rather than accepted and left to queue behind the rest.
-pub const WEB_MAX_CONNECTIONS: usize = 64;
-/// How long a request may take end to end before the server gives up on it.
-pub const WEB_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// The API takes no request bodies today; large enough for one that
-/// legitimately needs a small JSON object later, nowhere near enough to let
-/// a client tie up memory with an oversized one.
-pub const WEB_REQUEST_BODY_LIMIT: usize = 16 * 1024;
-/// Requests that open a repository (snapshots, browsing) held at once, so a
-/// slow remote cannot tie up an unbounded number of blocking threads or
-/// multiply memory use under parallel load.
-pub const WEB_REPOSITORY_REQUEST_PERMITS: usize = 2;
-/// How long a SIGTERM (Stop, Restart) gives the web daemon to stop
-/// accepting new connections and let in-flight HTTP requests and any
-/// backup it started finish, before it gives up waiting: HTTP requests
-/// answer almost at once regardless (`POST .../run` returns before the
-/// backup itself is done), so this really only bounds how long a backup
-/// already running gets before it is recorded as canceled and the process
-/// exits anyway. Comfortably under the unit's own `TimeoutStopSec`, so
-/// systemd never has to force it.
-pub const WEB_GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-/// How often the web daemon checks whether its own binary has been
-/// replaced (a package upgrade), so it can exit and let `Restart=` start
-/// the new one instead of quietly running old code until the next login.
-pub const WEB_UPGRADE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// `stellarshot-web.service`'s own hardening, kept together so a value used
-/// in the unit text and asserted on in `web_daemon.rs`'s own test cannot
-/// drift apart. Restarting every 5 seconds forever (the previous
-/// `RestartSec`, with no start limit at all) turns a daemon that cannot
-/// even start — a bad TLS path, the port already in use, the binary
-/// removed — into a tight, endless restart loop instead of settling into
-/// `failed` the way a one-shot problem should.
-pub const WEB_UNIT_START_LIMIT_INTERVAL_SECS: u32 = 300;
-pub const WEB_UNIT_START_LIMIT_BURST: u32 = 5;
-pub const WEB_UNIT_RESTART_SECS: u32 = 30;
-pub const WEB_UNIT_LIMIT_NOFILE: u32 = 1024;
-pub const WEB_UNIT_MEMORY_MAX: &str = "1G";
-
-/// How long the web interface's self-signed certificate stays valid before
-/// it needs regenerating. `rcgen`'s own default (1975 to 4096) trains users
-/// to ignore an expiry date that will never actually arrive; about two
-/// years is long enough not to nag, short enough that a certificate this
-/// old actually says something.
-pub const WEB_CERT_VALIDITY: std::time::Duration = std::time::Duration::from_secs(2 * 365 * 86_400);
-
-/// Shortest password Settings accepts for the web interface's shared
-/// password (OWASP ASVS 5.0 §6.2's minimum for a user-chosen password with
-/// no other strength check). The only rule before this was "not empty".
-pub const WEB_PASSWORD_MIN_LENGTH: usize = 12;
-
-/// The private address ranges an empty allow-list falls back to in `Lan`
-/// scope, and the ranges a cross-site `Origin` check also treats as
-/// same-machine-or-LAN rather than the public internet. IPv4 private ranges
-/// (RFC 1918), link-local (RFC 3927), unique local IPv6 (RFC 4193) and IPv6
-/// link-local: never the whole internet, even though the daemon is bound to
-/// every interface.
-pub const WEB_PRIVATE_RANGES: &[&str] = &[
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "169.254.0.0/16",
-    "127.0.0.0/8",
-    "fc00::/7",
-    "fe80::/10",
-    "::1/128",
-];
 
 /// Entries kept in a backup's own event log. The oldest are dropped as new
 /// ones arrive, so a backup that has run for years does not grow its log
@@ -234,33 +174,6 @@ pub const APPLET_REFRESH: std::time::Duration = std::time::Duration::from_secs(3
 /// the result.
 pub const APPLET_IDLE_REFRESH: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// How many failed web interface login attempts an address gets before it
-/// is locked out, and for how long: 5, 15 and 60 minutes, then capped at
-/// 24 hours, one step further each time the address returns and fails
-/// again after its previous lockout (or accumulation window) has fully
-/// passed. A first-time mistake is cheap; a repeat offender's guesses get
-/// expensive fast.
-pub const WEB_LOCKOUT_MAX_ATTEMPTS: u32 = 5;
-pub const WEB_LOCKOUT_LEVEL_SECS: [i64; 4] = [5 * 60, 15 * 60, 60 * 60, 24 * 60 * 60];
-
-/// A burst of failures across many addresses at once is a campaign, not
-/// one address's problem: past this many failures from anyone, in this
-/// window, password auth is paused for everyone (an API token, unaffected
-/// by guessing a password, keeps working) until the window passes.
-pub const WEB_GLOBAL_BUDGET_MAX: u32 = 50;
-pub const WEB_GLOBAL_BUDGET_WINDOW_SECS: i64 = 10 * 60;
-
-/// How long a web interface address's escalation level is remembered
-/// after its most recent failure, even once its own lockout has long since
-/// passed: long enough that returning the next day still escalates,
-/// bounded so the map backing it does not grow forever.
-pub const WEB_ATTEMPTS_MEMORY_SECS: i64 = 7 * 86_400;
-
-/// The web interface's own throttle map is capped at this many addresses;
-/// past it, the least-recently-active one is dropped to make room for a
-/// new one, rather than growing without bound.
-pub const WEB_MAX_TRACKED_ADDRESSES: usize = 10_000;
-
 /// How many rows a list on the restore page shows before capping with
 /// "Show more": search results, a folder's entries, a diff's groups, a
 /// missing-files list. A folder or diff with far more than this costs this
@@ -279,3 +192,76 @@ pub const HISTORY_LIMIT: usize = 500;
 /// The default port a bare SSH destination (no `:port` given) is assumed
 /// to listen on.
 pub const SSH_DEFAULT_PORT: u16 = 22;
+
+/// The most days a retention rule's "keep everything from the last `n`
+/// days" may ask for. The wizard only ever offers 90, 182 or 365; this
+/// exists so a hand-edited config or an imported settings file cannot pass
+/// a value so large that building the `jiff::Span` for it panics (jiff's
+/// own range tops out at roughly 7.3 million days). 100 years is already
+/// far past anything a real retention policy needs.
+pub const RETENTION_MAX_DAYS: u32 = 36_500;
+
+/// The largest settings export file an import will read. A real export is
+/// a few kilobytes per backup plus its history (capped at
+/// [`EVENT_LOG_CAPACITY`] entries each); this is far above any of that,
+/// and exists only so a file picked by mistake — a multi-gigabyte
+/// something-else with the wrong extension — is refused up front rather
+/// than read whole into the window's memory.
+pub const MAX_EXPORT_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The longest backup name an imported settings file may give a profile.
+/// The wizard's own field is a single line; a file is not, and a name is
+/// rendered into the sidebar, the applet, notifications and unit
+/// descriptions, none of which should be handed a megabyte.
+pub const IMPORT_NAME_MAX_CHARS: usize = 256;
+
+/// The most a Stellarshot-run rclone command that changes something (deleting
+/// a repository, forgetting a remote) may take before it is stopped. Long,
+/// since a big repository on slow storage has many files to delete, and only
+/// there to turn a connection that has stalled for good into an error.
+pub const RCLONE_CHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// The most a password command may print before it is refused: a password
+/// is a few dozen bytes, so anything near this is not one, and a command
+/// that prints without end must not fill memory.
+pub const PASSWORD_COMMAND_MAX_OUTPUT: usize = 64 * 1024;
+
+/// How much of an `rclone lsf` listing is read when looking at what is at a
+/// destination: enough for any repository folder, which has a handful of
+/// entries, and a cap on what a folder of millions of files can cost.
+pub const RCLONE_LISTING_LIMIT: usize = 1024 * 1024;
+
+/// How long a repository's lock name is remembered for the status poll: see
+/// `engine::lock::is_running`. Short enough that a destination that changes
+/// (a drive mounted somewhere else) is picked up within the minute.
+pub const STATUS_KEY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long to wait for `rclone serve restic` to start listening. It does not
+/// connect to the remote until asked to, so this is only its own start-up; a
+/// minute means something is wrong with rclone itself.
+pub const RCLONE_SERVE_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long a scheduled run waits for UPower and NetworkManager to answer
+/// before treating what they would have said as unknown. zbus sets no
+/// timeout of its own, and a hung service would otherwise leave the
+/// `--scheduled` unit "activating" for good, every later timer fire skipped
+/// behind it.
+pub const CONDITIONS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How far back "Deleted files" looks by default, in days.
+pub const DELETED_WINDOW_DAYS: i64 = 30;
+
+/// Hard cap on rows the wizard's folder browser renders at once: expanding
+/// enough folders to need more than this is rare, and re-walking tens of
+/// thousands of them into fresh widgets on every keystroke or tick (`view()`
+/// runs on both) is not something a tree this deep should ever cost.
+pub const BROWSE_ROW_LIMIT: usize = 500;
+
+/// The largest file "Open a copy" will restore: the copy goes in the user's
+/// runtime folder, which is backed by memory, so a big one would push
+/// everything else out. Anything larger is offered a restore to a folder.
+pub const OPEN_COPY_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// How long an "Open a copy" folder stays before it is removed. Long enough
+/// that one still open in a viewer is not pulled away within a working day.
+pub const OPEN_COPY_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);

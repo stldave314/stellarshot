@@ -32,22 +32,20 @@ pub fn set(dir: Option<PathBuf>, disabled: bool) {
     *settings = Some(CacheSettings { dir, disabled });
 }
 
-/// Every repository a test creates is thrown away with the `TempDir` that
-/// held it, but rustic's cache is keyed by repository ID and lives under the
-/// real `~/.cache/rustic` regardless — thousands of test runs would otherwise
-/// leave thousands of stale entries there forever. Called once, the first
-/// time any test opens or creates a repository; harmless to call again.
-#[cfg(feature = "test-support")]
-pub(super) fn disable_for_tests() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| set(None, true));
-}
-
 pub(super) fn apply(options: &mut rustic_core::RepositoryOptions) {
     let settings = SETTINGS
         .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(settings) = settings.as_ref() else {
+    apply_to(settings.as_ref(), options);
+}
+
+/// The pure part of [`apply`], taking the settings as an argument so it can
+/// be tested with local values rather than by writing the process-wide
+/// global — which every other test in the same binary that opens a
+/// repository also reads, so a test that left it set (or cleared) would
+/// silently change where all of them cached, depending on which ran first.
+fn apply_to(settings: Option<&CacheSettings>, options: &mut rustic_core::RepositoryOptions) {
+    let Some(settings) = settings else {
         return;
     };
     options.no_cache = settings.disabled;
@@ -56,26 +54,35 @@ pub(super) fn apply(options: &mut rustic_core::RepositoryOptions) {
     }
 }
 
+/// Where a test build keeps rustic's cache when the settings above have
+/// not chosen anywhere: under this crate's own `target/`, per process,
+/// never the real `~/.cache/rustic`. Every repository a test creates is
+/// thrown away with the `TempDir` that held it, but rustic's cache is keyed
+/// by repository ID and would otherwise gain one stale entry per test run,
+/// forever.
+///
+/// A location, not `no_cache = true` (which is what a test build used to
+/// force, for every repository, in every test): with the cache simply off,
+/// no test ever exercised the code path a real backup takes, and a stale
+/// index or snapshot cache after a forget, a prune or a password change is
+/// exactly the kind of bug that would have hidden behind it. Reached by
+/// every `--run` and `--scheduled` child a test spawns too, since
+/// `cargo test` builds those with this same feature.
+#[cfg(feature = "test-support")]
+pub(super) fn test_cache_dir() -> PathBuf {
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/target/test-cache"))
+        .join(std::process::id().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // These tests share one process-wide global, so they must not run
-    // concurrently with each other; `serial` orders them by hand rather
-    // than adding a crate just for that.
-    fn serial() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
     #[test]
     fn nothing_set_leaves_the_defaults_alone() {
-        let _guard = serial();
-        *SETTINGS.write().unwrap() = None;
         let mut options = rustic_core::RepositoryOptions::default();
 
-        apply(&mut options);
+        apply_to(None, &mut options);
 
         assert!(!options.no_cache);
         assert_eq!(options.cache_dir, None);
@@ -83,11 +90,13 @@ mod tests {
 
     #[test]
     fn a_chosen_directory_and_no_cache_both_reach_the_options() {
-        let _guard = serial();
-        set(Some(PathBuf::from("/mnt/cache")), true);
+        let settings = CacheSettings {
+            dir: Some(PathBuf::from("/mnt/cache")),
+            disabled: true,
+        };
         let mut options = rustic_core::RepositoryOptions::default();
 
-        apply(&mut options);
+        apply_to(Some(&settings), &mut options);
 
         assert!(options.no_cache);
         assert_eq!(options.cache_dir, Some(PathBuf::from("/mnt/cache")));

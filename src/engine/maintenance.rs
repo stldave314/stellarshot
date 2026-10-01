@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
+use crate::constants::RETENTION_MAX_DAYS;
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -38,6 +39,50 @@ impl KeepRules {
         *self == Self::default()
     }
 
+    /// Rejects a rule that would not do what its own field says.
+    ///
+    /// `Some(0)` on any count is not "keep nothing extra on top of the
+    /// other rules" — rustic accepts it and it means "forget every
+    /// unpinned snapshot this rule would otherwise have kept", including
+    /// the newest one: its own check for `within_days` is
+    /// `snapshot.time + within > latest_time`, which is false for every
+    /// snapshot when `within` is zero, and a `keep_last` of zero has the
+    /// same effect on the count it governs. The wizard never offers 0 for
+    /// any of these, so a rule that reaches here with one is a hand-edited
+    /// config or an untrusted settings import.
+    ///
+    /// `within_days` above [`RETENTION_MAX_DAYS`] is rejected too: jiff's
+    /// own day range is finite, and building a `Span` past it panics,
+    /// which would otherwise be reachable from a config file inside the
+    /// `--run` child.
+    pub fn validate(&self) -> Result<(), EngineError> {
+        let is_zero = |value: Option<u32>| value == Some(0);
+        if is_zero(self.last)
+            || is_zero(self.hourly)
+            || is_zero(self.daily)
+            || is_zero(self.weekly)
+            || is_zero(self.monthly)
+            || is_zero(self.yearly)
+            || is_zero(self.within_days)
+        {
+            return Err(EngineError::new(
+                ErrorKind::Internal,
+                "a retention rule of 0 would forget every snapshot, including the newest",
+            ));
+        }
+        if let Some(days) = self.within_days
+            && days > RETENTION_MAX_DAYS
+        {
+            return Err(EngineError::new(
+                ErrorKind::Internal,
+                format!(
+                    "a retention period of {days} days is not supported (the limit is {RETENTION_MAX_DAYS})"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn options(&self) -> KeepOptions {
         let count = |n: Option<u32>| n.map(|n| i32::try_from(n).unwrap_or(i32::MAX));
         let mut options = KeepOptions::default();
@@ -47,9 +92,12 @@ impl KeepRules {
         options.keep_weekly = count(self.weekly);
         options.keep_monthly = count(self.monthly);
         options.keep_yearly = count(self.yearly);
+        // `validate` is the gate against a span jiff cannot build; this
+        // still falls back to "no such rule" rather than panicking if it
+        // is ever reached without going through `validate` first.
         options.keep_within = self
             .within_days
-            .map(|days| jiff::Span::new().days(i64::from(days)));
+            .and_then(|days| jiff::Span::new().try_days(i64::from(days)).ok());
         options
     }
 }
@@ -136,6 +184,7 @@ impl Repo {
         tag: &str,
         sources: &[PathBuf],
     ) -> Result<ForgetReport, EngineError> {
+        rules.validate()?;
         let snapshots = self.inner.get_matching_snapshots(|snapshot| {
             snapshot.hostname == host
                 && (snapshot.tags.contains(tag)
@@ -185,10 +234,75 @@ mod tests {
     //! describe it. rustic applies the rules; these tests hold the
     //! description to what it does.
 
+    use super::*;
     use crate::profile::Retention;
     use jiff::{Span, Zoned, civil::date, tz::TimeZone};
     use rustic_core::ForgetSnapshot;
     use rustic_core::repofile::SnapshotFile;
+
+    #[test]
+    fn a_rule_of_zero_on_any_field_is_rejected() {
+        for rules in [
+            KeepRules {
+                last: Some(0),
+                ..KeepRules::default()
+            },
+            KeepRules {
+                hourly: Some(0),
+                ..KeepRules::default()
+            },
+            KeepRules {
+                daily: Some(0),
+                ..KeepRules::default()
+            },
+            KeepRules {
+                weekly: Some(0),
+                ..KeepRules::default()
+            },
+            KeepRules {
+                monthly: Some(0),
+                ..KeepRules::default()
+            },
+            KeepRules {
+                yearly: Some(0),
+                ..KeepRules::default()
+            },
+            KeepRules {
+                within_days: Some(0),
+                ..KeepRules::default()
+            },
+        ] {
+            assert_eq!(
+                rules.validate().unwrap_err().kind,
+                ErrorKind::Internal,
+                "{rules:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_within_days_past_the_limit_is_rejected_rather_than_panicking() {
+        // `jiff::Span::days` panics outside its own range (roughly 7.3
+        // million days); `validate` must catch this before `options()`
+        // ever builds a `Span` from it.
+        let rules = KeepRules {
+            within_days: Some(u32::MAX),
+            ..KeepRules::default()
+        };
+        assert_eq!(rules.validate().unwrap_err().kind, ErrorKind::Internal);
+    }
+
+    #[test]
+    fn ordinary_retention_values_are_accepted() {
+        let rules = KeepRules {
+            daily: Some(7),
+            weekly: Some(4),
+            within_days: Some(RETENTION_MAX_DAYS),
+            ..KeepRules::default()
+        };
+        assert!(rules.validate().is_ok());
+        assert!(KeepRules::default().validate().is_ok());
+    }
 
     /// `days` before 2026-09-24, at `hour`:00 UTC.
     fn at(days: i64, hour: i8) -> Zoned {

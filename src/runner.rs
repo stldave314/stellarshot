@@ -234,6 +234,14 @@ impl ProgressSink for Output {
             progress: event.clone(),
         });
     }
+
+    /// See `proc_signal`: the run was told to stop and has run its After
+    /// hooks; this is the outcome the window sees for it.
+    fn canceled(&self) {
+        self.emit(&Event::Error {
+            error: EngineError::new(ErrorKind::Canceled, String::new()),
+        });
+    }
 }
 
 /// Removes a file when dropped.
@@ -285,27 +293,45 @@ fn log_after_hooks(results: &[HookResult]) {
 /// Dropped while still armed, it runs the hooks as a failure. The success
 /// path calls [`Self::run`] itself, which disarms it so they do not run
 /// twice.
+///
+/// A signal is the one path neither of those covers: see `proc_signal`,
+/// which runs the same hooks on SIGTERM. `claim_after_hooks` is what keeps
+/// the two from both running them.
 struct AfterHookGuard<'a> {
     hooks: &'a [Hook],
     armed: bool,
+    /// This run's own entry in `proc_signal`, so the claim below answers
+    /// for this run and no other.
+    ticket: crate::proc_signal::Ticket,
 }
 
 impl<'a> AfterHookGuard<'a> {
-    fn new(hooks: &'a [Hook]) -> Self {
-        Self { hooks, armed: true }
+    fn new(hooks: &'a [Hook], ticket: crate::proc_signal::Ticket) -> Self {
+        Self {
+            hooks,
+            armed: true,
+            ticket,
+        }
     }
 
     /// Run the hooks for the backup's real outcome, and disarm the guard so
     /// `Drop` does not run them a second time.
     fn run(mut self, succeeded: bool) -> Vec<HookResult> {
         self.armed = false;
-        hooks::run_after(self.hooks, succeeded)
+        match crate::proc_signal::claim_after_hooks(self.ticket) {
+            Some(_running) => hooks::run_after(self.hooks, succeeded),
+            // A SIGTERM got here first and is running them itself (see
+            // `proc_signal`); this process is on its way out.
+            None => Vec::new(),
+        }
     }
 }
 
 impl Drop for AfterHookGuard<'_> {
     fn drop(&mut self) {
-        if self.armed {
+        if self.armed
+            && let Some(_running) = crate::proc_signal::claim_after_hooks(self.ticket)
+        {
             log_after_hooks(&hooks::run_after(self.hooks, false));
         }
     }
@@ -343,13 +369,25 @@ pub fn run(
     if operation == Operation::Backup {
         hooks::run_before(&job.hooks).map_err(|results| hook_failure(&results))?;
     }
-    let after_hooks = (operation == Operation::Backup).then(|| AfterHookGuard::new(&job.hooks));
+    // From here until the guard has run them, a SIGTERM runs the After
+    // hooks too, then reports this run canceled through `sink`: see
+    // `proc_signal`. In a process that never installed it (a test calling
+    // this directly) this arms nothing anyone will ever read.
+    let after_hooks = (operation == Operation::Backup).then(|| {
+        let report_sink = sink.clone();
+        let ticket = crate::proc_signal::arm(crate::proc_signal::Armed {
+            hooks: job.hooks.clone(),
+            report: Box::new(move || report_sink.canceled()),
+        });
+        AfterHookGuard::new(&job.hooks, ticket)
+    });
     let repo = engine::open(&job.repository, &job.password)?;
     match operation {
         Operation::Backup => {
-            let request = job.request.expect("checked above");
+            let request = job.request.ok_or_else(|| missing("backup request"))?;
             let result = repo.backup(&request, sink);
-            let after_hooks = after_hooks.expect("Backup always builds a guard above");
+            let after_hooks = after_hooks
+                .ok_or_else(|| EngineError::new(ErrorKind::Internal, "no after-hooks guard"))?;
             log_after_hooks(&after_hooks.run(result.is_ok()));
             result.map(|report| Outcome {
                 report: Some(report),
@@ -412,16 +450,21 @@ pub fn main(args: &[String]) -> ExitCode {
     // `Job`, and briefly in the stdin buffer before it is parsed and
     // zeroized): a core dump triggered by a crash here would otherwise be
     // readable by anyone who can read this user's files, unlike the memory
-    // itself. Best-effort; a failure here (an old kernel without this
-    // `prctl`, say) is not itself a reason to refuse to run a backup.
-    let _ = rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable);
+    // itself.
+    crate::harden_process();
+    // Before anything else can start a thread: see `proc_signal`. Cancel
+    // in the window sends this process SIGTERM, and this is what turns
+    // that into "run the After hooks, say so, then go" instead of just
+    // "go".
+    crate::proc_signal::install();
 
     crate::debug::init(crate::debug::Role::Run);
+    crate::paths::tighten_app_dirs();
     // Every real backup, restore or clean-up runs here, never in the
     // window's own process, so this is what actually needs rustic's and
     // rclone's own diagnostics to reach the log, not just the window seeing
     // them for in-process reads.
-    crate::app::settings::set_logger_for_child();
+    crate::app::startup::set_logger_for_child();
     // Applies the cache location preference to every repository this
     // process opens; the rest of the app's settings go unused here.
     let _ = crate::app::config::StellarshotConfig::config();

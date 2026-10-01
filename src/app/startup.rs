@@ -14,6 +14,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 pub fn init() -> (Settings, Flags) {
     debug::init(debug::Role::Window);
+    crate::paths::tighten_app_dirs();
     set_logger();
     crate::core::localization::init();
     migrate_settings();
@@ -85,13 +86,7 @@ pub fn get_app_settings() -> Settings {
 /// `crate::engine::lock::create_private_dir` additionally verifies that
 /// (rather than trusting it), the same way it does for the lock directory.
 fn rustic_log_path() -> Option<std::path::PathBuf> {
-    let dir = std::env::var_os("XDG_STATE_HOME")
-        .map(std::path::PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/state"))
-        })?
-        .join("stellarshot");
+    let dir = crate::paths::state_root()?.join("stellarshot");
     crate::engine::lock::create_private_dir(&dir).ok()?;
     Some(dir.join("backend.log"))
 }
@@ -133,11 +128,12 @@ pub fn set_logger_for_child() {
 fn init_tracing(log_path: Option<std::path::PathBuf>, truncate: bool) {
     let _ = tracing_log::LogTracer::init();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("stellarshot=warn,rustic_core=warn,rustic_backend=info")
+        // `engine::serve` passes rclone's own output on at `info`.
+        EnvFilter::new(
+            "stellarshot=warn,stellarshot::engine::serve=info,rustic_core=warn,rustic_backend=info",
+        )
     });
-    let log_file = log_path.and_then(|path| {
-        crate::debug::open_private_log_file(path.to_string_lossy().as_ref(), truncate)
-    });
+    let log_file = log_path.and_then(|path| crate::debug::open_private_log_file(&path, truncate));
     let _ = tracing_subscriber::registry()
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(log_file.map(|file| fmt::layer().with_writer(Mutex::new(file)).with_ansi(false)))
@@ -146,9 +142,11 @@ fn init_tracing(log_path: Option<std::path::PathBuf>, truncate: bool) {
 }
 
 pub fn get_flags() -> Flags {
+    let (config, profiles_unreadable) = StellarshotConfig::load();
     Flags {
         config_handler: StellarshotConfig::config_handler(),
-        config: StellarshotConfig::config(),
+        config,
+        profiles_unreadable,
         start_wizard: false,
         start_restore: false,
         select: None,

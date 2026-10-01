@@ -27,10 +27,11 @@ use fuser::{
 use super::browse::{Browser, EntryKind, MountEntry};
 use crate::constants::MOUNT_ATTR_TTL as TTL;
 use crate::debug::MOUNT;
-use crate::debug_log;
+use crate::{debug_log, error_log};
 
 /// A mounted snapshot, unmounted (and its background thread stopped) when
 /// dropped.
+#[derive(Debug)]
 pub struct Mount {
     session: Option<fuser::BackgroundSession>,
     point: PathBuf,
@@ -85,11 +86,24 @@ pub fn mount(
     })
 }
 
+/// Run one FUSE callback's body, turning a panic inside it into an I/O error
+/// for that one request instead of the end of the whole mount.
+///
+/// `fuser` serves every call on one event-loop thread by default and catches
+/// nothing itself: a panic there ends the session, and the mount point is
+/// left answering "Transport endpoint is not connected" while the window
+/// still thinks it is mounted. Nothing needs to reply here: a `Reply` that
+/// is dropped without being answered — which is what unwinding does to the
+/// one this body held — sends `EIO` by itself (`fuser`'s own `Drop`).
+fn guarded(what: &str, body: impl FnOnce()) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).is_err() {
+        error_log!(MOUNT, "{what} panicked; answered with an I/O error");
+    }
+}
+
 /// Lock `mutex`, recovering the data even if a previous FUSE call panicked
-/// while holding it. `fuser` runs every call on its own background thread;
-/// without this, one panicking request would poison the lock and make
-/// every request after it panic too, just for touching the same mutex,
-/// rather than only that one request failing.
+/// while holding it, so one panicking request does not poison the lock and
+/// make every request after it panic too just for touching the same mutex.
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
@@ -224,52 +238,58 @@ fn attr(ino: INodeNo, entry: &MountEntry, uid: u32, gid: u32) -> FileAttr {
 
 impl Filesystem for SnapshotFs {
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        let Some(parent_path) = self.path_of(parent) else {
-            reply.error(Errno::ENOENT);
-            return;
-        };
-        let path = parent_path.join(name);
-        match self.browser.mount_stat(&self.snapshot, &path) {
-            Ok(entry) => {
-                let ino = self.ino_for(&path);
-                reply.entry(&TTL, &attr(ino, &entry, self.uid, self.gid), Generation(0));
-            }
-            Err(err) => {
-                debug_log!(MOUNT, "lookup {}: {err}", path.display());
+        guarded("lookup", || {
+            let Some(parent_path) = self.path_of(parent) else {
                 reply.error(Errno::ENOENT);
+                return;
+            };
+            let path = parent_path.join(name);
+            match self.browser.mount_stat(&self.snapshot, &path) {
+                Ok(entry) => {
+                    let ino = self.ino_for(&path);
+                    reply.entry(&TTL, &attr(ino, &entry, self.uid, self.gid), Generation(0));
+                }
+                Err(err) => {
+                    debug_log!(MOUNT, "lookup {}: {err}", path.display());
+                    reply.error(Errno::ENOENT);
+                }
             }
-        }
+        });
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
-        let Some(path) = self.path_of(ino) else {
-            reply.error(Errno::ENOENT);
-            return;
-        };
-        match self.browser.mount_stat(&self.snapshot, &path) {
-            Ok(entry) => reply.attr(&TTL, &attr(ino, &entry, self.uid, self.gid)),
-            Err(err) => {
-                debug_log!(MOUNT, "getattr {}: {err}", path.display());
+        guarded("getattr", || {
+            let Some(path) = self.path_of(ino) else {
                 reply.error(Errno::ENOENT);
+                return;
+            };
+            match self.browser.mount_stat(&self.snapshot, &path) {
+                Ok(entry) => reply.attr(&TTL, &attr(ino, &entry, self.uid, self.gid)),
+                Err(err) => {
+                    debug_log!(MOUNT, "getattr {}: {err}", path.display());
+                    reply.error(Errno::ENOENT);
+                }
             }
-        }
+        });
     }
 
     fn readlink(&self, _req: &Request, ino: INodeNo, reply: ReplyData) {
-        let Some(path) = self.path_of(ino) else {
-            reply.error(Errno::ENOENT);
-            return;
-        };
-        match self.browser.mount_stat(&self.snapshot, &path) {
-            Ok(entry) => match entry.symlink_target {
-                Some(target) => reply.data(target.as_os_str().as_encoded_bytes()),
-                None => reply.error(Errno::EINVAL),
-            },
-            Err(err) => {
-                debug_log!(MOUNT, "readlink {}: {err}", path.display());
+        guarded("readlink", || {
+            let Some(path) = self.path_of(ino) else {
                 reply.error(Errno::ENOENT);
+                return;
+            };
+            match self.browser.mount_stat(&self.snapshot, &path) {
+                Ok(entry) => match entry.symlink_target {
+                    Some(target) => reply.data(target.as_os_str().as_encoded_bytes()),
+                    None => reply.error(Errno::EINVAL),
+                },
+                Err(err) => {
+                    debug_log!(MOUNT, "readlink {}: {err}", path.display());
+                    reply.error(Errno::ENOENT);
+                }
             }
-        }
+        });
     }
 
     fn readdir(
@@ -280,57 +300,61 @@ impl Filesystem for SnapshotFs {
         offset: u64,
         mut reply: ReplyDirectory,
     ) {
-        let Some(dir) = self.path_of(ino) else {
-            reply.error(Errno::ENOENT);
-            return;
-        };
-        let entries = match self.browser.mount_list(&self.snapshot, &dir) {
-            Ok(entries) => entries,
-            Err(err) => {
-                debug_log!(MOUNT, "readdir {}: {err}", dir.display());
+        guarded("readdir", || {
+            let Some(dir) = self.path_of(ino) else {
                 reply.error(Errno::ENOENT);
                 return;
-            }
-        };
-        // "." and ".." first, then every real entry, each numbered so a
-        // reader that stopped partway can resume from the next one.
-        let mut rows: Vec<(INodeNo, FileType, PathBuf)> = vec![
-            (ino, FileType::Directory, PathBuf::from(".")),
-            (ino, FileType::Directory, PathBuf::from("..")),
-        ];
-        for entry in &entries {
-            let path = dir.join(&entry.name);
-            rows.push((self.ino_for(&path), file_type(entry.kind), path));
-        }
-        for (index, (row_ino, kind, path)) in rows.iter().enumerate().skip(offset as usize) {
-            let name = if *path == Path::new(".") || *path == Path::new("..") {
-                path.as_os_str()
-            } else {
-                path.file_name().unwrap_or_default()
             };
-            if reply.add(*row_ino, (index + 1) as u64, *kind, name) {
-                break;
+            let entries = match self.browser.mount_list(&self.snapshot, &dir) {
+                Ok(entries) => entries,
+                Err(err) => {
+                    debug_log!(MOUNT, "readdir {}: {err}", dir.display());
+                    reply.error(Errno::ENOENT);
+                    return;
+                }
+            };
+            // "." and ".." first, then every real entry, each numbered so a
+            // reader that stopped partway can resume from the next one.
+            let mut rows: Vec<(INodeNo, FileType, PathBuf)> = vec![
+                (ino, FileType::Directory, PathBuf::from(".")),
+                (ino, FileType::Directory, PathBuf::from("..")),
+            ];
+            for entry in &entries {
+                let path = dir.join(&entry.name);
+                rows.push((self.ino_for(&path), file_type(entry.kind), path));
             }
-        }
-        reply.ok();
+            for (index, (row_ino, kind, path)) in rows.iter().enumerate().skip(offset as usize) {
+                let name = if *path == Path::new(".") || *path == Path::new("..") {
+                    path.as_os_str()
+                } else {
+                    path.file_name().unwrap_or_default()
+                };
+                if reply.add(*row_ino, (index + 1) as u64, *kind, name) {
+                    break;
+                }
+            }
+            reply.ok();
+        });
     }
 
     fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
-        let Some(path) = self.path_of(ino) else {
-            reply.error(Errno::ENOENT);
-            return;
-        };
-        match self.browser.open_file(&self.snapshot, &path) {
-            Ok(open_file) => {
-                let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
-                lock(&self.open_files).insert(handle, open_file);
-                reply.opened(FileHandle(handle), fuser::FopenFlags::empty());
+        guarded("open", || {
+            let Some(path) = self.path_of(ino) else {
+                reply.error(Errno::ENOENT);
+                return;
+            };
+            match self.browser.open_file(&self.snapshot, &path) {
+                Ok(open_file) => {
+                    let handle = self.next_handle.fetch_add(1, Ordering::Relaxed);
+                    lock(&self.open_files).insert(handle, open_file);
+                    reply.opened(FileHandle(handle), fuser::FopenFlags::empty());
+                }
+                Err(err) => {
+                    debug_log!(MOUNT, "open {}: {err}", path.display());
+                    reply.error(Errno::EIO);
+                }
             }
-            Err(err) => {
-                debug_log!(MOUNT, "open {}: {err}", path.display());
-                reply.error(Errno::EIO);
-            }
-        }
+        });
     }
 
     fn read(
@@ -344,21 +368,23 @@ impl Filesystem for SnapshotFs {
         _lock_owner: Option<fuser::LockOwner>,
         reply: ReplyData,
     ) {
-        let files = lock(&self.open_files);
-        let Some(open_file) = files.get(&u64::from(fh)) else {
-            reply.error(Errno::EBADF);
-            return;
-        };
-        match self
-            .browser
-            .read_open_file(open_file, offset as usize, size as usize)
-        {
-            Ok(data) => reply.data(&data),
-            Err(err) => {
-                debug_log!(MOUNT, "read handle {fh:?}: {err}");
-                reply.error(Errno::EIO);
+        guarded("read", || {
+            let files = lock(&self.open_files);
+            let Some(open_file) = files.get(&u64::from(fh)) else {
+                reply.error(Errno::EBADF);
+                return;
+            };
+            match self
+                .browser
+                .read_open_file(open_file, offset as usize, size as usize)
+            {
+                Ok(data) => reply.data(&data),
+                Err(err) => {
+                    debug_log!(MOUNT, "read handle {fh:?}: {err}");
+                    reply.error(Errno::EIO);
+                }
             }
-        }
+        });
     }
 
     fn release(
@@ -371,8 +397,10 @@ impl Filesystem for SnapshotFs {
         _flush: bool,
         reply: fuser::ReplyEmpty,
     ) {
-        lock(&self.open_files).remove(&u64::from(fh));
-        reply.ok();
+        guarded("release", || {
+            lock(&self.open_files).remove(&u64::from(fh));
+            reply.ok();
+        });
     }
 }
 
@@ -390,6 +418,20 @@ mod tests {
             mode: None,
             symlink_target: None,
         }
+    }
+
+    /// The mount must survive a bug in any one callback: a panic there used
+    /// to end the whole session, leaving the mount point dead.
+    #[test]
+    fn a_panic_in_one_callback_does_not_escape_it() {
+        let mut ran_after = false;
+        guarded("test", || panic!("a bug in a callback"));
+        ran_after = !ran_after;
+        assert!(ran_after, "the caller carried on");
+
+        let mut completed = false;
+        guarded("test", || completed = true);
+        assert!(completed, "a body that does not panic still runs normally");
     }
 
     #[test]

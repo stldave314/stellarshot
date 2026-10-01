@@ -82,14 +82,65 @@ pub fn ago(now: i64, then: i64) -> Ago {
     }
 }
 
+/// "Backed up 5 minutes ago", for a backup last successful at `then`.
+pub fn backed_up_ago(now: i64, then: i64) -> String {
+    use crate::fl;
+    match ago(now, then) {
+        Ago::JustNow => fl!("backed-up-just-now"),
+        Ago::Minutes(count) => fl!("backed-up-minutes-ago", count = count),
+        Ago::Hours(count) => fl!("backed-up-hours-ago", count = count),
+        Ago::Days(count) => fl!("backed-up-days-ago", count = count),
+    }
+}
+
+/// "Failed 5 minutes ago", for a run that failed at `then`.
+pub fn failed_ago(now: i64, then: i64) -> String {
+    use crate::fl;
+    match ago(now, then) {
+        Ago::JustNow => fl!("failed-just-now"),
+        Ago::Minutes(count) => fl!("failed-minutes-ago", count = count),
+        Ago::Hours(count) => fl!("failed-hours-ago", count = count),
+        Ago::Days(count) => fl!("failed-days-ago", count = count),
+    }
+}
+
 /// The current Unix time.
 pub fn now() -> i64 {
     jiff::Timestamp::now().as_second()
 }
 
+/// `items` as one line of text, separated the way the current language
+/// separates a list.
+pub fn list(items: impl IntoIterator<Item = String>) -> String {
+    items
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(&crate::fl!("list-separator"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_is_joined_with_the_languages_separator() {
+        assert_eq!(list(["a".to_owned(), "b".to_owned()]), "a, b");
+        assert_eq!(list(Vec::new()), "");
+    }
+
+    #[test]
+    fn a_compression_ratio_shows_one_decimal_and_the_times_sign() {
+        // Fluent wraps a placeable in invisible direction isolates.
+        let plain = |text: String| text.replace(['\u{2068}', '\u{2069}'], "");
+        let ratio = |value: f64| {
+            plain(crate::fl!(
+                "compression-ratio",
+                ratio = format!("{value:.1}")
+            ))
+        };
+        assert_eq!(ratio(2.46), "2.5×");
+        assert_eq!(ratio(3.0), "3.0×");
+    }
 
     #[test]
     fn durations_read_like_a_clock() {

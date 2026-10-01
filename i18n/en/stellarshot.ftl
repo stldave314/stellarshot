@@ -110,6 +110,7 @@ wizard-estimate = { $size } · { $files ->
    *[other] { $files } files
 }
 wizard-estimate-counting = Counting…
+wizard-estimate-failed = Could not work out the size.
 wizard-estimate-note = The first backup is usually smaller after compression and deduplication. Later backups only store what changed.
 wizard-where-intro = Choose where the backup is kept: an empty folder, ideally on another drive.
 wizard-where-title = Location
@@ -139,12 +140,15 @@ back = Back
 next = Next
 edit = Edit
 remove = Remove
+remove-item = Remove { $item }
 dismiss = Dismiss
 delete = Delete
 cancel = Cancel
 password = Password
 remove-title = Remove “{ $name }”?
 remove-body = Stellarshot will forget this backup and its saved password. The backup and its snapshots are not deleted, and can be opened again later.
+remove-keyring-failed = The backup was removed, but its saved password could not be deleted from your keyring. You can delete it there yourself.
+edit-backup-removed = This backup was removed while you were editing it, so nothing was saved.
 delete-title = Delete “{ $name }” and all its data?
 delete-body = This permanently deletes the backup and every snapshot in it. Other files in the same folder are not touched. Type { $name } to confirm.
 delete-snapshot-title = Delete this snapshot?
@@ -153,6 +157,8 @@ delete-snapshot-body = The snapshot from { $time } will be permanently deleted. 
 # Errors
 error-title = Something went wrong
 error-details = Details: { $details }
+error-settings-not-saved = The change could not be saved.
+error-config-unreadable = Some of Stellarshot's settings could not be read, so nothing can be saved until this is fixed. A copy of the original file was saved to { $path }.
 location-not-empty = { $path } already contains other files. Choose an empty folder, or a folder that already holds a repository.
 create-repo-failed = The repository could not be created.
 delete-repo-failed = The repository could not be deleted.
@@ -219,6 +225,7 @@ place-check-failed = Could not check this location.
 place-check = Check
 place-no-drives = No removable drives are plugged in. Plug one in, then go back and forward to look again.
 place-folder-on-drive = Folder on the drive
+place-folder-invalid = The folder must be a plain name or path on the drive, without “.” or “..”.
 place-host = Server
 place-user = User name
 place-user-placeholder = Your user name on this computer
@@ -259,6 +266,10 @@ selected-count = { $count ->
    *[other] { $count } items selected
 }
 restore-button = Restore…
+restore-replace-button = { $count ->
+    [one] Replace 1 file…
+   *[other] Replace { $count } files…
+}
 search-placeholder = Search this snapshot
 search-results = { $count ->
     [one] 1 match
@@ -481,7 +492,9 @@ error-invalid-remote = This backup's cloud storage remote is not one Stellarshot
 error-unsafe-path = A file in this snapshot names a location outside the folder being restored into ({ $path }), so nothing was restored.
 error-not-found = { $path } is not in this snapshot.
 error-ambiguous = { $path } matches more than one snapshot. Use a longer prefix.
-error-too-busy = The web interface already has as many requests open on this backup as it allows at once. Try again shortly.
+error-too-large-to-open = This is too large to open as a temporary copy ({ $size }). Restore it to a folder instead.
+error-duplicate-name = Two of the selected items are both named “{ $name }”, and would land in the same folder on top of each other. Restore them one at a time, or into different folders.
+error-too-busy = This backup already has as many operations open as it allows at once. Try again shortly.
 place-checking-for = Checking… { $time }
 wizard-creating = Creating… { $time }
 wizard-opening = Opening… { $time }
@@ -557,7 +570,7 @@ event-unmounted = Unmounted snapshot { $snapshot }
 history-empty = Nothing has happened yet.
 history-unknown-backup = (removed backup)
 history-truncated = Showing the most recent { $shown } of { $total }
-history-via-web = Web
+history-via-other = Other program
 notify-overdue = "{ $name }" has not backed up in a while
 notify-overdue-body = Its destination has not been reachable at its scheduled times. { $schedule } Check that it is connected, then open Stellarshot to back up now.
 settings-backup-title = Backup and restore Stellarshot's own settings
@@ -587,6 +600,7 @@ settings-import-done-body = { $added ->
    *[other] { $rejected } could not be imported safely and were skipped.
 }
 settings-import-failed = The settings could not be imported.
+settings-import-newer = This file was saved by a newer version of Stellarshot. Update Stellarshot, then try again.
 settings-import-hooks-disabled = Imported backups start with their schedule and hooks turned off. Review them before turning them on.
 settings-cache-title = Local cache
 settings-cache-dir = Cache location
@@ -598,67 +612,6 @@ settings-no-cache = Do not cache at all
 settings-no-cache-description = Slower, but nothing worth keeping on a machine low on disk space.
 settings-global-excludes-title = Left out of every backup
 settings-global-excludes-description = Glob patterns such as node_modules or target, applied to every backup without adding them to each one.
-settings-web-title = Web interface
-web-scope-off = Off
-web-scope-off-description = The web interface is not reachable at all.
-web-scope-localhost = This computer only
-web-scope-localhost-description = Reachable only from this computer itself, for example through your own SSH tunnel.
-web-scope-lan = Reachable on the network
-web-scope-lan-description = Reachable from any other device on the same network.
-web-port = Port
-web-port-description = Which port the web interface listens on.
-web-port-invalid = That is not a valid port number. It must be between 1 and 65535.
-web-address-label = Will listen at:
-web-auth-password = Shared password
-web-auth-password-description = One password, separate from any backup's own, required to sign in.
-web-password-set = Set the password
-web-password-placeholder = New password
-web-password-saved-body = The web interface will use this the next time it starts.
-web-password-failed = The web interface password could not be saved.
-web-password-length = { $count } of { $minimum ->
-    [one] { $minimum } character
-   *[other] { $minimum } characters
-}
-web-auth-token = API token
-web-auth-token-description = A generated token for scripted use of the web interface's API.
-web-token-generate = Token
-web-token-generate-button = Generate a new token…
-web-token-exists = A token has been generated. Generating another replaces it.
-web-token-none = No token has been generated yet.
-web-token-title = New API token
-web-token-body = Copy this token now — it will not be shown again.
-web-token-copy = Copy
-web-token-regenerate-title = Replace the current token?
-web-token-regenerate-body = Anything already using the current token will stop working the moment a new one is generated.
-web-token-regenerate-confirm = Regenerate
-
-    This is shown only once. Store it somewhere safe: generating another token replaces this one.
-web-auth-pam = This computer's own sign-in
-web-auth-pam-description = Sign in with the same password used to log into this computer.
-web-allowed-title = Allowed addresses
-web-allowed-description = Only these addresses or ranges may reach the web interface. Empty means every address the setting above already allows.
-web-allowed-placeholder = Address or range, such as 192.168.1.0/24
-web-allowed-invalid = Not a valid address or range, such as 192.168.1.0/24 or 192.168.1.1
-web-tls-title = TLS certificate
-web-tls-description = The web interface is always reached over HTTPS. By default it generates and uses its own self-signed certificate; a browser will need a one-time trust exception for it. Set your own certificate and key instead if you have one, for example from a certificate authority your devices already trust.
-web-tls-cert = Certificate
-web-tls-key = Private key
-web-tls-default = Self-signed (generated automatically)
-web-tls-choose = Choose…
-web-tls-reset = Use the default
-web-tls-cert-title = Choose a certificate file
-web-tls-key-title = Choose a private key file
-web-daemon-title = Daemon
-web-daemon-status = Status
-web-daemon-status-active = Running
-web-daemon-status-inactive = Stopped
-web-daemon-status-failed = Failed to start
-web-daemon-status-unknown = Not installed
-web-daemon-start = Start
-web-daemon-stop = Stop
-web-daemon-restart = Restart
-web-daemon-action-failed = The web interface's daemon could not be controlled.
-web-docs-link = Learn more about the web interface and its API
 home = Overview
 home-backups-title = Backups
 home-backup-detail = { $status } · { $last }
@@ -685,3 +638,9 @@ place-bandwidth-limit-placeholder = e.g. 1M
 applet-tooltip = Stellarshot
 applet-none = No backups are set up yet.
 applet-open = Open Stellarshot
+applet-open-failed = Stellarshot could not be started.
+snapshot-label = { $time } · { $id }
+hook-row = { $timing } · { $command }
+size-removed = −{ $size }
+compression-ratio = { $ratio }×
+list-separator = {", "}

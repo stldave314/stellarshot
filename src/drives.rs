@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::os::unix::ffi::OsStringExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use crate::debug::ENGINE;
@@ -30,17 +30,24 @@ const REMOVABLE_ROOTS: &[&str] = &["/media/", "/run/media/"];
 
 /// Every removable drive that is mounted now.
 pub fn mounted_drives() -> Vec<Drive> {
-    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_else(|err| {
+    // Bytes, not a `String`: mountinfo only escapes space, tab, newline and
+    // backslash, so one mount point with a non-UTF-8 name would make a
+    // `read_to_string` of the whole file fail and every drive look unplugged.
+    let mountinfo = std::fs::read("/proc/self/mountinfo").unwrap_or_else(|err| {
         // Every drive then looks unplugged, not merely unlisted — worth
         // knowing why, since `/proc/self/mountinfo` failing to read at all
         // is not a "this one drive is missing" problem.
         error_log!(ENGINE, "could not read /proc/self/mountinfo: {err}");
-        String::new()
+        Vec::new()
     });
     drives_from(
         &device_links(Path::new("/dev/disk/by-uuid")),
         &device_links(Path::new("/dev/disk/by-label")),
         &mountinfo,
+        // A mapped device (an unlocked LUKS volume) is mounted from
+        // `/dev/mapper/…`, a link to the `/dev/dm-N` the by-uuid link
+        // resolves to.
+        &|source| std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf()),
     )
 }
 
@@ -80,7 +87,7 @@ fn device_links(dir: &Path) -> Vec<(String, PathBuf)> {
         .filter_map(Result::ok)
         .filter_map(|entry| {
             let device = std::fs::canonicalize(entry.path()).ok()?;
-            let name = unescape(&entry.file_name().to_string_lossy())
+            let name = unescape(entry.file_name().as_bytes())
                 .to_string_lossy()
                 .into_owned();
             Some((name, device))
@@ -89,11 +96,14 @@ fn device_links(dir: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// Build the drive list from `/dev/disk/by-uuid`, `/dev/disk/by-label` and
-/// `/proc/self/mountinfo`.
+/// `/proc/self/mountinfo`. `resolve` turns a mount's source device into the
+/// canonical path the `by_*` links were resolved to (injected so tests need
+/// no real devices).
 fn drives_from(
     by_uuid: &[(String, PathBuf)],
     by_label: &[(String, PathBuf)],
-    mountinfo: &str,
+    mountinfo: &[u8],
+    resolve: &dyn Fn(&Path) -> PathBuf,
 ) -> Vec<Drive> {
     let uuids: HashMap<&Path, &str> = by_uuid
         .iter()
@@ -105,26 +115,38 @@ fn drives_from(
         .collect();
 
     let mut drives = Vec::new();
-    for line in mountinfo.lines() {
-        let Some((before, after)) = line.split_once(" - ") else {
+    for line in mountinfo.split(|&byte| byte == b'\n') {
+        let Some(separator) = line.windows(3).position(|window| window == b" - ") else {
             continue;
         };
-        let Some(mount_point) = before.split_whitespace().nth(4) else {
+        let (before, after) = (&line[..separator], &line[separator + 3..]);
+        let mut fields = before.split(|&byte| byte == b' ').filter(|f| !f.is_empty());
+        let Some(mount_point) = fields.nth(4) else {
             continue;
         };
-        let Some(source) = after.split_whitespace().nth(1) else {
+        let Some(source) = after
+            .split(|&byte| byte == b' ')
+            .filter(|f| !f.is_empty())
+            .nth(1)
+        else {
             continue;
         };
         let mount_point = PathBuf::from(unescape(mount_point));
-        let removable = REMOVABLE_ROOTS
-            .iter()
-            .any(|root| mount_point.to_string_lossy().starts_with(root));
-        let device = Path::new(source);
-        let (true, Some(uuid)) = (removable, uuids.get(device)) else {
+        let removable = REMOVABLE_ROOTS.iter().any(|root| {
+            mount_point
+                .as_os_str()
+                .as_bytes()
+                .starts_with(root.as_bytes())
+        });
+        if !removable {
+            continue;
+        }
+        let device = resolve(Path::new(&unescape(source)));
+        let Some(uuid) = uuids.get(device.as_path()) else {
             continue;
         };
         let label = labels
-            .get(device)
+            .get(device.as_path())
             .map(|label| (*label).to_owned())
             .or_else(|| {
                 mount_point
@@ -147,24 +169,23 @@ fn drives_from(
 /// keep its exact bytes, or a real one containing them (rare, but a real
 /// filesystem label or path is not guaranteed to be UTF-8) would never be
 /// recognized as the drive it actually is.
-fn unescape(text: &str) -> OsString {
-    let bytes = text.as_bytes();
+fn unescape(bytes: &[u8]) -> OsString {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'\\' {
             if bytes.get(i + 1) == Some(&b'x')
-                && let Some(value) = text
+                && let Some(value) = bytes
                     .get(i + 2..i + 4)
-                    .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                    .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok())
             {
                 out.push(value);
                 i += 4;
                 continue;
             }
-            if let Some(value) = text
+            if let Some(value) = bytes
                 .get(i + 1..i + 4)
-                .and_then(|octal| u8::from_str_radix(octal, 8).ok())
+                .and_then(|octal| u8::from_str_radix(std::str::from_utf8(octal).ok()?, 8).ok())
             {
                 out.push(value);
                 i += 4;
@@ -181,7 +202,7 @@ fn unescape(text: &str) -> OsString {
 mod tests {
     use super::*;
 
-    const MOUNTINFO: &str = "\
+    const MOUNTINFO: &[u8] = b"\
 22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
 91 22 8:17 / /media/alex/Backup rw,nosuid,nodev,relatime shared:50 - ext4 /dev/sdb1 rw
 92 22 8:33 / /run/media/alex/Photo\\040Disk rw,nosuid shared:51 - exfat /dev/sdc1 rw
@@ -201,10 +222,15 @@ mod tests {
         (by_uuid, by_label)
     }
 
+    /// No device is a link to another.
+    fn same(source: &Path) -> PathBuf {
+        source.to_path_buf()
+    }
+
     #[test]
     fn only_removable_mounts_with_a_uuid_are_drives() {
         let (by_uuid, by_label) = links();
-        let drives = drives_from(&by_uuid, &by_label, MOUNTINFO);
+        let drives = drives_from(&by_uuid, &by_label, MOUNTINFO, &same);
 
         assert_eq!(
             drives.len(),
@@ -227,8 +253,9 @@ mod tests {
     fn uuid_resolves_to_its_current_mount_point() {
         let (by_uuid, by_label) = links();
         // The same drive, mounted somewhere else today.
-        let moved = MOUNTINFO.replace("/media/alex/Backup ", "/media/alex/Backup1 ");
-        let drives = drives_from(&by_uuid, &by_label, &moved);
+        let moved = String::from_utf8_lossy(MOUNTINFO)
+            .replace("/media/alex/Backup ", "/media/alex/Backup1 ");
+        let drives = drives_from(&by_uuid, &by_label, moved.as_bytes(), &same);
 
         let drive = drives.iter().find(|d| d.uuid == "1111-AAAA").unwrap();
         assert_eq!(drive.mount_point, PathBuf::from("/media/alex/Backup1"));
@@ -237,12 +264,12 @@ mod tests {
     #[test]
     fn missing_drive_is_unavailable() {
         let (by_uuid, by_label) = links();
-        let unplugged: String = MOUNTINFO
+        let unplugged: String = String::from_utf8_lossy(MOUNTINFO)
             .lines()
             .filter(|line| !line.contains("/dev/sdb1"))
             .map(|line| format!("{line}\n"))
             .collect();
-        let drives = drives_from(&by_uuid, &by_label, &unplugged);
+        let drives = drives_from(&by_uuid, &by_label, unplugged.as_bytes(), &same);
 
         assert!(drives.iter().all(|d| d.uuid != "1111-AAAA"));
     }
@@ -250,7 +277,7 @@ mod tests {
     #[test]
     fn drive_for_finds_the_containing_mount() {
         let (by_uuid, by_label) = links();
-        let drives = drives_from(&by_uuid, &by_label, MOUNTINFO);
+        let drives = drives_from(&by_uuid, &by_label, MOUNTINFO, &same);
 
         let (drive, relative) =
             locate(&drives, Path::new("/media/alex/Backup/Stellarshot/laptop")).unwrap();
@@ -261,8 +288,60 @@ mod tests {
 
     #[test]
     fn escapes_are_decoded() {
-        assert_eq!(unescape("Photo\\040Disk"), "Photo Disk");
-        assert_eq!(unescape("My\\x20Drive"), "My Drive");
-        assert_eq!(unescape("plain"), "plain");
+        assert_eq!(unescape(b"Photo\\040Disk"), "Photo Disk");
+        assert_eq!(unescape(b"My\\x20Drive"), "My Drive");
+        assert_eq!(unescape(b"plain"), "plain");
+    }
+
+    #[test]
+    fn an_unlocked_encrypted_drive_is_found_through_its_mapper_link() {
+        let (by_uuid, by_label) = links();
+        // The by-uuid link of a LUKS volume resolves to `/dev/dm-0`, but
+        // mountinfo names it by its `/dev/mapper` link.
+        let by_uuid = [
+            by_uuid,
+            vec![("3333-CCCC".to_owned(), PathBuf::from("/dev/dm-0"))],
+        ]
+        .concat();
+        let mountinfo = b"94 22 254:0 / /run/media/alex/Vault rw - ext4 /dev/mapper/luks-abc rw\n";
+        let resolve = |source: &Path| {
+            if source == Path::new("/dev/mapper/luks-abc") {
+                PathBuf::from("/dev/dm-0")
+            } else {
+                source.to_path_buf()
+            }
+        };
+
+        let drives = drives_from(&by_uuid, &by_label, mountinfo, &resolve);
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].uuid, "3333-CCCC");
+    }
+
+    #[test]
+    fn a_non_utf8_mount_point_elsewhere_does_not_hide_every_drive() {
+        let (by_uuid, by_label) = links();
+        let mut mountinfo = b"95 22 8:49 / /mnt/caf\xe9 rw - ext4 /dev/sdd1 rw\n".to_vec();
+        mountinfo.extend_from_slice(MOUNTINFO);
+
+        let drives = drives_from(&by_uuid, &by_label, &mountinfo, &same);
+
+        assert!(
+            drives.iter().any(|d| d.uuid == "1111-AAAA"),
+            "the plugged-in drive is still there: {drives:?}"
+        );
+    }
+
+    #[test]
+    fn a_drive_mounted_at_a_non_utf8_path_keeps_its_exact_bytes() {
+        let (by_uuid, by_label) = links();
+        let mountinfo = b"96 22 8:17 / /media/alex/caf\xe9 rw - ext4 /dev/sdb1 rw\n";
+
+        let drives = drives_from(&by_uuid, &by_label, mountinfo, &same);
+
+        assert_eq!(
+            drives[0].mount_point.as_os_str().as_bytes(),
+            b"/media/alex/caf\xe9"
+        );
     }
 }

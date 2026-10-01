@@ -20,8 +20,10 @@ use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
-use super::restore::reject_unsafe_relative_path;
+use super::restore::{reject_unsafe_name, reject_unsafe_relative_path};
 use super::snapshots::SnapshotSummary;
+use crate::debug::ENGINE;
+use crate::error_log;
 
 /// What kind of thing an entry is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,9 +114,11 @@ pub struct GlobalMatch {
 
 /// An open repository for looking around in.
 pub struct Browser {
-    repo: Mutex<Repository<IndexedFullStatus>>,
     /// Newest first.
     snapshots: Vec<(SnapshotFile, SnapshotSummary)>,
+    repo: Mutex<Repository<IndexedFullStatus>>,
+    /// The rclone process `repo` talks to; after it, so dropped after it.
+    _serve: Option<super::serve::Serve>,
 }
 
 impl std::fmt::Debug for Browser {
@@ -151,7 +155,7 @@ fn entry(path: PathBuf, node: &rustic_core::repofile::Node) -> TreeEntry {
 /// the snapshot's tree data — see [`reject_unsafe_relative_path`]) would
 /// land outside `dir` once joined onto it.
 fn checked_entry(dir: &Path, node: &rustic_core::repofile::Node) -> Result<TreeEntry, EngineError> {
-    reject_unsafe_relative_path(Path::new(&*node.name()))?;
+    reject_unsafe_name(&node.name())?;
     Ok(entry(dir.join(node.name()), node))
 }
 
@@ -171,7 +175,7 @@ fn mount_entry(node: &rustic_core::repofile::Node) -> MountEntry {
 /// [`mount_entry`], rejecting `node` first the same way [`checked_entry`]
 /// does.
 fn checked_mount_entry(node: &rustic_core::repofile::Node) -> Result<MountEntry, EngineError> {
-    reject_unsafe_relative_path(Path::new(&*node.name()))?;
+    reject_unsafe_name(&node.name())?;
     Ok(mount_entry(node))
 }
 
@@ -194,8 +198,18 @@ pub(super) fn node_at(
     node.subtree = Some(snapshot.tree);
     let missing = || not_found(&path.display().to_string());
     for component in path.components() {
-        let Component::Normal(name) = component else {
-            continue;
+        let name = match component {
+            Component::RootDir => continue,
+            Component::Normal(name) => name,
+            // `..` or `.`: skipping it would resolve a different node from
+            // the literal path a caller may go on to use as a restore
+            // destination.
+            _ => {
+                return Err(EngineError::new(
+                    ErrorKind::UnsafePath,
+                    path.display().to_string(),
+                ));
+            }
         };
         let subtree = node.subtree.ok_or_else(missing)?;
         let tree = repo.get_tree(&subtree)?;
@@ -276,6 +290,22 @@ impl Read for BlobReader<'_> {
             .read_at(self.repo, self.position, want)
             .map_err(|err| std::io::Error::other(err.to_string()))?;
         let read = data.len();
+        if read == 0 {
+            // The file shrank between being scanned and actually read
+            // during the backup that produced this snapshot, so its
+            // stored content has fewer bytes than `node.meta.size` says,
+            // and `read_at` has nothing further to give. Filling the rest
+            // with zeros, rather than returning `Ok(0)` here, is the same
+            // thing restore already does with `set_len(meta.size)` on a
+            // short file: `tar::Builder::append_data` pads an entry by the
+            // bytes it actually copied, not by the header's declared size
+            // (see `builder.rs`'s own `append`/`pad_zeroes`), so stopping
+            // early here would misalign every entry written after this one
+            // in the archive rather than merely truncating this one file.
+            buf[..want].fill(0);
+            self.position += want;
+            return Ok(want);
+        }
         buf[..read].copy_from_slice(&data);
         self.position += read;
         Ok(read)
@@ -297,8 +327,9 @@ impl Repo {
         snapshots.sort_by(|a, b| b.1.time.cmp(&a.1.time).then_with(|| a.1.id.cmp(&b.1.id)));
         let repo = self.inner.to_indexed()?;
         Ok(Browser {
-            repo: Mutex::new(repo),
             snapshots,
+            repo: Mutex::new(repo),
+            _serve: self.serve,
         })
     }
 }
@@ -489,6 +520,21 @@ impl Browser {
                         size: node.meta.size as usize,
                     };
                     tar.append_data(&mut header, &relative, &mut reader)?;
+                    if reader.position != reader.size {
+                        // Zero-padded by `BlobReader::read` above rather
+                        // than left to corrupt the archive, but this file's
+                        // stored content genuinely did not match its
+                        // recorded size at backup time, which is worth a
+                        // trail even though the archive itself is sound.
+                        error_log!(
+                            ENGINE,
+                            "{}: only {} of {} recorded bytes were available; the rest \
+                             was archived as zeros",
+                            relative.display(),
+                            reader.position,
+                            reader.size
+                        );
+                    }
                 }
             }
             tar.into_inner()?.finish()?;
@@ -556,6 +602,7 @@ impl Browser {
                 // `find_matching_nodes` returns paths relative to the tree
                 // root, without the leading `/` every other path in this
                 // module carries; same fix-up as `search` above.
+                reject_unsafe_relative_path(&result.paths[path_index])?;
                 let path = Path::new("/").join(&result.paths[path_index]);
                 let (_, snapshot_indices) = by_path.entry(path).or_insert((node_index, Vec::new()));
                 snapshot_indices.push(snapshot_index);
@@ -583,12 +630,27 @@ impl Browser {
     /// `path` in every snapshot that has it, newest first.
     pub fn versions(&self, path: &Path) -> Result<Vec<FileVersion>, EngineError> {
         let repo = self.repo()?;
+        self.versions_with(|file| node_at(&repo, file, path))
+    }
+
+    /// [`versions`](Self::versions) with the lookup injected, so a test can
+    /// make it fail the way a damaged repository does.
+    pub(super) fn versions_with(
+        &self,
+        mut find: impl FnMut(&SnapshotFile) -> Result<Node, EngineError>,
+    ) -> Result<Vec<FileVersion>, EngineError> {
         let mut versions: Vec<FileVersion> = Vec::new();
         let mut newer_content = None;
         for (file, summary) in &self.snapshots {
-            let Ok(node) = node_at(&repo, file, path) else {
-                newer_content = None;
-                continue;
+            // Only "this snapshot does not have it" is a gap in the history;
+            // an unreadable repository is an error, not a shorter list.
+            let node = match find(file) {
+                Ok(node) => node,
+                Err(err) if err.kind == ErrorKind::NotFound => {
+                    newer_content = None;
+                    continue;
+                }
+                Err(err) => return Err(err),
             };
             let content = (node.content.clone(), node.meta.size);
             let same_as_newer = newer_content.as_ref() == Some(&content);
@@ -626,27 +688,50 @@ impl Browser {
         since: i64,
         limit: usize,
     ) -> Result<Vec<MissingEntry>, EngineError> {
-        let repo = self.repo()?;
+        self.missing_where(scope, since, limit, |path| path.symlink_metadata().is_err())
+    }
+
+    /// [`missing`](Self::missing) with the "is it gone" check injected.
+    ///
+    /// Each snapshot's candidate files are read while the repository lock is
+    /// held, but the check runs with it released: it touches the live
+    /// filesystem, and a stalled network mount there would otherwise freeze
+    /// every other use of this browser, including the mounted view.
+    pub(super) fn missing_where(
+        &self,
+        scope: &Path,
+        since: i64,
+        limit: usize,
+        mut is_gone: impl FnMut(&Path) -> bool,
+    ) -> Result<Vec<MissingEntry>, EngineError> {
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut missing = Vec::new();
         for (file, summary) in self.snapshots.iter().filter(|(_, s)| s.time >= since) {
-            let Ok(node) = node_at(&repo, file, scope) else {
-                continue;
-            };
-            if !node.is_dir() {
-                continue;
-            }
-            for item in repo.ls(&node, &LsOptions::default())? {
-                let (relative, node) = item?;
-                reject_unsafe_relative_path(&relative)?;
-                let path = scope.join(relative);
-                if !node.is_file() || !seen.insert(path.clone()) {
+            let mut candidates = Vec::new();
+            {
+                let repo = self.repo()?;
+                let node = match node_at(&repo, file, scope) {
+                    Ok(node) => node,
+                    Err(err) if err.kind == ErrorKind::NotFound => continue,
+                    Err(err) => return Err(err),
+                };
+                if !node.is_dir() {
                     continue;
                 }
-                if path.symlink_metadata().is_err() {
+                for item in repo.ls(&node, &LsOptions::default())? {
+                    let (relative, node) = item?;
+                    reject_unsafe_relative_path(&relative)?;
+                    let path = scope.join(relative);
+                    if node.is_file() && seen.insert(path.clone()) {
+                        candidates.push((path, node.meta.size));
+                    }
+                }
+            }
+            for (path, size) in candidates {
+                if is_gone(&path) {
                     missing.push(MissingEntry {
                         path,
-                        size: node.meta.size,
+                        size,
                         last_seen: summary.clone(),
                     });
                     if missing.len() >= limit {
@@ -656,6 +741,12 @@ impl Browser {
             }
         }
         Ok(missing)
+    }
+
+    /// Whether the repository lock is free right now (tests only).
+    #[cfg(test)]
+    pub(super) fn is_unlocked(&self) -> bool {
+        self.repo.try_lock().is_ok()
     }
 }
 
@@ -689,7 +780,7 @@ fn diff_trees(
     let names: std::collections::BTreeSet<&std::ffi::OsString> =
         old.keys().chain(new.keys()).collect();
     for name in names {
-        reject_unsafe_relative_path(Path::new(name))?;
+        reject_unsafe_name(name)?;
         let path = prefix.join(name);
         match (old.get(name), new.get(name)) {
             (Some(before), None) => out.push(DiffEntry {
@@ -742,6 +833,170 @@ fn diff_trees(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file whose stored content is shorter than the size recorded in
+    /// its snapshot node (it shrank between being scanned and actually
+    /// read during the backup that produced the snapshot) must not corrupt
+    /// every archive entry written after it. `BlobReader::read` handles
+    /// this by filling the shortfall with zeros rather than ending the
+    /// stream early; this proves the technique against the real `tar`
+    /// crate, which is what actually determines whether it works —
+    /// `tar::Builder`'s own `append` pads an entry by the bytes its reader
+    /// returned, not by the header's declared size (see `builder.rs`'s
+    /// `append`/`pad_zeroes`), so a reader that stops early there
+    /// misaligns every entry that follows.
+    #[test]
+    fn a_reader_shorter_than_its_header_size_is_padded_not_left_to_corrupt_the_archive() {
+        /// Mirrors the relevant part of `BlobReader::read`'s fixed
+        /// behavior: yields `content`, then zeros up to `declared_size`.
+        struct ShortThenZeros<'a> {
+            content: &'a [u8],
+            position: usize,
+            declared_size: usize,
+        }
+        impl std::io::Read for ShortThenZeros<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.position >= self.declared_size {
+                    return Ok(0);
+                }
+                let want = buf.len().min(self.declared_size - self.position);
+                if self.position < self.content.len() {
+                    let from_content = want.min(self.content.len() - self.position);
+                    buf[..from_content].copy_from_slice(
+                        &self.content[self.position..self.position + from_content],
+                    );
+                    buf[from_content..want].fill(0);
+                } else {
+                    buf[..want].fill(0);
+                }
+                self.position += want;
+                Ok(want)
+            }
+        }
+
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1000); // the node's recorded size
+            header.set_mode(0o644);
+            header.set_cksum();
+            let mut reader = ShortThenZeros {
+                content: b"only ten!!",
+                position: 0,
+                declared_size: 1000,
+            };
+            builder
+                .append_data(&mut header, "shrunk.bin", &mut reader)
+                .unwrap();
+
+            let mut header = tar::Header::new_gnu();
+            let second_content = b"the second file must survive intact";
+            header.set_size(second_content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "second.txt", &second_content[..])
+                .unwrap();
+
+            builder.finish().unwrap();
+        }
+
+        // Each entry's content has to be read (or otherwise disposed of)
+        // during iteration, before asking for the next one: `tar`'s own
+        // entry iterator uses the read position, not the header's
+        // recorded size, to know where the next header starts, so a
+        // stored `Entry` handle read only after later entries have
+        // already been iterated past no longer reflects its own data —
+        // that would retest a variant of the very bug this proves fixed,
+        // not the archive's actual well-formedness.
+        let mut archive = tar::Archive::new(&tar_bytes[..]);
+        let mut entries = archive.entries().unwrap();
+
+        let first = entries
+            .next()
+            .expect("two entries were written")
+            .expect("the first entry must parse");
+        assert_eq!(first.path().unwrap().to_str().unwrap(), "shrunk.bin");
+        assert_eq!(first.header().size().unwrap(), 1000);
+        drop(first);
+
+        let mut second = entries
+            .next()
+            .expect("two entries were written")
+            .expect("the second entry must parse; a misaligned header corrupts the rest");
+        assert_eq!(second.path().unwrap().to_str().unwrap(), "second.txt");
+        let mut content = Vec::new();
+        second
+            .read_to_end(&mut content)
+            .expect("the second entry's content must not be corrupted by the first");
+        assert_eq!(content, b"the second file must survive intact");
+        drop(second);
+
+        assert!(entries.next().is_none(), "exactly two entries were written");
+    }
+
+    /// The control for the test above: a reader that ends at its real
+    /// content instead of padding out to the header's declared size —
+    /// `BlobReader::read`'s behavior before this fix — must actually
+    /// corrupt the archive, not merely truncate the one file. If this ever
+    /// stopped failing, the test above would no longer be proving
+    /// anything.
+    #[test]
+    fn without_the_padding_a_short_reader_corrupts_every_later_entry() {
+        struct ShortEof<'a> {
+            content: &'a [u8],
+            position: usize,
+        }
+        impl std::io::Read for ShortEof<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                if self.position >= self.content.len() {
+                    return Ok(0);
+                }
+                let n = buf.len().min(self.content.len() - self.position);
+                buf[..n].copy_from_slice(&self.content[self.position..self.position + n]);
+                self.position += n;
+                Ok(n)
+            }
+        }
+
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1000);
+            header.set_mode(0o644);
+            header.set_cksum();
+            let mut reader = ShortEof {
+                content: b"only ten!!",
+                position: 0,
+            };
+            builder
+                .append_data(&mut header, "shrunk.bin", &mut reader)
+                .unwrap();
+
+            let mut header = tar::Header::new_gnu();
+            let second_content = b"the second file must survive intact";
+            header.set_size(second_content.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "second.txt", &second_content[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+
+        let mut archive = tar::Archive::new(&tar_bytes[..]);
+        let result = archive
+            .entries()
+            .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>());
+        assert!(
+            result.is_err(),
+            "an unpadded short entry must corrupt the archive past it, proving the \
+             padding above is load-bearing and not merely tidy"
+        );
+    }
 
     #[test]
     fn a_unique_prefix_finds_its_snapshot() {

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! A real round trip against `rustic-server`, the REST server destination
 //! added in 0.4: `Location::Rest` reached directly, without rclone.

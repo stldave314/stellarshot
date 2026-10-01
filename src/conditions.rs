@@ -9,17 +9,20 @@
 //! are kept apart, so the decision itself ([`met`]) is tested without a
 //! real system bus.
 
+use crate::constants::CONDITIONS_TIMEOUT;
 use crate::debug::SCHED;
-use crate::debug_log;
 use crate::profile::Conditions;
+use crate::{debug_log, error_log};
 
 /// The state actually on the machine right now, as far as these conditions
 /// care. `None` (or, for the network, a `connected_wifi` of `None`) means a
-/// piece could not be read: the relevant service is not running, or the
-/// machine plainly has nothing to read it from (no battery, no
-/// NetworkManager). The condition that needed it is then treated as met
-/// rather than blocking a schedule indefinitely on a machine that can never
-/// satisfy a check it has no way to answer.
+/// piece could not be read: the relevant service is not running, did not
+/// answer in time, or the machine plainly has nothing to read it from (no
+/// battery, no NetworkManager). Power and metered-connection conditions are
+/// then treated as met rather than blocking a schedule indefinitely on a
+/// machine that can never satisfy a check it has no way to answer. The
+/// trusted-network condition is the exception: it is a privacy control, so
+/// not being able to tell which network this is counts as not trusted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SystemState {
     pub on_battery: Option<bool>,
@@ -50,26 +53,36 @@ pub fn met(conditions: &Conditions, state: &SystemState) -> Result<(), String> {
     if conditions.block_metered && state.metered == Some(true) {
         return Err("on a connection marked metered".to_owned());
     }
-    if conditions.require_trusted_network
-        && !state.vpn_up
-        && let Some(connected) = &state.connected_wifi
-        && !connected
+    if conditions.require_trusted_network && !state.vpn_up {
+        let Some(connected) = &state.connected_wifi else {
+            return Err("cannot tell which network this is".to_owned());
+        };
+        if !connected
             .iter()
             .any(|network| conditions.trusted_networks.contains(network))
-    {
-        return Err("not on a trusted network or a VPN".to_owned());
+        {
+            return Err("not on a trusted network or a VPN".to_owned());
+        }
     }
     Ok(())
 }
 
 /// Read the machine's actual state and check it against `conditions`. Never
-/// fails outright: a service that cannot be reached just leaves its part of
-/// [`SystemState`] unknown.
+/// fails outright: a service that cannot be reached, or does not answer within
+/// [`CONDITIONS_TIMEOUT`], just leaves its part of [`SystemState`] unknown.
 pub async fn check(conditions: &Conditions) -> Result<(), String> {
     if conditions.is_empty() {
         return Ok(());
     }
-    let state = read_state().await;
+    let state = tokio::time::timeout(CONDITIONS_TIMEOUT, read_state())
+        .await
+        .unwrap_or_else(|_| {
+            error_log!(
+                SCHED,
+                "the system did not answer within {CONDITIONS_TIMEOUT:?}"
+            );
+            SystemState::default()
+        });
     debug_log!(SCHED, "conditions checked against {state:?}");
     met(conditions, &state)
 }
@@ -124,15 +137,36 @@ trait ActiveConnection {
     fn id(&self) -> zbus::Result<String>;
     #[zbus(property)]
     fn vpn(&self) -> zbus::Result<bool>;
+    /// The network devices this connection is active on.
+    #[zbus(property)]
+    fn devices(&self) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>>;
 }
 
-/// NetworkManager's own connection types for a VPN interface: a connection
-/// profile it flags `Vpn` itself, one of its VPN plugin types, or a plain
-/// TUN/TAP device, which is what Tailscale (and a manually configured
-/// WireGuard interface) comes up as — confirmed against a real Tailscale
-/// connection, which NetworkManager does *not* set `Vpn: true` for.
-fn is_vpn_type(connection_type: &str) -> bool {
-    matches!(connection_type, "vpn" | "wireguard" | "tun" | "tap")
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.Device",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+trait NetworkDevice {
+    /// The interface's name, e.g. `wlan0` or `tailscale0`.
+    #[zbus(property)]
+    fn interface(&self) -> zbus::Result<String>;
+}
+
+/// Whether an active connection is a VPN: a connection NetworkManager flags
+/// `Vpn` itself (its plugins: OpenVPN, and so on) or types `vpn` or
+/// `wireguard`, or a plain `tun`/`tap` device on an interface known to be
+/// one. Tailscale comes up as the latter — confirmed against a real
+/// connection, which NetworkManager does *not* set `Vpn: true` for — but
+/// any tun or tap device would otherwise count, and a libvirt or QEMU one
+/// would make every network "trusted".
+fn is_vpn(connection_type: &str, interfaces: &[String]) -> bool {
+    match connection_type {
+        "vpn" | "wireguard" => true,
+        "tun" | "tap" => interfaces
+            .iter()
+            .any(|name| name.starts_with("tailscale") || name.starts_with("wg")),
+        _ => false,
+    }
 }
 
 async fn upower_state() -> (Option<bool>, Option<u8>) {
@@ -164,14 +198,28 @@ async fn network_state() -> (Option<bool>, Option<Vec<String>>, bool) {
         2 | 4 => Some(false),
         _ => None,
     });
+    // An error here is "cannot tell", not "no connections": see [`met`].
+    let Ok(active_connections) = nm.active_connections().await else {
+        return (metered, None, false);
+    };
     let mut wifi = Vec::new();
     let mut vpn_up = false;
-    for path in nm.active_connections().await.unwrap_or_default() {
+    for path in active_connections {
         let Ok(active) = ActiveConnectionProxy::new(&connection, path).await else {
             continue;
         };
         let connection_type = active.connection_type().await.unwrap_or_default();
-        if active.vpn().await == Ok(true) || is_vpn_type(&connection_type) {
+        let mut interfaces = Vec::new();
+        if matches!(connection_type.as_str(), "tun" | "tap") {
+            for device in active.devices().await.unwrap_or_default() {
+                if let Ok(device) = NetworkDeviceProxy::new(&connection, device).await
+                    && let Ok(name) = device.interface().await
+                {
+                    interfaces.push(name);
+                }
+            }
+        }
+        if active.vpn().await == Ok(true) || is_vpn(&connection_type, &interfaces) {
             vpn_up = true;
         }
         if connection_type == "802-11-wireless"
@@ -316,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_network_does_not_block_a_trusted_network_condition() {
+    fn an_unreadable_network_fails_a_trusted_network_condition_closed() {
         let conditions = Conditions {
             require_trusted_network: true,
             trusted_networks: vec!["Home".to_owned()],
@@ -326,10 +374,16 @@ mod tests {
             connected_wifi: None,
             ..state()
         };
-        assert!(
-            met(&conditions, &unknown).is_ok(),
-            "a machine with no way to tell must not block forever"
+        assert_eq!(
+            met(&conditions, &unknown),
+            Err("cannot tell which network this is".to_owned()),
+            "a privacy control must not wave a backup through on no evidence"
         );
+        let unknown_but_on_a_vpn = SystemState {
+            vpn_up: true,
+            ..unknown
+        };
+        assert!(met(&conditions, &unknown_but_on_a_vpn).is_ok());
     }
 
     /// Reads whatever UPower and NetworkManager actually expose here. Not a
@@ -350,10 +404,19 @@ mod tests {
     fn vpn_types_match_what_a_real_tailscale_connection_reports() {
         // NetworkManager does not set its own `Vpn` flag for a Tailscale
         // interface; it comes up as a plain `tun` connection instead.
-        assert!(is_vpn_type("tun"));
-        assert!(is_vpn_type("wireguard"));
-        assert!(is_vpn_type("vpn"));
-        assert!(!is_vpn_type("802-11-wireless"));
-        assert!(!is_vpn_type("bridge"));
+        let tailscale = ["tailscale0".to_owned()];
+        assert!(is_vpn("tun", &tailscale));
+        assert!(is_vpn("tun", &["wg0".to_owned()]));
+        assert!(is_vpn("wireguard", &[]));
+        assert!(is_vpn("vpn", &[]));
+        assert!(!is_vpn("802-11-wireless", &[]));
+        assert!(!is_vpn("bridge", &[]));
+    }
+
+    #[test]
+    fn a_virtual_machines_tap_device_is_not_a_vpn() {
+        assert!(!is_vpn("tap", &["vnet0".to_owned()]));
+        assert!(!is_vpn("tun", &["tun-qemu".to_owned()]));
+        assert!(!is_vpn("tap", &[]));
     }
 }

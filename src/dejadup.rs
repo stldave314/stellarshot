@@ -128,49 +128,94 @@ fn normalize_section(name: &str) -> Option<String> {
     (!name.contains('/') || name.ends_with('/')).then(|| name.trim_matches('/').to_owned())
 }
 
-/// A GVariant string: `'text'`, with `\'` and `\\` escapes.
-fn string(value: &str) -> Option<String> {
-    let inner = value.trim().strip_prefix('\'')?.strip_suffix('\'')?;
-    let mut out = String::new();
-    let mut chars = inner.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(next) = chars.next() {
-                out.push(next);
-            }
-        } else {
-            out.push(c);
-        }
+/// One GVariant string literal at the start of `text`, and what follows it.
+///
+/// `g_variant_print` wraps a string in single quotes, or in double quotes
+/// when it contains a `'` (`"Bob's Music"`), and escapes backslashes, the
+/// quote in use, `\a \b \f \n \r \t \v`, and other unprintable characters as
+/// `\uXXXX` or `\UXXXXXXXX`. Any other escaped character stands for itself.
+fn literal(text: &str) -> Option<(String, &str)> {
+    let mut chars = text.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
     }
-    Some(out)
+    let mut out = String::new();
+    while let Some((at, c)) = chars.next() {
+        if c == quote {
+            return Some((out, &text[at + c.len_utf8()..]));
+        }
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let (_, escaped) = chars.next()?;
+        let digits = match escaped {
+            'a' => {
+                out.push('\x07');
+                continue;
+            }
+            'b' => {
+                out.push('\x08');
+                continue;
+            }
+            'f' => {
+                out.push('\x0c');
+                continue;
+            }
+            'n' => {
+                out.push('\n');
+                continue;
+            }
+            'r' => {
+                out.push('\r');
+                continue;
+            }
+            't' => {
+                out.push('\t');
+                continue;
+            }
+            'v' => {
+                out.push('\x0b');
+                continue;
+            }
+            'u' => 4,
+            'U' => 8,
+            other => {
+                out.push(other);
+                continue;
+            }
+        };
+        let mut code = 0u32;
+        for _ in 0..digits {
+            code = code * 16 + chars.next()?.1.to_digit(16)?;
+        }
+        out.push(char::from_u32(code)?);
+    }
+    // Never closed.
+    None
 }
 
-/// A GVariant string array: `['a', 'b']`, or `@as []` for an empty one.
+/// A GVariant string: `'text'` or `"text"`, see [`literal`].
+fn string(value: &str) -> Option<String> {
+    let (text, rest) = literal(value.trim())?;
+    rest.trim().is_empty().then_some(text)
+}
+
+/// A GVariant string array: `['a', "b's"]`, or `@as []` for an empty one.
 fn string_array(value: &str) -> Option<Vec<String>> {
     let value = value.trim().trim_start_matches("@as").trim();
-    let inner = value.strip_prefix('[')?.strip_suffix(']')?;
+    let mut rest = value.strip_prefix('[')?.strip_suffix(']')?;
     let mut items = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut escaped = false;
-    for c in inner.chars() {
-        match (c, quoted, escaped) {
-            (_, true, true) => {
-                current.push(c);
-                escaped = false;
-            }
-            ('\\', true, false) => escaped = true,
-            ('\'', _, false) => {
-                if quoted {
-                    items.push(std::mem::take(&mut current));
-                }
-                quoted = !quoted;
-            }
-            (_, true, false) => current.push(c),
-            _ => {}
+    loop {
+        rest = rest.trim_start_matches(|c: char| c == ',' || c.is_whitespace());
+        if rest.is_empty() {
+            return Some(items);
         }
+        let (item, after) = literal(rest)?;
+        items.push(item);
+        rest = after;
     }
-    Some(items)
 }
 
 fn get<'a>(settings: &'a Settings, section: &str, key: &str) -> Option<&'a str> {
@@ -203,6 +248,7 @@ fn text(settings: &Settings, section: &str, key: &str, default: &str) -> String 
 }
 
 /// The XDG user directories Déjà Dup's `$TOKENS` stand for.
+#[derive(Debug)]
 pub struct UserDirs {
     home: PathBuf,
     dirs: HashMap<String, PathBuf>,
@@ -558,5 +604,35 @@ name='Backup SSD'
             string_array(r"['a b', 'c\'d']"),
             Some(vec!["a b".into(), "c'd".into()])
         );
+    }
+
+    /// What `g_variant_print` really emits, from
+    /// `GLib.Variant('as', ["Bob's", 'x']).print_(False)`.
+    #[test]
+    fn a_string_with_an_apostrophe_is_double_quoted_by_glib() {
+        assert_eq!(string(r#""Bob's Music""#), Some("Bob's Music".into()));
+        assert_eq!(
+            string_array(r#"["Bob's", 'x']"#),
+            Some(vec!["Bob's".into(), "x".into()]),
+            "an excluded folder with an apostrophe must not be skipped"
+        );
+    }
+
+    #[test]
+    fn glibs_escapes_are_decoded() {
+        assert_eq!(string(r"'a\nb\tc\\d'"), Some("a\nb\tc\\d".into()));
+        assert_eq!(string(r"'caf\u00e9'"), Some("café".into()));
+        assert_eq!(string(r"'\U0001f600'"), Some("\u{1f600}".into()));
+        assert_eq!(string(r#""say \"hi\"""#), Some("say \"hi\"".into()));
+    }
+
+    #[test]
+    fn a_malformed_string_is_none_not_a_panic() {
+        assert_eq!(string("'never closed"), None);
+        assert_eq!(string("bare"), None);
+        assert_eq!(string(r"'bad \u12'"), None);
+        assert_eq!(string("'a' trailing"), None);
+        assert_eq!(string_array("@as []"), Some(Vec::new()));
+        assert_eq!(string_array("['a', 'b"), None);
     }
 }

@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! Repositories reached through rclone, exercised with rclone's own `:local:`
 //! backend: the same code path as SFTP and cloud storage (rustic starting
@@ -242,8 +248,12 @@ fn canceling_a_backup_through_rclone_ends_it_and_stops_rclone() {
             .expect("the backup must end promptly once canceled")
     });
 
+    // Canceled either way: the child reports it itself after SIGTERM, or is
+    // seen to have been killed if it had to be.
     match last {
-        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, engine::ErrorKind::Canceled),
+        Some(ChildEvent::Ended(error) | ChildEvent::Event(Event::Error { error })) => {
+            assert_eq!(error.kind, engine::ErrorKind::Canceled);
+        }
         other => panic!("expected the backup to end canceled, got {other:?}"),
     }
     // rclone is stopped with the backup, not left serving the repository.
@@ -253,4 +263,42 @@ fn canceling_a_backup_through_rclone_ends_it_and_stops_rclone() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     assert!(!running_with(&repo), "rclone is still running for {repo}");
+}
+
+/// Children of this process that have exited but were never waited for.
+fn zombie_children() -> Vec<String> {
+    let me = std::process::id().to_string();
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter_map(|entry| {
+            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
+            // `pid (comm) state ppid ...`: the name can hold spaces and
+            // parentheses, so split after the last `)`.
+            let rest = stat.rsplit_once(')')?.1;
+            let mut fields = rest.split_whitespace();
+            let (state, ppid) = (fields.next()?, fields.next()?);
+            (state == "Z" && ppid == me).then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect()
+}
+
+#[test]
+fn opening_an_rclone_repository_leaves_no_zombie_behind() {
+    require_rclone();
+    let scratch = TempDir::new().unwrap();
+    let location = through_rclone(scratch.path(), &scratch.path().join("repo"));
+    let secret = Secret::new(PASSWORD);
+    engine::init(&location, &secret).unwrap();
+
+    for _ in 0..5 {
+        drop(engine::open(&location, &secret).unwrap());
+    }
+
+    let zombies = zombie_children();
+    assert!(
+        zombies.is_empty(),
+        "{} rclone process(es) were killed but never reaped: {zombies:?}",
+        zombies.len()
+    );
 }

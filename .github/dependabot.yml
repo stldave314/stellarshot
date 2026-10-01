@@ -12,3 +12,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # Cargo dependencies: the workflows only watch Actions, so a fix for an
+  # advisory in a direct dependency (rustic_core, oo7) was
+  # never proposed. The pop-os git dependencies are excluded: they are
+  # pinned to a revision together and need a deliberate upgrade.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: libcosmic
+      - dependency-name: atomicwrites

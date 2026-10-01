@@ -69,9 +69,15 @@ pub struct ProgressEvent {
 /// Receives progress reports. Called from rustic's worker threads.
 pub trait ProgressSink: Send + Sync {
     fn update(&self, event: &ProgressEvent);
+
+    /// The run was told to stop (SIGTERM) and is about to exit without an
+    /// outcome of its own: see `crate::proc_signal`. Nothing by default;
+    /// the `--run` child's own sink reports it to the window.
+    fn canceled(&self) {}
 }
 
 /// A sink that discards everything.
+#[derive(Debug)]
 pub struct NoProgress;
 
 impl ProgressSink for NoProgress {
@@ -122,7 +128,7 @@ impl SinkSlot {
         }
     }
 
-    fn send(&self, event: &ProgressEvent) {
+    pub(crate) fn send(&self, event: &ProgressEvent) {
         let mut event = event.clone();
         if self.0.counts_uploads.load(Ordering::Relaxed) {
             event.uploaded = Some(self.0.uploaded.load(Ordering::Relaxed));

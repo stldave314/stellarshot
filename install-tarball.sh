@@ -10,6 +10,7 @@
 #   ./install-tarball.sh              install system-wide (requires root)
 #   PREFIX=/usr/local ./install-tarball.sh   install under a different prefix
 #   DESTDIR=/tmp/stage ./install-tarball.sh  stage into a root, for packaging
+#   ./install-tarball.sh uninstall    remove a system-wide install
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -34,13 +35,54 @@ as_root() {
 
 target="$DESTDIR$PREFIX"
 
+# Installs each file in usr/ individually with `install`, never `cp -a`:
+# `cp -a` preserves the *extracting user's* ownership (whoever ran `tar xf`,
+# following the README's own instructions, which is never root), and when a
+# destination directory already exists, GNU `cp -a` re-applies that owner and
+# mode to the directory too. Run under root that silently re-owns /usr,
+# /usr/bin and every other already-existing directory to the extracting
+# user — a local privilege escalation, not merely a cosmetic bug. `install`
+# only ever creates or overwrites the one file it is told to, at the mode
+# given, and never touches an existing parent directory's ownership or mode.
+install_tree() {
+    local runner=("$@")
+    local f mode
+    while IFS= read -r -d '' f; do
+        f="${f#./}"
+        mode=644
+        [[ "$f" == bin/* ]] && mode=755
+        "${runner[@]}" install -Dm"$mode" "usr/$f" "$target/$f"
+    done < <(cd usr && find . -type f -print0)
+}
+
+cmd_uninstall() {
+    echo "Removing installed files from $target"
+    local f
+    while IFS= read -r -d '' f; do
+        f="${f#./}"
+        as_root rm -f "$target/$f"
+    done < <(cd usr && find . -type f -print0)
+    echo "Removed."
+    echo
+    echo "Any per-user systemd unit (a scheduled backup) is left" >&2
+    echo "running and installed, since it belongs to your user account, not this" >&2
+    echo "prefix. Stopping and disabling a unit does not delete its file, so both" >&2
+    echo "steps are needed to remove them yourself:" >&2
+    echo "  systemctl --user disable --now 'stellarshot*'" >&2
+    echo "  rm -f ~/.config/systemd/user/stellarshot*.service ~/.config/systemd/user/stellarshot*.timer" >&2
+}
+
+if [[ "${1:-}" == "uninstall" ]]; then
+    cmd_uninstall
+    exit 0
+fi
+
 if [[ -n "$DESTDIR" ]]; then
     mkdir -p "$target"
-    cp -a usr/. "$target/"
+    install_tree
 else
     echo "Installing into $PREFIX (requires root)"
-    as_root mkdir -p "$target"
-    as_root cp -a usr/. "$target/"
+    install_tree as_root
     as_root update-desktop-database "$target/share/applications" 2>/dev/null || true
     as_root gtk-update-icon-cache -f "$target/share/icons/hicolor" 2>/dev/null || true
 fi

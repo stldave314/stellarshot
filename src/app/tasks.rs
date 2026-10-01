@@ -89,14 +89,6 @@ pub async fn open(
     blocking(move || engine::open(&location, &secret)?.snapshots()).await
 }
 
-pub async fn snapshots(
-    profile: Profile,
-    secret: Secret,
-) -> Result<Vec<engine::SnapshotSummary>, EngineError> {
-    let location = profile.location()?;
-    blocking(move || engine::open(&location, &secret)?.snapshots()).await
-}
-
 /// Read every index file and list the destination: worth asking for, not
 /// fetching on its own.
 pub async fn statistics(
@@ -164,26 +156,47 @@ pub async fn choose_import_path(title: String) -> Option<PathBuf> {
 ///
 /// Used only for a settings export today, which can carry a hook's command
 /// line (and so, indirectly, whatever credentials that command needs, such
-/// as `mysqldump -pX`), so the file is tightened to owner-only right after
-/// the write, whatever mode a shared umask would otherwise have left it at.
+/// as `mysqldump -pX`), so the file is owner-only from the moment it
+/// exists, whatever mode a shared umask would otherwise have given it.
+/// The mode goes on the temporary file at creation (`write_with_options`,
+/// as for any file holding a secret), not as a
+/// `set_permissions` after the rename: that would leave a window, between
+/// the temporary file being written and the mode being fixed up, in which
+/// another user could read those commands — and a failed fix-up would
+/// leave the file at the umask's mode for good.
 pub async fn write_file(path: PathBuf, text: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true).mode(0o600);
         atomicwrites::AtomicFile::new(&path, atomicwrites::AllowOverwrite)
-            .write(|file| file.write_all(text.as_bytes()))
-            .map_err(|err| std::io::Error::from(err).to_string())?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|err| err.to_string())
+            .write_with_options(|file| file.write_all(text.as_bytes()), options)
+            .map_err(|err| std::io::Error::from(err).to_string())
     })
     .await
     .map_err(|err| err.to_string())?
 }
 
-/// Read and parse a settings export, off the UI thread.
+/// Read and parse a settings export, off the UI thread. Reads at most
+/// `MAX_EXPORT_BYTES` (plus one, to tell "exactly at the limit" from
+/// "past it") rather than the whole file: the path came from a file
+/// chooser, and a wrong pick could be anything at all.
 pub async fn read_export(path: PathBuf) -> Result<crate::settings_export::Export, String> {
     tokio::task::spawn_blocking(move || {
-        let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        use std::io::Read;
+        let file = std::fs::File::open(&path).map_err(|err| err.to_string())?;
+        let mut text = String::new();
+        file.take(crate::constants::MAX_EXPORT_BYTES + 1)
+            .read_to_string(&mut text)
+            .map_err(|err| err.to_string())?;
+        if text.len() as u64 > crate::constants::MAX_EXPORT_BYTES {
+            return Err(format!(
+                "{} is larger than {} bytes, which no settings export is",
+                path.display(),
+                crate::constants::MAX_EXPORT_BYTES
+            ));
+        }
         crate::settings_export::Export::from_text(&text)
     })
     .await
@@ -252,6 +265,34 @@ pub async fn finish(
     })
 }
 
+/// Run `work` on a blocking thread and hand what it produces to the UI as a
+/// stream. `work` gets two senders: `interim`, for progress that may be
+/// dropped when the UI is behind, and `deliver`, for results that may not, so
+/// it waits for room in the channel.
+fn stream_blocking<E: Send + 'static>(
+    work: impl FnOnce(&mut dyn FnMut(E), &mut dyn FnMut(E)) + Send + 'static,
+) -> impl Stream<Item = E> {
+    cosmic::iced::stream::channel(16, move |mut out: mpsc::Sender<E>| async move {
+        let (tx, mut rx) = mpsc::channel::<E>(16);
+        let worker = tokio::task::spawn_blocking(move || {
+            let mut interim_tx = tx.clone();
+            let mut interim = move |event| {
+                let _ = interim_tx.try_send(event);
+            };
+            let mut tx = tx;
+            let mut deliver = move |event| {
+                let _ = cosmic::iced::futures::executor::block_on(tx.send(event));
+            };
+            work(&mut interim, &mut deliver);
+        });
+        use cosmic::iced::futures::StreamExt;
+        while let Some(event) = rx.next().await {
+            let _ = out.send(event).await;
+        }
+        let _ = worker.await;
+    })
+}
+
 /// Size what `request` covers, then what its exclusions take out, including
 /// each folder in `exclude_folders`, as a stream of events. Stops early when
 /// `cancel` is set.
@@ -260,43 +301,28 @@ pub fn estimate(
     exclude_folders: Vec<PathBuf>,
     cancel: Arc<AtomicBool>,
 ) -> impl Stream<Item = EstimateEvent> {
-    cosmic::iced::stream::channel(16, move |mut out: mpsc::Sender<EstimateEvent>| async move {
-        let (progress_tx, mut progress_rx) = mpsc::channel::<EstimateEvent>(16);
-        let worker = tokio::task::spawn_blocking(move || {
-            let mut tx = progress_tx.clone();
-            let result = engine::estimate(&request, &cancel, &mut |total| {
-                let _ = tx.try_send(EstimateEvent::Progress(total));
-            });
-            // Interim totals may be dropped when the UI is behind; these may
-            // not, so they wait for room in the channel.
-            let mut tx = progress_tx;
-            let mut deliver = |event| {
-                let _ = cosmic::iced::futures::executor::block_on(tx.send(event));
-            };
-            match result {
-                Ok(Some(total)) => {
-                    deliver(EstimateEvent::Done(total));
-                    match engine::exclusion_breakdown(&request, &exclude_folders, &cancel) {
-                        Ok(Some(breakdown)) => {
-                            deliver(EstimateEvent::Breakdown(exclude_folders, breakdown));
-                        }
-                        Ok(None) => {}
-                        Err(err) => deliver(EstimateEvent::Failed(err.detail)),
-                    }
-                }
-                Ok(None) => {}
-                Err(err) => deliver(EstimateEvent::Failed(err.detail)),
-            }
+    stream_blocking(move |interim, deliver| {
+        let result = engine::estimate(&request, &cancel, &mut |total| {
+            interim(EstimateEvent::Progress(total));
         });
-        use cosmic::iced::futures::StreamExt;
-        while let Some(event) = progress_rx.next().await {
-            let _ = out.send(event).await;
+        match result {
+            Ok(Some(total)) => {
+                deliver(EstimateEvent::Done(total));
+                match engine::exclusion_breakdown(&request, &exclude_folders, &cancel) {
+                    Ok(Some(breakdown)) => {
+                        deliver(EstimateEvent::Breakdown(exclude_folders, breakdown));
+                    }
+                    Ok(None) => {}
+                    Err(err) => deliver(EstimateEvent::Failed(err)),
+                }
+            }
+            Ok(None) => {}
+            Err(err) => deliver(EstimateEvent::Failed(err)),
         }
-        let _ = worker.await;
     })
 }
 
-/// Size what `request` covers, as a stream of events — the same local walk
+/// Size what `request` covers, as a stream of events: the same local walk
 /// [`estimate`] does, without the exclusion-arithmetic pass, for an
 /// already-configured backup that has no wizard-style exclude folder list to
 /// size separately.
@@ -304,69 +330,34 @@ pub fn estimate_size(
     request: BackupRequest,
     cancel: Arc<AtomicBool>,
 ) -> impl Stream<Item = SizeEstimateEvent> {
-    cosmic::iced::stream::channel(
-        16,
-        move |mut out: mpsc::Sender<SizeEstimateEvent>| async move {
-            let (progress_tx, mut progress_rx) = mpsc::channel::<SizeEstimateEvent>(16);
-            let worker = tokio::task::spawn_blocking(move || {
-                let mut tx = progress_tx.clone();
-                let result = engine::estimate(&request, &cancel, &mut |total| {
-                    let _ = tx.try_send(SizeEstimateEvent::Progress(total));
-                });
-                let mut tx = progress_tx;
-                let mut deliver = |event| {
-                    let _ = cosmic::iced::futures::executor::block_on(tx.send(event));
-                };
-                match result {
-                    Ok(Some(total)) => deliver(SizeEstimateEvent::Done(total)),
-                    Ok(None) => {}
-                    Err(err) => deliver(SizeEstimateEvent::Failed(err)),
-                }
-            });
-            use cosmic::iced::futures::StreamExt;
-            while let Some(event) = progress_rx.next().await {
-                let _ = out.send(event).await;
-            }
-            let _ = worker.await;
-        },
-    )
+    stream_blocking(move |interim, deliver| {
+        let result = engine::estimate(&request, &cancel, &mut |total| {
+            interim(SizeEstimateEvent::Progress(total));
+        });
+        match result {
+            Ok(Some(total)) => deliver(SizeEstimateEvent::Done(total)),
+            Ok(None) => {}
+            Err(err) => deliver(SizeEstimateEvent::Failed(err)),
+        }
+    })
 }
 
 /// List `dir`'s immediate children with their sizes, as a stream of wizard
-/// browse events. `cancel` stops the walk early, the same as `estimate`'s
-/// own, though nothing currently sets it — each request is for one
-/// directory's children, not a long-running walk expected to need
-/// interrupting, so this exists for the same reason `estimate`'s does
-/// rather than because it has been needed yet.
+/// browse events. `cancel` stops the walk early: the wizard sets it when the
+/// browser is closed or reopened, or the wizard is discarded.
 pub fn browse_folder(dir: PathBuf, cancel: Arc<AtomicBool>) -> impl Stream<Item = browse::Message> {
-    cosmic::iced::stream::channel(
-        16,
-        move |mut out: mpsc::Sender<browse::Message>| async move {
-            let (progress_tx, mut progress_rx) = mpsc::channel::<browse::Message>(16);
-            let worker = tokio::task::spawn_blocking(move || {
-                let mut scanned = 0usize;
-                let mut tx = progress_tx.clone();
-                let result = engine::list_with_sizes(&dir, &cancel, &mut |_entry| {
-                    scanned += 1;
-                    let _ = tx.try_send(browse::Message::Progress(dir.clone(), scanned));
-                });
-                let mut tx = progress_tx;
-                let mut deliver = |event| {
-                    let _ = cosmic::iced::futures::executor::block_on(tx.send(event));
-                };
-                match result {
-                    Ok(Some(entries)) => deliver(browse::Message::Listed(dir, entries)),
-                    Ok(None) => {}
-                    Err(err) => deliver(browse::Message::Failed(dir, err.detail)),
-                }
-            });
-            use cosmic::iced::futures::StreamExt;
-            while let Some(event) = progress_rx.next().await {
-                let _ = out.send(event).await;
-            }
-            let _ = worker.await;
-        },
-    )
+    stream_blocking(move |interim, deliver| {
+        let mut scanned = 0usize;
+        let result = engine::list_with_sizes(&dir, &cancel, &mut |_entry| {
+            scanned += 1;
+            interim(browse::Message::Progress(dir.clone(), scanned));
+        });
+        match result {
+            Ok(Some(entries)) => deliver(browse::Message::Listed(dir, entries)),
+            Ok(None) => {}
+            Err(err) => deliver(browse::Message::Failed(dir, err)),
+        }
+    })
 }
 
 #[cfg(test)]

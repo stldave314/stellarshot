@@ -18,6 +18,7 @@
 //! `F_OFD_GETLK` command answers that question directly, without ever
 //! acquiring anything.
 
+use crate::constants::STATUS_KEY_MAX_AGE;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
@@ -46,16 +47,48 @@ pub fn runtime_dir() -> PathBuf {
         .unwrap_or_else(|| cache_dir().join("stellarshot/run"))
 }
 
+/// Remove the "Open a copy" folders (`open-*`) in [`runtime_dir`] that are
+/// older than `max_age`: nothing else ever does, and the runtime folder is
+/// memory-backed. Returns how many were removed.
+pub fn remove_stale_open_copies(max_age: std::time::Duration) -> usize {
+    remove_stale_open_copies_in(&runtime_dir(), max_age)
+}
+
+/// [`remove_stale_open_copies`] in `dir`.
+pub fn remove_stale_open_copies_in(dir: &Path, max_age: std::time::Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().starts_with("open-") {
+            continue;
+        }
+        // `symlink_metadata`: never follow a link out of this folder.
+        let Ok(metadata) = std::fs::symlink_metadata(entry.path()) else {
+            continue;
+        };
+        let old = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age >= max_age);
+        if metadata.is_dir() && old && std::fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// `$XDG_CACHE_HOME`, or `~/.cache` if that too is unset. Only reached when
 /// `XDG_RUNTIME_DIR` is not set; falling back to `std::env::temp_dir()` here
 /// would be exactly the shared-directory problem [`runtime_dir`] exists to
-/// avoid.
+/// avoid, so with no home directory at all this is a path nothing can be
+/// created at ([`crate::paths::unusable`]) and the write that needed a lock
+/// fails.
 fn cache_dir() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
+    crate::paths::cache_root().unwrap_or_else(crate::paths::unusable)
 }
 
 /// Where the latest progress of a write to `location` is published, for a
@@ -77,13 +110,13 @@ pub struct WriteLock {
 
 /// An exclusive OFD lock covering the whole file, non-blocking.
 fn exclusive_lock() -> libc::flock {
-    libc::flock {
-        l_type: libc::F_WRLCK as libc::c_short,
-        l_whence: libc::SEEK_SET as libc::c_short,
-        l_start: 0,
-        l_len: 0,
-        l_pid: 0,
-    }
+    // Zeroed, then the fields that matter set: a struct literal would not
+    // compile on a libc target whose `flock` has padding or extra fields.
+    // SAFETY: an all-zero `flock` is a valid value (plain integers).
+    let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+    lock.l_type = libc::F_WRLCK as libc::c_short;
+    lock.l_whence = libc::SEEK_SET as libc::c_short;
+    lock
 }
 
 /// Take the write lock for `location`, or fail with `Locked` at once if
@@ -113,7 +146,8 @@ fn lock_file(dir: &Path, key: &str, location: &Location) -> Result<File, EngineE
         .truncate(false)
         .read(true)
         .write(true)
-        .open(&path)?;
+        .open(&path)
+        .map_err(|err| EngineError::io(&path, err))?;
     let mut lock = exclusive_lock();
     // SAFETY: `file` is a valid, open file description for the lifetime of
     // this call, and `lock` is a valid `flock` the kernel only reads and
@@ -123,9 +157,10 @@ fn lock_file(dir: &Path, key: &str, location: &Location) -> Result<File, EngineE
         return Ok(file);
     }
     let err = io::Error::last_os_error();
+    // POSIX allows `EACCES` as well as `EAGAIN` for a conflicting lock.
     if matches!(
         err.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::AlreadyExists
+        io::ErrorKind::WouldBlock | io::ErrorKind::PermissionDenied
     ) {
         Err(EngineError::new(ErrorKind::Locked, location.describe()))
     } else {
@@ -141,7 +176,40 @@ fn lock_file(dir: &Path, key: &str, location: &Location) -> Result<File, EngineE
 /// lock directory could not even be created) is treated the same way,
 /// since this is a status display, not a guard against writing.
 pub fn is_running(location: &Location) -> bool {
-    is_running_in(&runtime_dir(), location)
+    let dir = runtime_dir();
+    let key = status_key(location);
+    probe_locked(&dir, &key).unwrap_or(false)
+        || location
+            .legacy_key()
+            .is_some_and(|key| probe_locked(&dir, &key).unwrap_or(false))
+}
+
+/// [`Location::key`] for the status poll, remembered for
+/// [`STATUS_KEY_MAX_AGE`]: working it out canonicalizes the path, which can
+/// block for as long as a hung network mount takes, and the poll runs every
+/// few seconds. Only for showing status: taking the lock always works its key
+/// out fresh, since two processes must agree on it exactly.
+fn status_key(location: &Location) -> String {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Instant;
+    static KEYS: OnceLock<Mutex<HashMap<String, (Instant, String)>>> = OnceLock::new();
+    let keys = KEYS.get_or_init(Mutex::default);
+    let name = location.describe();
+    let found = keys.lock().ok().and_then(|keys| {
+        keys.get(&name)
+            .filter(|(at, _)| at.elapsed() < STATUS_KEY_MAX_AGE)
+            .map(|(_, key)| key.clone())
+    });
+    if let Some(key) = found {
+        return key;
+    }
+    // Not under the lock: this is the call that can block.
+    let key = location.key();
+    if let Ok(mut keys) = keys.lock() {
+        keys.insert(name, (Instant::now(), key.clone()));
+    }
+    key
 }
 
 /// [`is_running`], with the lock directory given explicitly, so a test can
@@ -327,6 +395,45 @@ mod tests {
         let location = Location::local("/backups/home");
         let err = acquire_in(&link, &location).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Io);
+    }
+
+    #[test]
+    fn only_old_open_copy_folders_are_removed() {
+        use std::time::Duration;
+        let dir = tempfile::TempDir::new().unwrap();
+        let old = dir.path().join("open-old");
+        let other = dir.path().join("somebody-elses");
+        std::fs::create_dir_all(old.join("inner")).unwrap();
+        std::fs::write(old.join("inner/copy.txt"), b"x").unwrap();
+        std::fs::set_permissions(
+            old.join("inner/copy.txt"),
+            std::fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        std::fs::create_dir(&other).unwrap();
+
+        assert_eq!(
+            remove_stale_open_copies_in(dir.path(), Duration::from_secs(3600)),
+            0,
+            "a fresh one is left"
+        );
+        assert!(old.exists());
+
+        assert_eq!(remove_stale_open_copies_in(dir.path(), Duration::ZERO), 1);
+        assert!(!old.exists(), "including its read-only file");
+        assert!(other.exists(), "anything not named open-* is never touched");
+    }
+
+    #[test]
+    fn the_status_key_is_the_real_key_and_stays_the_same_when_remembered() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let location = Location::local(dir.path().join("repo"));
+
+        let first = status_key(&location);
+        let second = status_key(&location);
+
+        assert_eq!(first, location.key());
+        assert_eq!(second, first);
     }
 
     #[test]

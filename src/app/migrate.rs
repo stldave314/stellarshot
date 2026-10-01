@@ -18,10 +18,7 @@ pub const OLD_APP_ID: &str = "com.github.cosmic-utils.Stellarshot";
 
 /// The directory `cosmic-config` resolves its per-user settings under.
 pub fn config_root() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+    crate::paths::config_root()
 }
 
 fn version_dir(config_root: &Path, app_id: &str, version: u64) -> PathBuf {
@@ -44,13 +41,23 @@ pub fn migrate_app_id(config_root: &Path, new_app_id: &str, version: u64) -> io:
         return Ok(false);
     }
 
-    std::fs::create_dir_all(&new)?;
+    // Copied beside the destination and renamed into place, so an
+    // interruption half way leaves no `v1` for the next start to mistake for
+    // a finished migration (it returns above as soon as `new` exists).
+    let mut staging_name = new.file_name().unwrap_or_default().to_os_string();
+    staging_name.push(".migrating");
+    let staging = new.with_file_name(staging_name);
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)?;
+    }
+    std::fs::create_dir_all(&staging)?;
     for entry in std::fs::read_dir(&old)? {
         let entry = entry?;
         if entry.file_type()?.is_file() {
-            std::fs::copy(entry.path(), new.join(entry.file_name()))?;
+            std::fs::copy(entry.path(), staging.join(entry.file_name()))?;
         }
     }
+    std::fs::rename(&staging, &new)?;
     Ok(true)
 }
 
@@ -83,6 +90,29 @@ mod tests {
         let dir = version_dir(root, OLD_APP_ID, 1);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(key), value).unwrap();
+    }
+
+    #[test]
+    fn a_half_finished_earlier_attempt_does_not_stop_a_complete_copy() {
+        let tmp = TempDir::new().unwrap();
+        write_old(tmp.path(), "repositories", "[(name: \"a\", path: \"/a\")]");
+        write_old(tmp.path(), "second", "2");
+        // What an interrupted run leaves behind: a partial staging folder.
+        let staging = version_dir(tmp.path(), NEW, 1).with_file_name("v1.migrating");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("repositories"), "partial").unwrap();
+
+        assert!(migrate_app_id(tmp.path(), NEW, 1).unwrap());
+
+        let new = version_dir(tmp.path(), NEW, 1);
+        assert_eq!(std::fs::read_to_string(new.join("second")).unwrap(), "2");
+        assert!(
+            std::fs::read_to_string(new.join("repositories"))
+                .unwrap()
+                .contains("\"/a\""),
+            "the partial copy was replaced, not kept"
+        );
+        assert!(!staging.exists(), "nothing is left behind");
     }
 
     #[test]

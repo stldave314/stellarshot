@@ -104,6 +104,7 @@ wizard-estimate = { $size } · { $files ->
    *[other] { $files } файла
 }
 wizard-estimate-counting = Преброяване…
+wizard-estimate-failed = Размерът не можа да бъде изчислен.
 wizard-estimate-note = Първото копие обикновено е по-малко след компресия и премахване на дубликати. Следващите записват само промените.
 wizard-where-intro = Изберете къде да се пази копието: празна папка, за предпочитане на друго устройство.
 wizard-where-title = Местоположение
@@ -133,12 +134,15 @@ back = Назад
 next = Напред
 edit = Редактиране
 remove = Премахване
+remove-item = Премахване на { $item }
 dismiss = Отхвърляне
 delete = Изтриване
 cancel = Отказване
 password = Парола
 remove-title = Премахване на „{ $name }“?
 remove-body = Stellarshot ще забрави това копие и запазената му парола. Копието и моментните му състояния не се изтриват и могат да бъдат отворени отново.
+remove-keyring-failed = Резервното копие беше премахнато, но запазената му парола не можа да бъде изтрита от ключодържателя. Можете да я изтриете там сами.
+edit-backup-removed = Това резервно копие беше премахнато, докато го редактирахте, затова нищо не беше запазено.
 delete-title = Изтриване на „{ $name }“ и всички данни?
 delete-body = Това изтрива окончателно копието и всяко моментно състояние в него. Другите файлове в същата папка не се засягат. Въведете { $name } за потвърждение.
 delete-snapshot-title = Изтриване на това моментно състояние?
@@ -147,6 +151,8 @@ delete-snapshot-body = Моментното състояние от { $time } щ
 # Errors
 error-title = Нещо се обърка
 error-details = Подробности: { $details }
+error-settings-not-saved = Промяната не можа да бъде запазена.
+error-config-unreadable = Част от настройките на Stellarshot не можаха да бъдат прочетени, затова нищо не може да бъде запазено, докато това не бъде поправено. Копие на оригиналния файл беше запазено в { $path }.
 location-not-empty = { $path } вече съдържа други файлове. Изберете празна папка или папка, която вече съдържа хранилище.
 create-repo-failed = Хранилището не можа да бъде създадено.
 delete-repo-failed = Хранилището не можа да бъде изтрито.
@@ -209,6 +215,7 @@ place-check-failed = Мястото не можа да бъде проверен
 place-check = Проверка
 place-no-drives = Няма свързани преносими устройства. Свържете едно, после се върнете назад и напред.
 place-folder-on-drive = Папка на устройството
+place-folder-invalid = Папката трябва да е обикновено име или път на устройството, без „.“ или „..“.
 place-host = Сървър
 place-user = Потребителско име
 place-user-placeholder = Вашето потребителско име на този компютър
@@ -249,6 +256,10 @@ selected-count = { $count ->
    *[other] { $count } избрани елемента
 }
 restore-button = Възстановяване…
+restore-replace-button = { $count ->
+    [one] Заменяне на 1 файл…
+   *[other] Заменяне на { $count } файла…
+}
 search-placeholder = Търсене в това моментно състояние
 search-results = { $count ->
     [one] 1 съвпадение
@@ -465,7 +476,9 @@ error-invalid-remote = Отдалеченото облачно хранилищ�
 error-unsafe-path = Файл в това резервно копие сочи към място извън папката за възстановяване ({ $path }), затова нищо не бе възстановено.
 error-not-found = { $path } не е в това резервно копие.
 error-ambiguous = { $path } съвпада с повече от едно резервно копие. Използвайте по-дълъг префикс.
-error-too-busy = Уеб интерфейсът вече има толкова отворени заявки към това резервно копие, колкото позволява едновременно. Опитайте отново скоро.
+error-too-large-to-open = Това е твърде голямо, за да се отвори като временно копие ({ $size }). Възстановете го в папка.
+error-duplicate-name = Два от избраните елемента се казват „{ $name }“ и биха попаднали в една и съща папка, като единият презапише другия. Възстановете ги един по един или в различни папки.
+error-too-busy = За това резервно копие вече са отворени толкова операции, колкото са разрешени едновременно. Опитайте отново скоро.
 place-checking-for = Проверка… { $time }
 wizard-creating = Създаване… { $time }
 wizard-opening = Отваряне… { $time }
@@ -541,7 +554,7 @@ event-unmounted = Демонтирано моментно състояние { $
 history-empty = Все още нищо не се е случило.
 history-unknown-backup = (премахнато копие)
 history-truncated = Показани са последните { $shown } от общо { $total }
-history-via-web = Уеб
+history-via-other = Друга програма
 notify-overdue = „{ $name }“ не е архивирано отдавна
 notify-overdue-body = Местоназначението му не е било достъпно в планираните часове. { $schedule } Проверете дали е свързано, после отворете Stellarshot, за да архивирате сега.
 settings-backup-title = Архивиране и възстановяване на собствените настройки на Stellarshot
@@ -571,6 +584,7 @@ settings-import-done-body = { $added ->
    *[other] { $rejected } не можаха да бъдат внесени безопасно и бяха пропуснати.
 }
 settings-import-failed = Настройките не можаха да бъдат внесени.
+settings-import-newer = Този файл е запазен от по-нова версия на Stellarshot. Обновете Stellarshot и опитайте отново.
 settings-import-hooks-disabled = Внесените резервни копия започват с изключени график и куки. Прегледайте ги, преди да ги включите.
 home = Общ преглед
 home-backups-title = Резервни копия
@@ -598,6 +612,7 @@ place-bandwidth-limit-placeholder = напр. 1M
 applet-tooltip = Stellarshot
 applet-none = Все още няма настроено архивиране.
 applet-open = Отваряне на Stellarshot
+applet-open-failed = Stellarshot не можа да бъде стартиран.
 wizard-exclude-caches = Пропускане на папки за кеш
 wizard-exclude-caches-description = Пропускане на всяка папка, която се обозначава като временни кеш данни с файл CACHEDIR.TAG.
 wizard-git-ignore = Спазване на .gitignore
@@ -620,68 +635,12 @@ settings-no-cache = Без кеширане изобщо
 settings-no-cache-description = По-бавно, но няма какво да се пази на машина с малко дисково пространство.
 settings-global-excludes-title = Пропуснато във всяко резервно копие
 settings-global-excludes-description = Глоб шаблони като node_modules или target, прилагани към всяко резервно копие, без да се добавят към всяко поотделно.
-settings-web-title = Уеб интерфейс
-web-scope-off = Изключен
-web-scope-off-description = Уеб интерфейсът изобщо не е достъпен.
-web-scope-localhost = Само този компютър
-web-scope-localhost-description = Достъпен само от този компютър, например през собствен SSH тунел.
-web-scope-lan = Достъпен в мрежата
-web-scope-lan-description = Достъпен от всяко друго устройство в същата мрежа.
-web-port = Порт
-web-port-description = На кой порт слуша уеб интерфейсът.
-web-port-invalid = Това не е валиден номер на порт. Трябва да е между 1 и 65535.
-web-address-label = Ще слуша на:
-web-auth-password = Обща парола
-web-auth-password-description = Една парола, отделна от паролата на всяко резервно копие, изисквана за влизане.
-web-password-set = Задаване на паролата
-web-password-placeholder = Нова парола
-web-password-saved-body = Уеб интерфейсът ще я използва при следващото стартиране.
-web-password-failed = Паролата на уеб интерфейса не можа да бъде запазена.
-web-password-length = { $count } от { $minimum ->
-    [one] { $minimum } знак
-   *[other] { $minimum } знака
-}
-web-auth-token = API токен
-web-auth-token-description = Генериран токен за програмно използване на API-то на уеб интерфейса.
-web-token-generate = Токен
-web-token-generate-button = Генериране на нов токен…
-web-token-exists = Генериран е токен. Генерирането на нов го заменя.
-web-token-none = Все още не е генериран токен.
-web-token-title = Нов API токен
-web-token-body = Копирайте този токен сега — няма да бъде показан отново.
-web-token-copy = Копиране
-web-token-regenerate-title = Замяна на текущия токен?
-web-token-regenerate-body = Всичко, което вече използва текущия токен, ще спре да работи веднага щом бъде генериран нов.
-web-token-regenerate-confirm = Генериране наново
-
-    Това се показва само веднъж. Съхранете го на сигурно място: генерирането на нов токен заменя този.
-web-auth-pam = Собственото влизане на този компютър
-web-auth-pam-description = Влизане със същата парола, използвана за влизане в този компютър.
-web-allowed-title = Разрешени адреси
-web-allowed-description = Само тези адреси или диапазони могат да достигат до уеб интерфейса. Празно означава всеки адрес, който настройката по-горе вече разрешава.
-web-allowed-placeholder = Адрес или диапазон, например 192.168.1.0/24
-web-allowed-invalid = Невалиден адрес или диапазон, например 192.168.1.0/24 или 192.168.1.1
-web-tls-title = TLS сертификат
-web-tls-description = Уеб интерфейсът винаги се достъпва през HTTPS. По подразбиране той генерира и използва собствен самоподписан сертификат; браузърът ще поиска еднократно изключение на доверието за него. Задайте собствен сертификат и ключ вместо това, ако имате такъв, например от удостоверителен орган, на който устройствата ви вече се доверяват.
-web-tls-cert = Сертификат
-web-tls-key = Частен ключ
-web-tls-default = Самоподписан (генериран автоматично)
-web-tls-choose = Избор…
-web-tls-reset = Използване по подразбиране
-web-tls-cert-title = Избор на файл със сертификат
-web-tls-key-title = Избор на файл с частен ключ
-web-daemon-title = Демон
-web-daemon-status = Състояние
-web-daemon-status-active = Работи
-web-daemon-status-inactive = Спрян
-web-daemon-status-failed = Стартирането е неуспешно
-web-daemon-status-unknown = Не е инсталиран
-web-daemon-start = Стартиране
-web-daemon-stop = Спиране
-web-daemon-restart = Рестартиране
-web-daemon-action-failed = Демонът на уеб интерфейса не можа да бъде управляван.
-web-docs-link = Научете повече за уеб интерфейса и неговото API
 pin-snapshot-failed = Закачването на моментното състояние не можа да бъде променено.
 pin-snapshot = Закачане, за да не се премахва това моментно състояние при почистване
 unpin-snapshot = Откачане, за да може почистването отново да премахне това моментно състояние
 delete-snapshot-row = Изтриване на това моментно състояние
+snapshot-label = { $time } · { $id }
+hook-row = { $timing } · { $command }
+size-removed = −{ $size }
+compression-ratio = { $ratio }×
+list-separator = {", "}

@@ -46,35 +46,43 @@
   <screenshots>
     <screenshot type="default">
       <caption>A backup and its snapshots, with Back Up Now</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/profile.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/profile.png</image>
     </screenshot>
     <screenshot>
       <caption>Setting up a backup, with a live size estimate</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/wizard.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/wizard.png</image>
     </screenshot>
     <screenshot>
       <caption>Browsing a snapshot to restore files</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/restore.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/restore.png</image>
     </screenshot>
     <screenshot>
       <caption>The first screen, before anything is backed up</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/empty.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/empty.png</image>
     </screenshot>
     <screenshot>
       <caption>A backup in the light theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/main/docs/screenshots/profile-light.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.8.2/docs/screenshots/profile-light.png</image>
     </screenshot>
   </screenshots>
   <releases>
     <release version="0.8.2" date="2026-09-29">
       <description>
+        <p>Fixes a release build creating a developer log file that it is
+        meant to carry no trace of.</p>
+      </description>
+    </release>
+    <release version="0.8.1" date="2026-09-29">
+      <description>
+        <p>Internal test fixes only; no change to the application.</p>
+      </description>
+    </release>
+    <release version="0.8.0" date="2026-09-29">
+      <description>
         <p>Estimate a backup's size without opening it, and a broader
-        security and reliability pass across the web interface, restore
-        and accessibility.</p>
+        security and reliability pass across restore and accessibility.</p>
         <ul>
           <li>An "Estimate Size" button next to Back Up Now shows a backup's file count and total size without opening it or asking for its password</li>
-          <li>A generated API token can now be copied with one click, and confirms before replacing one already in use</li>
-          <li>The web interface's password, port and allow-list fields validate as you type instead of popping up dialogs, and its address in Settings is now a clickable link</li>
           <li>A hostile snapshot name can no longer be used to probe whether a file exists elsewhere on the machine, and a symlink at a backup's progress file path is no longer followed</li>
           <li>Restoring into a folder where a snapshot expects a directory but a plain file already exists there is now reported as a real conflict instead of silently restoring nothing</li>
           <li>The panel applet shows a failure, an overdue backup and real damage as three distinct icons, and no longer polls constantly while its popup is closed</li>
@@ -85,13 +93,8 @@
     </release>
     <release version="0.7.0" date="2026-09-27">
       <description>
-        <p>A full security and reliability audit, and the web interface
-        actually reachable end to end for the first time.</p>
+        <p>A full security and reliability audit.</p>
         <ul>
-          <li>The web interface runs as its own systemd service, always reached over HTTPS, with a Start/Stop/Restart control and status in Settings</li>
-          <li>A new REST route starts an existing backup, the same as Back Up Now on the desktop</li>
-          <li>Repeated wrong passwords or tokens now lock an address out for longer each time, instead of the same short window every time</li>
-          <li>Changing the web interface's password, token, or allow-list now takes effect immediately, not just on the next restart</li>
           <li>The repository password is wiped from memory as soon as it is no longer needed, and a crash can no longer write it to a core dump</li>
           <li>A snapshot from a shared repository can no longer write outside the folder you chose when restoring</li>
           <li>Importing a settings file from someone else can no longer run a command of its own</li>
@@ -101,14 +104,13 @@
     </release>
     <release version="0.6.0" date="2026-09-26">
       <description>
-        <p>Getting more out of a backup, and the start of a web interface.</p>
+        <p>Getting more out of a backup.</p>
         <ul>
           <li>Choose a compression level when creating a backup</li>
           <li>Mount a snapshot as a read-only folder, browsable and openable with any application</li>
           <li>A History page showing every backup's activity in one place</li>
           <li>Search for a file by name across every snapshot at once</li>
           <li>The Compare tab groups changes by folder instead of one long flat list</li>
-          <li>Web interface settings, and a daemon with real password and API token authentication (still in progress)</li>
         </ul>
       </description>
     </release>
@@ -194,7 +196,6 @@
   <provides>
     <binary>stellarshot</binary>
     <binary>stellarshot-applet</binary>
-    <binary>stellarshot-web</binary>
   </provides>
   <supports>
     <control>keyboard</control>

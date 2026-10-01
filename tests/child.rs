@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! The window's side of the `--run` protocol: spawning the child, streaming
 //! its events, and canceling it.
@@ -148,8 +154,14 @@ fn canceling_a_backup_ends_it_as_canceled_without_a_snapshot() {
         events
     });
 
+    // Either shape is a canceled backup to the window (see the profile
+    // page's `Backup` handling): `Event::Error` when the child got the
+    // chance to say so itself after SIGTERM, `Ended` if it had to be
+    // killed outright instead.
     match events.last() {
-        Some(ChildEvent::Ended(error)) => assert_eq!(error.kind, ErrorKind::Canceled),
+        Some(ChildEvent::Ended(error) | ChildEvent::Event(Event::Error { error })) => {
+            assert_eq!(error.kind, ErrorKind::Canceled);
+        }
         other => panic!("expected the backup to end canceled, got {other:?}"),
     }
     let snapshots = engine::open(&location, &Secret::new(PASSWORD))
@@ -160,6 +172,94 @@ fn canceling_a_backup_ends_it_as_canceled_without_a_snapshot() {
         snapshots.is_empty(),
         "a canceled backup must not leave a snapshot"
     );
+}
+
+/// A `Before` hook that stopped a service must have its `After` hook run
+/// when the backup is canceled, not only when it finishes. Cancel used to
+/// be SIGKILL to the whole group, which no hook can run after; now it is
+/// SIGTERM to the child, which runs them itself (see `proc_signal`) and
+/// only then goes.
+#[test]
+fn canceling_a_backup_still_runs_its_after_hooks() {
+    use stellarshot::profile::{Hook, HookTiming};
+
+    let (dir, mut job) = setup(48);
+    let before = dir.path().join("before-ran");
+    let after = dir.path().join("after-ran");
+    let hook = |name: &str, marker: &std::path::Path, timing: HookTiming| Hook {
+        name: name.to_owned(),
+        command: format!("touch {}", marker.display()),
+        timing,
+        enabled: true,
+    };
+    job.hooks = vec![
+        hook("before", &before, HookTiming::Before),
+        hook("after", &after, HookTiming::After),
+    ];
+
+    let events = runtime().block_on(async {
+        // Well inside `TERM_GRACE`: a child that had to be *killed* after
+        // ignoring SIGTERM would only end once that grace had run out,
+        // which is exactly the failure this test exists to catch.
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            let mut stream = std::pin::pin!(child::run_with(exe(), Operation::Backup, job));
+            let mut handle = None;
+            let mut events = Vec::new();
+            while let Some(event) = stream.next().await {
+                match &event {
+                    ChildEvent::Started(started) => handle = Some(started.clone()),
+                    ChildEvent::Event(Event::Progress { progress })
+                        if progress.phase == Phase::BackingUp && progress.done > 0 =>
+                    {
+                        assert!(before.exists(), "the Before hook runs before any progress");
+                        handle.as_ref().expect("started before progress").cancel();
+                    }
+                    _ => {}
+                }
+                events.push(event);
+            }
+            events
+        })
+        .await
+        .expect("a canceled backup must end on its own, not wait to be killed")
+    });
+
+    assert!(
+        after.exists(),
+        "the After hook must run on cancel; last event: {:?}",
+        events.last()
+    );
+    match events.last() {
+        Some(ChildEvent::Ended(error) | ChildEvent::Event(Event::Error { error })) => {
+            assert_eq!(error.kind, ErrorKind::Canceled);
+        }
+        other => panic!("expected the backup to end canceled, got {other:?}"),
+    }
+}
+
+/// A child that dies of something other than Cancel — a segfault here, the
+/// OOM killer in real life — is a failure with a reason, not "canceled".
+/// Reporting it as canceled kept every such crash out of the History page
+/// and the log, since a canceled backup is deliberately not recorded.
+#[test]
+fn a_child_killed_by_a_signal_is_a_failure_not_a_cancel() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, job) = setup(0);
+    let script = dir.path().join("crash.sh");
+    std::fs::write(&script, "#!/bin/sh\nkill -SEGV $$\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let events: Vec<ChildEvent> =
+        runtime().block_on(child::run_with(Ok(script), Operation::Backup, job).collect());
+
+    match events.last() {
+        Some(ChildEvent::Ended(error)) => {
+            assert_eq!(error.kind, ErrorKind::Internal, "{error:?}");
+            assert!(error.detail.contains("signal"), "{error:?}");
+        }
+        other => panic!("expected a failure with a reason, got {other:?}"),
+    }
 }
 
 // REL-11: `run` now spawns `crate::exe::running_image` (`/proc/self/exe`)
@@ -196,35 +296,91 @@ fn a_missing_executable_is_reported_not_hung() {
 /// (`rustix::process::set_dumpable_behavior`) before doing anything else —
 /// `runner::main`'s very first line.
 ///
-/// This used to spawn a real child and check whether `/proc/<pid>/mem`'s
-/// owning uid changed to `0`, the externally visible side effect a bare-
-/// metal or VM kernel gives a non-dumpable process. That is not portable:
-/// on GitHub Actions' own runners the owning uid changes to *something*,
-/// but not literally `0` (`1001` was observed there, not this process's own
-/// uid either) — plausibly a container/user-namespace detail in how "root"
-/// is mapped, not a sign the `prctl` failed. Rather than assert an exact
-/// uid that varies by environment, this checks the one thing that is
-/// actually portable and is the real contract `runner::main` depends on:
-/// `PR_SET_DUMPABLE`/`PR_GET_DUMPABLE` round-tripping correctly for this
-/// process, via the exact same `rustix::process` calls `runner::main` uses.
-/// Restores the dumpable flag afterward, since `cargo test` runs many tests
-/// in one process and this would otherwise leak into all of them.
+/// Against a real child, not this test's own process: an earlier version
+/// set and read back the dumpable flag *here*, via the same `rustix` calls
+/// `runner::main` uses, which proved those calls work and nothing about
+/// `runner::main` — deleting its `prctl` left that test green. This one
+/// spawns the actual binary with `--run backup` and its stdin held open,
+/// so it runs the `prctl` and then blocks reading its job, and looks at
+/// what the kernel then shows another process of the same user.
+///
+/// Two things are checked, both portable across a bare-metal kernel and
+/// GitHub Actions' own runners (where `/proc/<pid>/mem` of a non-dumpable
+/// process was observed to become owned by `1001`, not `0` — a detail of
+/// how root is mapped there, not a sign the `prctl` failed): `/proc/<pid>/mem`
+/// is no longer owned by this user, and `/proc/<pid>/environ` — the
+/// process's own memory, in the way a core dump would also expose it — can
+/// no longer be read. (`/proc/<pid>` itself, the directory, keeps the
+/// user's ownership on at least one current kernel; it is the per-file
+/// entries that change hands.) A `sleep` child of this same user is the
+/// control for both: readable and owned by us, or this test could not tell
+/// a working `prctl` from a `/proc` that hides everything.
 #[test]
-fn the_dumpable_flag_set_by_runner_main_round_trips() {
-    use rustix::process::{DumpableBehavior, dumpable_behavior, set_dumpable_behavior};
+fn the_run_child_hides_its_memory_from_other_processes_of_the_same_user() {
+    use std::os::unix::fs::MetadataExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
 
-    let restore = dumpable_behavior().ok();
-    set_dumpable_behavior(DumpableBehavior::NotDumpable).unwrap();
-    let now = dumpable_behavior().unwrap();
-    if let Some(previous) = restore {
-        let _ = set_dumpable_behavior(previous);
+    fn proc_owner(pid: u32) -> Option<u32> {
+        std::fs::metadata(format!("/proc/{pid}/mem"))
+            .ok()
+            .map(|m| m.uid())
+    }
+    fn environ(pid: u32) -> std::io::Result<Vec<u8>> {
+        std::fs::read(format!("/proc/{pid}/environ"))
     }
 
+    // The control: an ordinary, dumpable child of this user.
+    let mut control = Command::new("sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let control_owner = proc_owner(control.id());
+    let control_environ = environ(control.id());
+    let _ = control.kill();
+    let _ = control.wait();
+    let our_uid = rustix::process::getuid().as_raw();
     assert_eq!(
-        now,
-        DumpableBehavior::NotDumpable,
-        "PR_SET_DUMPABLE must be readable back as set; runner::main relies on \
-         exactly this call succeeding to keep the repository password out of \
-         a core dump"
+        control_owner,
+        Some(our_uid),
+        "a dumpable child must show up as ours, or nothing below proves anything"
+    );
+    control_environ.expect("a dumpable child's environ must be readable by its own user");
+
+    // The real thing. `--run backup` with stdin piped but never written:
+    // `runner::main` sets the flag, then blocks in `read_to_end` on its job
+    // — while `child.stdin` stays open below, which it does until `child`
+    // is dropped.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stellarshot"))
+        .args(["--run", "backup"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // The `prctl` is the child's first act, but "first" is still after
+    // exec; poll rather than race it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut owner = proc_owner(child.id());
+    while owner == Some(our_uid) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+        owner = proc_owner(child.id());
+    }
+    let child_environ = environ(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_ne!(
+        owner,
+        Some(our_uid),
+        "/proc/<pid>/mem of the --run child must not stay owned by this user: the prctl in \
+         runner::main did not take effect (owner was {owner:?})"
+    );
+    assert_eq!(
+        child_environ.map(|_| ()).unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "the --run child's memory must not be readable by another process of the same user"
     );
 }

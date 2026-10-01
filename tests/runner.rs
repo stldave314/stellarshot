@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! The `stellarshot --run` child process, driven exactly as the window drives
 //! it: a job on stdin, JSON events on stdout.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+
 use std::process::{Child, Command, ExitStatus, Stdio};
 
 use stellarshot::engine::{
@@ -179,6 +186,74 @@ fn bulky_source(source: &Path, count: usize) {
             .collect();
         std::fs::write(source.join(format!("bulk-{index:03}.bin")), block).unwrap();
     }
+}
+
+/// A full disk, as the process sees it: no file it writes may grow past
+/// `limit` bytes (`RLIMIT_FSIZE`), and the write that would is refused with
+/// `EFBIG` rather than killing the process with `SIGXFSZ`.
+#[test]
+fn a_backup_that_cannot_write_reports_an_error_and_leaves_a_sound_repository() {
+    use std::os::unix::process::CommandExt;
+
+    let fixture = Fixture::new();
+    bulky_source(&fixture.source, 8);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stellarshot"));
+    command
+        .args(["--run", "backup"])
+        .env("XDG_RUNTIME_DIR", fixture.runtime_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // SAFETY: only async-signal-safe calls (`signal`, `setrlimit`) between
+    // fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
+            let limit = libc::rlimit {
+                rlim_cur: 256 * 1024,
+                rlim_max: 256 * 1024,
+            };
+            if libc::setrlimit(libc::RLIMIT_FSIZE, &limit) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    let mut child = command.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin
+        .write_all(&serde_json::to_vec(&fixture.backup_job(PASSWORD)).unwrap())
+        .unwrap();
+    drop(stdin);
+
+    let output = child.wait_with_output().unwrap();
+
+    let events: Vec<Event> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(output.status.code(), Some(1), "events: {events:?}");
+    match events.last() {
+        Some(Event::Error { error }) => {
+            assert_ne!(error.kind, ErrorKind::WrongPassword, "{error:?}");
+        }
+        other => panic!("expected an error event, got {other:?}"),
+    }
+    assert_eq!(
+        fixture.snapshot_count(),
+        0,
+        "no snapshot of a failed backup"
+    );
+    let (events, status) = fixture.run(
+        "check",
+        &Job::new(fixture.location.clone(), Secret::new(PASSWORD)),
+    );
+    assert!(
+        status.success(),
+        "the repository is still sound: {events:?}"
+    );
 }
 
 #[test]

@@ -22,6 +22,7 @@ pub mod progress;
 pub mod rclone;
 mod repo;
 mod restore;
+mod serve;
 mod snapshots;
 mod statistics;
 mod uploads;

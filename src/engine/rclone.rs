@@ -3,7 +3,7 @@
 //! The rclone commands Stellarshot needs besides the backup itself.
 //!
 //! Backups to SFTP and cloud storage go through `rclone serve restic`, which
-//! rustic starts on its own. What rustic does not do — checking what is at a
+//! [`super::serve`] starts. What rustic does not do — checking what is at a
 //! location before creating a repository there, deleting a repository's
 //! entries, signing in to a cloud account — is done here with plain rclone
 //! commands.
@@ -13,7 +13,7 @@
 //! or changed, and removing a backup can never damage a remote the user set up
 //! for something else.
 
-use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -21,7 +21,10 @@ use std::time::{Duration, Instant};
 use super::error::{EngineError, ErrorKind};
 use super::location::REPOSITORY_ENTRIES;
 use super::repo::Probe;
-use crate::constants::{PROBE_TIMEOUT, PROCESS_POLL_INTERVAL, RCLONE_LOOK_FLAGS};
+use crate::constants::{
+    CHILD_STDERR_TAIL, PROBE_TIMEOUT, PROCESS_POLL_INTERVAL, RCLONE_CHANGE_TIMEOUT,
+    RCLONE_LISTING_LIMIT, RCLONE_LOOK_FLAGS,
+};
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -49,14 +52,16 @@ const EXIT_DIRECTORY_NOT_FOUND: i32 = 3;
 const EXIT_FILE_NOT_FOUND: i32 = 4;
 
 /// Stellarshot's own rclone configuration file.
+///
+/// With no home directory to put it in, a path nothing can be created at
+/// ([`crate::paths::unusable`]): never a shared directory such as `/tmp`,
+/// where another user could already own the folder that would hold OAuth
+/// tokens.
 pub fn config_path() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("stellarshot")
-        .join("rclone.conf")
+    match crate::paths::config_root() {
+        Some(root) => root.join("stellarshot").join("rclone.conf"),
+        None => crate::paths::unusable().join("rclone.conf"),
+    }
 }
 
 /// `remote:path` in rclone's syntax.
@@ -64,9 +69,39 @@ pub fn target(remote: &str, path: &str) -> String {
     format!("{remote}:{path}")
 }
 
-/// Run rclone with Stellarshot's configuration.
+/// rclone, set up to run against Stellarshot's own configuration and nothing
+/// of the user's: untranslated output (`LC_ALL=C`, for anything that reads
+/// it), and none of the `RCLONE_*` environment the user's shell may carry.
+/// One of those can change what a command does, `RCLONE_DRY_RUN=true`
+/// turning a delete into a no-op that still reports success, say. What a
+/// caller needs rclone to see it sets itself, after this.
+pub(super) fn command() -> Command {
+    let mut command = Command::new(RCLONE);
+    command.env("LC_ALL", "C");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("RCLONE_") {
+            command.env_remove(name);
+        }
+    }
+    command
+}
+
+/// `err` from starting rclone: only "not found" means it is not installed.
+fn spawn_error(err: std::io::Error) -> EngineError {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        EngineError::new(ErrorKind::RcloneMissing, RCLONE)
+    } else {
+        EngineError::from(err)
+    }
+}
+
+/// Run rclone with Stellarshot's configuration, for the commands that change
+/// things (deleting a repository's entries, forgetting a remote). Bounded by
+/// [`RCLONE_CHANGE_TIMEOUT`], which is far longer than a look: a big
+/// repository takes a while to delete, but a stalled connection must still
+/// end in an error, not a dialog that never closes.
 fn rclone(config: &Path, args: &[&str]) -> Result<Output, EngineError> {
-    rclone_with_env(config, args, &[])
+    rclone_limited(config, &[], args, RCLONE_CHANGE_TIMEOUT)
 }
 
 /// [`rclone`], with extra environment variables set on the child. Used only
@@ -78,76 +113,76 @@ fn rclone_with_env(
     envs: &[(&str, &str)],
 ) -> Result<Output, EngineError> {
     debug_log!(ENGINE, "rclone {}", redact(args).join(" "));
-    Command::new(RCLONE)
-        .env("LC_ALL", "C")
+    command()
         .envs(envs.iter().copied())
         .arg("--config")
         .arg(config)
         .args(args)
         .output()
-        .map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                EngineError::new(ErrorKind::RcloneMissing, RCLONE)
-            } else {
-                EngineError::from(err)
-            }
-        })
+        .map_err(spawn_error)
 }
 
 /// Run rclone with Stellarshot's configuration, killing it if it has not
 /// finished within `limit`. For commands that only look: a location that does
 /// not answer must turn into an explanation, not a wait without end.
 fn rclone_within(config: &Path, args: &[&str], limit: Duration) -> Result<Output, EngineError> {
+    rclone_limited(config, RCLONE_LOOK_FLAGS, args, limit)
+}
+
+/// [`rclone_within`], with the extra `flags` placed before `args`.
+fn rclone_limited(
+    config: &Path,
+    flags: &[&str],
+    args: &[&str],
+    limit: Duration,
+) -> Result<Output, EngineError> {
     debug_log!(
         ENGINE,
         "rclone {} (within {limit:?})",
         redact(args).join(" ")
     );
-    let mut child = Command::new(RCLONE)
-        .env("LC_ALL", "C")
+    let mut child = command()
         .arg("--config")
         .arg(config)
-        .args(RCLONE_LOOK_FLAGS)
+        .args(flags)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        // Its own group, so a timeout reaches anything rclone started too.
+        .process_group(0)
         .spawn()
-        .map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                EngineError::new(ErrorKind::RcloneMissing, RCLONE)
-            } else {
-                EngineError::from(err)
-            }
-        })?;
-    // Read both pipes as they fill, so a long listing cannot block rclone.
-    let read = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            bytes
+        .map_err(spawn_error)?;
+    // Read both pipes as they fill, so a long listing cannot block rclone,
+    // but keep only what is used: a folder with millions of entries must not
+    // fill memory. Only the start of a listing matters (see [`classify`]),
+    // and only the end of what rclone said explains a failure.
+    let stdout = {
+        let pipe = child.stdout.take();
+        std::thread::spawn(move || match pipe {
+            Some(pipe) => crate::bounded::read_head(pipe, RCLONE_LISTING_LIMIT).0,
+            None => Vec::new(),
         })
     };
-    let stdout = read(
-        child
-            .stdout
-            .take()
-            .map(|p| Box::new(p) as Box<dyn Read + Send>),
-    );
-    let stderr = read(
-        child
-            .stderr
-            .take()
-            .map(|p| Box::new(p) as Box<dyn Read + Send>),
-    );
+    let stderr = {
+        let pipe = child.stderr.take();
+        std::thread::spawn(move || match pipe {
+            Some(pipe) => crate::bounded::read_tail(pipe, CHILD_STDERR_TAIL),
+            None => Vec::new(),
+        })
+    };
     let deadline = Instant::now() + limit;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
         if Instant::now() >= deadline {
+            if let Some(group) = i32::try_from(child.id())
+                .ok()
+                .and_then(rustix::process::Pid::from_raw)
+            {
+                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+            }
             let _ = child.kill();
             let _ = child.wait();
             debug_log!(ENGINE, "rclone {} timed out", redact(args).join(" "));
@@ -167,7 +202,7 @@ fn rclone_within(config: &Path, args: &[&str], limit: Duration) -> Result<Output
 
 /// Whether rclone is installed and runs.
 pub fn available() -> bool {
-    Command::new(RCLONE)
+    command()
         .arg("version")
         .output()
         .is_ok_and(|output| output.status.success())
@@ -305,10 +340,13 @@ pub(crate) fn remote_exists(config: &Path, name: &str) -> bool {
 
 /// The remotes in the user's own rclone configuration.
 pub fn user_remotes() -> Result<Vec<String>, EngineError> {
+    // The user's own configuration, so their own `RCLONE_*` environment
+    // (an encrypted config's password, say) is left as it is.
     let output = Command::new(RCLONE)
+        .env("LC_ALL", "C")
         .arg("listremotes")
         .output()
-        .map_err(|err| EngineError::new(ErrorKind::RcloneMissing, err.to_string()))?;
+        .map_err(spawn_error)?;
     if !output.status.success() {
         return Err(EngineError::new(ErrorKind::Internal, stderr(&output)));
     }
@@ -324,9 +362,10 @@ pub fn user_remotes() -> Result<Vec<String>, EngineError> {
 /// removes their own copy.
 pub fn copy_user_remote(config: &Path, user_remote: &str, name: &str) -> Result<(), EngineError> {
     let output = Command::new(RCLONE)
-        .args(["config", "show", user_remote])
+        .env("LC_ALL", "C")
+        .args(["config", "show", "--", user_remote])
         .output()
-        .map_err(|err| EngineError::new(ErrorKind::RcloneMissing, err.to_string()))?;
+        .map_err(spawn_error)?;
     if !output.status.success() {
         return Err(EngineError::new(ErrorKind::Internal, stderr(&output)));
     }
@@ -355,12 +394,11 @@ fn append_section(config: &Path, name: &str, body: &str) -> Result<(), EngineErr
 /// had become readable by others (copied, restored from a backup) would
 /// otherwise receive a token first and be tightened only afterwards.
 fn make_private(config: &Path) -> Result<(), EngineError> {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-    if let Some(dir) = config.parent().filter(|dir| !dir.exists()) {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    // Always, not only when it is missing: one that already exists may be
+    // someone else's, or readable by others.
+    if let Some(dir) = config.parent() {
+        crate::paths::tighten_private(dir).map_err(|err| EngineError::io(dir, err))?;
     }
     std::fs::OpenOptions::new()
         .create(true)
@@ -500,6 +538,34 @@ mod tests {
         assert!(
             text.contains("[old]") && text.contains("[copied]"),
             "nothing lost"
+        );
+    }
+
+    #[test]
+    fn a_loose_folder_for_the_configuration_is_tightened_not_trusted() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::TempDir::new().unwrap();
+        let folder = root.path().join("stellarshot");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
+
+        make_private(&folder.join("rclone.conf")).unwrap();
+
+        assert_eq!(mode(&folder), 0o700);
+    }
+
+    #[test]
+    fn a_symlinked_folder_for_the_configuration_is_refused() {
+        let root = tempfile::TempDir::new().unwrap();
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        let folder = root.path().join("stellarshot");
+        std::os::unix::fs::symlink(&elsewhere, &folder).unwrap();
+
+        assert!(make_private(&folder.join("rclone.conf")).is_err());
+        assert!(
+            !elsewhere.join("rclone.conf").exists(),
+            "no token file was created through the link"
         );
     }
 

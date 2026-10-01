@@ -76,32 +76,19 @@ pub enum EventKind {
     },
 }
 
-/// Where an action that produced an event came from: distinguishes an
-/// action taken through the desktop window (or a scheduled run) from one
-/// taken through the web interface, which is otherwise indistinguishable
-/// from the same action done locally.
+/// Where an action that produced an event came from: the desktop window (or
+/// a scheduled run), or some other program recording into the same history.
+///
+/// `Other` also catches any source a later or earlier version wrote that
+/// this one does not know, so an unfamiliar value never makes a whole log
+/// unreadable — which would lose the history, or leave an unreadable file
+/// that nothing is allowed to write over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Source {
     #[default]
     Desktop,
-    Web,
-}
-
-/// Which of the web interface's own auth methods let a [`record_web`]
-/// request through (OWASP ASVS 5.0 §16 asks that a security-relevant event
-/// name the method, not just that one succeeded).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WebAuthMethod {
-    Password,
-    Token,
-}
-
-/// Who made a [`record_web`] request: the peer address and which auth
-/// method it authenticated with.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WebContext {
-    pub addr: String,
-    pub method: WebAuthMethod,
+    #[serde(other)]
+    Other,
 }
 
 /// One entry in the log.
@@ -111,17 +98,9 @@ pub struct Event {
     pub time: i64,
     pub kind: EventKind,
     /// Missing in a log entry written before this field existed, which was
-    /// always a desktop or scheduled action: never a wrong guess, since the
-    /// web interface did not exist yet either.
+    /// always a desktop or scheduled action: never a wrong guess.
     #[serde(default)]
     pub source: Source,
-    /// Set only by [`record_web`]: `None` for every desktop or scheduled
-    /// entry, and for a `Source::Web` entry recorded before this field
-    /// existed or from a place with no request to attribute (see
-    /// `web::routes::drain_running_jobs`, which still calls the plain
-    /// [`record`]).
-    #[serde(default)]
-    pub web: Option<WebContext>,
 }
 
 /// The stored form: a plain `Vec` under one config key, newest last.
@@ -201,36 +180,7 @@ fn push(log: &mut Vec<Event>, event: Event) {
 
 /// Add `kind` at `time` to `profile_id`'s log, from `source`.
 pub fn record(profile_id: &str, time: i64, kind: EventKind, source: Source) {
-    push_event(
-        profile_id,
-        Event {
-            time,
-            kind,
-            source,
-            web: None,
-        },
-    );
-}
-
-/// Same as [`record`], but for a `Source::Web` event that has a request to
-/// attribute: keeps the peer address and which auth method let it through,
-/// alongside the profile's history (OWASP ASVS 5.0 §16).
-pub fn record_web(
-    profile_id: &str,
-    time: i64,
-    kind: EventKind,
-    addr: String,
-    method: WebAuthMethod,
-) {
-    push_event(
-        profile_id,
-        Event {
-            time,
-            kind,
-            source: Source::Web,
-            web: Some(WebContext { addr, method }),
-        },
-    );
+    push_event(profile_id, Event { time, kind, source });
 }
 
 fn push_event(profile_id: &str, event: Event) {
@@ -246,9 +196,45 @@ fn push_event(profile_id: &str, event: Event) {
     }
 }
 
+/// Fold `incoming` into `log`: every event not already there, oldest first,
+/// trimmed to [`EVENT_LOG_CAPACITY`] from the old end only after everything is
+/// in and sorted. Trimming as each one arrives would let a file full of old
+/// events push this installation's real recent ones out first. Pure, so it
+/// can be tested without touching the state store.
+///
+/// Imported events are recorded as [`Source::Other`]: the file is not this
+/// installation's own record of what it did, so none of it is presented as
+/// something the desktop or a scheduled run did. "Already there" therefore
+/// compares the time and kind only, so importing an export this installation
+/// made itself does not double every entry.
+fn merge_into(log: &mut Vec<Event>, incoming: &[Event]) {
+    // Only the newest `EVENT_LOG_CAPACITY` of them could survive the trim;
+    // bounding the input also bounds the quadratic scan below.
+    let mut incoming: Vec<&Event> = incoming.iter().collect();
+    incoming.sort_by_key(|event| event.time);
+    let skip = incoming.len().saturating_sub(EVENT_LOG_CAPACITY);
+    for event in incoming.into_iter().skip(skip) {
+        let present = log
+            .iter()
+            .any(|have| have.time == event.time && have.kind == event.kind);
+        if !present {
+            log.push(Event {
+                source: Source::Other,
+                ..event.clone()
+            });
+        }
+    }
+    log.sort_by_key(|event| event.time);
+    if log.len() > EVENT_LOG_CAPACITY {
+        let excess = log.len() - EVENT_LOG_CAPACITY;
+        log.drain(0..excess);
+    }
+}
+
 /// Add every one of `incoming` that is not already present (a settings
 /// import, which may bring events this installation already has if it is
-/// run more than once), oldest first, capped the same as [`record`].
+/// run more than once): see [`merge_into`]. Does disk I/O; call it off the
+/// UI thread.
 pub fn merge(profile_id: &str, incoming: &[Event]) {
     let Some(store) = store() else {
         return;
@@ -256,12 +242,7 @@ pub fn merge(profile_id: &str, incoming: &[Event]) {
     let Ok(mut log) = load_checked(&store, profile_id) else {
         return;
     };
-    for event in incoming {
-        if !log.0.contains(event) {
-            push(&mut log.0, event.clone());
-        }
-    }
-    log.0.sort_by_key(|event| event.time);
+    merge_into(&mut log.0, incoming);
     if let Err(err) = store.set(&key(profile_id), &log) {
         error_log!(CONFIG, "could not merge history for {profile_id}: {err}");
     }
@@ -330,7 +311,6 @@ mod tests {
             time,
             kind,
             source: Source::Desktop,
-            web: None,
         }
     }
 
@@ -373,6 +353,48 @@ mod tests {
         assert_eq!(log.len(), EVENT_LOG_CAPACITY);
         assert_eq!(log.first().unwrap().time, 5, "the first 5 were dropped");
         assert_eq!(log.last().unwrap().time, EVENT_LOG_CAPACITY as i64 + 4);
+    }
+
+    #[test]
+    fn importing_old_history_never_evicts_the_newest_local_events() {
+        let cap = EVENT_LOG_CAPACITY as i64;
+        let mut log: Vec<Event> = (1000..1000 + cap)
+            .map(|time| event(time, EventKind::BackedUp))
+            .collect();
+        let incoming: Vec<Event> = (0..cap)
+            .map(|time| event(time, EventKind::BackedUp))
+            .collect();
+
+        merge_into(&mut log, &incoming);
+
+        assert_eq!(log.len(), EVENT_LOG_CAPACITY);
+        assert_eq!(
+            log.first().unwrap().time,
+            1000,
+            "every local event survived"
+        );
+        assert_eq!(log.last().unwrap().time, 1000 + cap - 1);
+    }
+
+    #[test]
+    fn importing_twice_does_not_duplicate_and_marks_events_as_other() {
+        let mut log = vec![event(5, EventKind::BackedUp)];
+        let incoming = [
+            event(5, EventKind::BackedUp),
+            event(7, EventKind::PasswordChanged),
+        ];
+
+        merge_into(&mut log, &incoming);
+        merge_into(&mut log, &incoming);
+
+        let times: Vec<i64> = log.iter().map(|e| e.time).collect();
+        assert_eq!(times, vec![5, 7]);
+        assert_eq!(log[0].source, Source::Desktop, "the local one is untouched");
+        assert_eq!(
+            log[1].source,
+            Source::Other,
+            "an imported one is not claimed"
+        );
     }
 
     #[test]
@@ -421,13 +443,25 @@ mod tests {
         assert_eq!(loaded.source, Source::Desktop);
     }
 
+    /// Entries an earlier version recorded for a front end that no longer
+    /// exists in this program: a `Web` source, and a `web` context naming a
+    /// peer. Neither is a field or a variant any more, and neither may make
+    /// the entry — or the whole log it is in — unreadable, or nothing would
+    /// be allowed to write over it and that backup's history would freeze.
     #[test]
-    fn a_web_event_logged_before_context_existed_is_read_back_with_none() {
-        // What was actually on disk once `source` existed but `web` did
-        // not: a `Web` source with no `web` key at all.
-        let stored = r#"(time:1700000000,kind:BackedUp,source:Web)"#;
+    fn an_entry_from_a_source_this_version_does_not_know_still_loads() {
+        let stored = r#"(time:1700000000,kind:BackedUp,source:Web,web:Some((addr:"10.0.0.2:5555",method:Password)))"#;
+
         let loaded: Event = ron::from_str(stored).unwrap();
-        assert_eq!(loaded.source, Source::Web);
-        assert_eq!(loaded.web, None);
+
+        assert_eq!(loaded.source, Source::Other);
+        assert_eq!(loaded.kind, EventKind::BackedUp);
+    }
+
+    #[test]
+    fn a_source_written_by_a_later_version_loads_as_other_too() {
+        let stored = r#"(time:1700000000,kind:BackedUp,source:SomethingNew)"#;
+        let loaded: Event = ron::from_str(stored).unwrap();
+        assert_eq!(loaded.source, Source::Other);
     }
 }

@@ -104,6 +104,7 @@ wizard-estimate = { $size } · { $files ->
    *[other] { $files } Dateie
 }
 wizard-estimate-counting = Wird zellt …
+wizard-estimate-failed = D Grössi het nöd chöne usgrechnet wärde.
 wizard-estimate-note = Di erscht Sicherig isch nach Kompression und Deduplizierig meischtens chliiner. Spöteri Sicherige speichered nur Änderige.
 wizard-where-intro = Wähl, wo d Sicherig uufbewahrt wird: en läre Ordner, am beschte uf emne andere Laufwerk.
 wizard-where-title = Speicherort
@@ -133,12 +134,15 @@ back = Zrugg
 next = Wiiter
 edit = Bearbeite
 remove = Entferne
+remove-item = { $item } entferne
 dismiss = Verwerfe
 delete = Lösche
 cancel = Abbreche
 password = Passwort
 remove-title = „{ $name }“ entferne?
 remove-body = Sterneschuss vergisst die Sicherig und s gspeicherete Passwort. D Sicherig und iri Momentuufnahme wärded nöd glöscht und chönd spöter wider göffnet wärde.
+remove-keyring-failed = D Sicherig isch entfernt worde, aber ihres gspeicherete Passwort hät nöd chöne usem Schlüsselbund glöscht wärde. Du chasch es dert sälber lösche.
+edit-backup-removed = Die Sicherig isch entfernt worde, während du si bearbeitet hesch. Es isch nüt gspeicheret worde.
 delete-title = „{ $name }“ und alli Date lösche?
 delete-body = Das löscht d Sicherig und jedi Momentuufnahm drin für immer. Anderi Dateie im gliiche Ordner blibed unberüert. Gib { $name } zum Bstätige ii.
 delete-snapshot-title = Die Momentuufnahm lösche?
@@ -147,6 +151,8 @@ delete-snapshot-body = D Momentuufnahm vo { $time } wird für immer glöscht. Da
 # Errors
 error-title = Öppis isch schiefgange
 error-details = Details: { $details }
+error-settings-not-saved = D Änderig hät nöd chöne gspeicheret wärde.
+error-config-unreadable = En Teil vo de Istellige vo Stellarshot hät nöd chöne gläse wärde, drum cha nüt gspeicheret wärde bis das behobe isch. Es Kopie vo dr ursprünglige Datei isch unter { $path } gspeicheret worde.
 location-not-empty = { $path } hät scho anderi Dateie drin. Wähl en läre Ordner oder en Ordner, wo scho es Archiv drin hät.
 create-repo-failed = S Archiv hät nöd chöne gmacht wärde.
 delete-repo-failed = S Archiv hät nöd chöne glöscht wärde.
@@ -209,6 +215,7 @@ place-check-failed = De Speicherort hät nöd chöne prüeft wärde.
 place-check = Prüefe
 place-no-drives = Es sind kei Wächseldatenträger aagschlosse. Schlüss eine aa und gang dänn zrugg und wider wiiter.
 place-folder-on-drive = Ordner uf em Laufwerk
+place-folder-invalid = De Ordner muess en eifache Name oder Pfad uf em Laufwerk sii, ohni „.“ oder „..“.
 place-host = Server
 place-user = Benutzername
 place-user-placeholder = Din Benutzername uf dem Computer
@@ -249,6 +256,10 @@ selected-count = { $count ->
    *[other] { $count } Element usgwählt
 }
 restore-button = Widerherstelle …
+restore-replace-button = { $count ->
+    [one] 1 Datei ersetze …
+   *[other] { $count } Dateie ersetze …
+}
 search-placeholder = Die Momentuufnahm durchsueche
 search-results = { $count ->
     [one] 1 Träffer
@@ -465,7 +476,9 @@ error-invalid-remote = Das Cloud-Remote vo däre Sicherig wird vo Stellarshot n�
 error-unsafe-path = E Datei i dere Sicherig zeigt uf en Ort usserhalb vom Wiederherstelligsordner ({ $path }), drum isch nüt wiederhergstellt worde.
 error-not-found = { $path } isch nid i dere Sicherig.
 error-ambiguous = { $path } passt zu mehr als einere Sicherig. Brüch en längeres Präfix.
-error-too-busy = D Weboberflächi hät scho so vieli Aafroge für die Sicherig offe, wie si gliichzitig zuelaht. Versuech's i Chürzi wieder.
+error-too-large-to-open = Das isch z gross zum as temporäri Kopie ufmache ({ $size }). Stell es stattdessä i enen Ordner wieder häär.
+error-duplicate-name = Zwöi vo de usgwählte Elemänt heisse beidi „{ $name }“ und würded im gliiche Ordner ufenand lande. Stell sie einzeln oder in verschideni Ordner wieder häär.
+error-too-busy = Für die Sicherig sind scho so vieli Vorgäng gliichzitig offe, wie erlaubt isch. Versuech's i Chürzi wieder.
 place-checking-for = Wird prüeft … { $time }
 wizard-creating = Wird gmacht … { $time }
 wizard-opening = Wird ufgmacht … { $time }
@@ -541,7 +554,7 @@ event-unmounted = Momentuufnahm { $snapshot } ushänkt
 history-empty = No isch nüt passiert.
 history-unknown-backup = (entfernti Sicherig)
 history-truncated = Zeigt die nöischte { $shown } vo { $total }
-history-via-web = Web
+history-via-other = Anders Programm
 notify-overdue = „{ $name }“ isch scho lang nüm gsicheret worde
 notify-overdue-body = Ziel isch zu de vorgsehene Zite nöd erreichbar gsi. { $schedule } Lueg, öb's verbunde isch, und mach de Sterneschuss uf, zum jetzt z sichere.
 settings-backup-title = Sterneschuss sini eigete Iistellige sichere und widerherstelle
@@ -571,6 +584,7 @@ settings-import-done-body = { $added ->
    *[other] { $rejected } hätt mer nöd sicher importiere chöne und sind übersprunge worde.
 }
 settings-import-failed = D Iistellige händ nöd chöne importiert wärde.
+settings-import-newer = Die Datei isch vo ere neuere Version vo Stellarshot gspeicheret worde. Aktualisier Stellarshot und probier s dänn nomal.
 settings-import-hooks-disabled = Importierti Sicherige starte mit usgschaltetem Ziitplan und usgschalteti Hooks. Lueg si aa, bevor de sie iischaltisch.
 home = Übersicht
 home-backups-title = Sicherige
@@ -598,6 +612,7 @@ place-bandwidth-limit-placeholder = z. B. 1M
 applet-tooltip = Stellarshot
 applet-none = Es isch na kei Sicherig igrichtet.
 applet-open = Stellarshot öffne
+applet-open-failed = Stellarshot het nöd chöne gstartet wärde.
 wizard-exclude-caches = Cache-Ordner uslah
 wizard-exclude-caches-description = Ordner überspringe, wo sich mit re CACHEDIR.TAG-Datei als temporäri Cache-Date kennzeichnet.
 wizard-git-ignore = .gitignore beachte
@@ -620,68 +635,12 @@ settings-no-cache = Gar nüt zwüscheschpeichere
 settings-no-cache-description = Langsamer, aber nüt, wo sich uf emne Computer mit wenig Speicherplatz lohnt z bhalte.
 settings-global-excludes-title = Us jeder Sicherig uslah
 settings-global-excludes-description = Glob-Muster wie node_modules oder target, wo uf jedi Sicherig aagwendet wärde, ohni si jedere einzelne dezuezfüege.
-settings-web-title = Weboberflächi
-web-scope-off = Us
-web-scope-off-description = D Weboberflächi isch überhaupt nid erreichbar.
-web-scope-localhost = Nur dää Computer
-web-scope-localhost-description = Nur vo dääm Computer sälber erreichbar, zum Bispiel über en eigete SSH-Tunnel.
-web-scope-lan = Im Netzwerk erreichbar
-web-scope-lan-description = Vo jedem andere Gerät im gliiche Netzwerk erreichbar.
-web-port = Port
-web-port-description = Wo Port d Weboberflächi lost.
-web-port-invalid = Das isch kei gültigi Portnummere. Sie muess zwüsche 1 und 65535 sii.
-web-address-label = Wird erreichbar sii uf:
-web-auth-password = Gmeinsams Passwort
-web-auth-password-description = Es Passwort, aapaart vom Passwort vo jeder Sicherig, zum Aamelde nötig.
-web-password-set = Passwort festlege
-web-password-placeholder = Neus Passwort
-web-password-saved-body = D Weboberflächi bruucht das bim nächschte Start.
-web-password-failed = S Passwort vo de Weboberflächi hät nid chöne gspeicheret wärde.
-web-password-length = { $count } vo { $minimum ->
-    [one] { $minimum } Zeiche
-   *[other] { $minimum } Zeiche
-}
-web-auth-token = API-Token
-web-auth-token-description = Es erzeugts Token für d programmgstürti Nutzig vo de API vo de Weboberflächi.
-web-token-generate = Token
-web-token-generate-button = Neus Token erzeuge…
-web-token-exists = Es Token isch scho erzeugt worde. Es wiiters ersetzt s.
-web-token-none = Es isch no kes Token erzeugt worde.
-web-token-title = Neus API-Token
-web-token-body = Kopier das Token jetzt — s wird nid nomol aazeigt.
-web-token-copy = Kopiere
-web-token-regenerate-title = S aktuelle Token ersetze?
-web-token-regenerate-body = Alles, wo scho s aktuelle Token bruucht, hört uf funktioniere, sobald es neus erzeugt wird.
-web-token-regenerate-confirm = Erneuere
-
-    Das wird nur eimal aazeigt. Bewahr s sicher uf: es wiiters erzeugts Token ersetzt das da.
-web-auth-pam = D eigeti Aamäldig vo dääm Computer
-web-auth-pam-description = Aamälde mit em gliiche Passwort, wo mer sich a dääm Computer aamäldet.
-web-allowed-title = Erlaubti Adresse
-web-allowed-description = Nur die Adresse oder Bereich dörfe d Weboberflächi erreiche. Leer heisst jedi Adress, wo d Iistellig obe scho erlaubt.
-web-allowed-placeholder = Adress oder Bereich, zum Bispiel 192.168.1.0/24
-web-allowed-invalid = Ungültigi Adress oder ungültige Bereich, zum Bispiel 192.168.1.0/24 oder 192.168.1.1
-web-tls-title = TLS-Zertifikat
-web-tls-description = D Weboberflächi wird immer über HTTPS erreicht. Standardmässig erzeugt und bruucht sie es eigets selbschtsigniertes Zertifikat; en Browser bruucht defür einisch e Vertroueusnahm. Leg statt däm es eigets Zertifikat und en eigete Schlüssel fescht, falls de eis hesch, zum Bispiel vor ere Zertifizierigsstell, wo dini Geräte scho vertroue.
-web-tls-cert = Zertifikat
-web-tls-key = Privater Schlüssel
-web-tls-default = Selbschtsigniert (automatisch erzeugt)
-web-tls-choose = Uswähle …
-web-tls-reset = Standard bruuche
-web-tls-cert-title = Zertifikatsdatei uswähle
-web-tls-key-title = Datei mit private Schlüssel uswähle
-web-daemon-title = Dienscht
-web-daemon-status = Status
-web-daemon-status-active = Lauft
-web-daemon-status-inactive = Aghalte
-web-daemon-status-failed = Start fehlgschlage
-web-daemon-status-unknown = Nöd installiert
-web-daemon-start = Starte
-web-daemon-stop = Ahalte
-web-daemon-restart = Neu starte
-web-daemon-action-failed = De Dienscht vo de Weboberflächi hät nöd gsteuret wärde chöne.
-web-docs-link = Mee über d Weboberflächi und ihri API erfahre
 pin-snapshot-failed = D Aaghänkig vo de Momentuufnahm hät nöd chöne gänderet wärde.
 pin-snapshot = Aahefte, dass s Ufruume die Momentuufnahm nie entfernt
 unpin-snapshot = Lösmache, dass s Ufruume die Momentuufnahm wieder chan entferne
 delete-snapshot-row = Die Momentuufnahm lösche
+snapshot-label = { $time } · { $id }
+hook-row = { $timing } · { $command }
+size-removed = −{ $size }
+compression-ratio = { $ratio }×
+list-separator = {", "}

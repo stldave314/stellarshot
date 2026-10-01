@@ -15,7 +15,9 @@ use std::process::Command;
 
 use atomicwrites::{AllowOverwrite, AtomicFile};
 
-use crate::constants::{SCHEDULED_UNIT_NICE, SCHEDULED_UNIT_RANDOMIZED_DELAY};
+use crate::constants::{
+    SCHEDULED_UNIT_NICE, SCHEDULED_UNIT_RANDOMIZED_DELAY, SCHEDULED_UNIT_TIMEOUT_START, TERM_GRACE,
+};
 use crate::debug::SCHED;
 use crate::profile::{Destination, Profile, Schedule, valid_id};
 use crate::{debug_log, error_log};
@@ -24,11 +26,7 @@ const PREFIX: &str = "stellarshot-backup-";
 
 /// Where the user's own systemd units live.
 fn unit_dir() -> Option<PathBuf> {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .map(|config| config.join("systemd/user"))
+    crate::paths::config_root().map(|config| config.join("systemd/user"))
 }
 
 /// A filesystem UUID safe to put in a unit file's `PathExists=` line. Real
@@ -79,21 +77,47 @@ fn exec_quote(path: &Path) -> Option<String> {
     Some(format!("\"{escaped}\""))
 }
 
+/// `path` for a `Condition…=` line: systemd takes the rest of the line
+/// literally there (no quoting), expanding only `%` specifiers.
+pub(crate) fn condition_path(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    if text.contains(['\n', '\r']) {
+        return None;
+    }
+    Some(text.replace('%', "%%"))
+}
+
 pub fn service_text(executable: &Path, id: &str) -> Option<String> {
     if !valid_id(id) {
         return None;
     }
     let exec = exec_quote(executable)?;
+    let present = condition_path(executable)?;
+    // `Type=oneshot` has no start timeout of its own, so `TimeoutStartSec`
+    // is what keeps a run stuck on a dead mount from staying "activating"
+    // forever, with every later timer fire skipped without a word.
+    // `KillMode=mixed` sends `systemctl stop`'s SIGTERM to the main process
+    // only — which runs the backup's After hooks and stops its own group
+    // itself (see `proc_signal`) — and SIGKILL to everything left at
+    // `TimeoutStopSec`. `UMask=0077` keeps what a run writes private. No
+    // `NoNewPrivileges`: a hook may legitimately `sudo`.
     Some(format!(
         "# Written by Stellarshot; changes are overwritten.\n\
          [Unit]\n\
          Description=Stellarshot scheduled backup\n\
+         ConditionFileIsExecutable={present}\n\
          \n\
          [Service]\n\
          Type=oneshot\n\
          ExecStart={exec} --scheduled {id}\n\
          Nice={SCHEDULED_UNIT_NICE}\n\
-         IOSchedulingClass=idle\n"
+         IOSchedulingClass=idle\n\
+         TimeoutStartSec={start}\n\
+         TimeoutStopSec={stop}\n\
+         KillMode=mixed\n\
+         UMask=0077\n",
+        start = SCHEDULED_UNIT_TIMEOUT_START.as_secs(),
+        stop = TERM_GRACE.as_secs(),
     ))
 }
 
@@ -511,8 +535,33 @@ mod tests {
             "ExecStart=\"/usr/bin/stellarshot\" --scheduled {ID}\n"
         )));
         assert!(service.contains("Type=oneshot\n"));
+        assert!(
+            service.contains("ConditionFileIsExecutable=/usr/bin/stellarshot\n"),
+            "a removed package must make the timer's runs skip quietly, not fail: {service}"
+        );
         assert!(service.contains("Nice=10\n"));
         assert!(service.contains("IOSchedulingClass=idle\n"));
+        assert!(service.contains("TimeoutStartSec=86400\n"));
+        assert!(service.contains("TimeoutStopSec=130\n"));
+        assert!(service.contains("KillMode=mixed\n"));
+        assert!(service.contains("UMask=0077\n"));
+        assert!(
+            !service.contains("NoNewPrivileges"),
+            "a hook may need sudo; see service_text"
+        );
+    }
+
+    #[test]
+    fn a_condition_path_is_literal_except_for_percent_specifiers() {
+        assert_eq!(
+            condition_path(Path::new("/home/alex/My Apps/100%/stellarshot")).as_deref(),
+            Some("/home/alex/My Apps/100%%/stellarshot"),
+            "spaces and quotes are literal on a Condition line; only % is special"
+        );
+        assert_eq!(
+            condition_path(Path::new("/tmp/bad\nExecStartPost=/bin/rm")),
+            None
+        );
     }
 
     #[test]

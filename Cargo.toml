@@ -23,10 +23,6 @@ path = "src/main.rs"
 name = "stellarshot-applet"
 path = "src/bin/applet.rs"
 
-[[bin]]
-name = "stellarshot-web"
-path = "src/bin/web.rs"
-
 [features]
 default = []
 # Forces developer debug logging off at compile time. Every packaging target
@@ -50,8 +46,10 @@ bytes = "1"
 # and restore options take. Not re-exported, so the type only matches when
 # this crate resolves to the same version rustic_core does.
 bytesize = "2"
-# The local backend is always built; rclone carries SFTP and cloud storage.
-rustic_backend = { version = "0.7", default-features = false, features = ["rclone", "rest"] }
+# The local backend is always built. `rest` is how it reaches the
+# `rclone serve restic` Stellarshot starts itself (`engine::serve`), which
+# carries SFTP and cloud storage.
+rustic_backend = { version = "0.7", default-features = false, features = ["rest"] }
 serde_json = "1"
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "process", "io-util", "net", "rt", "rt-multi-thread", "signal", "sync", "time"] }
@@ -70,6 +68,10 @@ oo7 = { version = "0.6", default-features = false, features = ["tokio", "native_
 ron = "0.12"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+# The `log` output rustic and rclone produce, forwarded by
+# `app::settings::set_logger`; also what `engine::serve` reports rclone's
+# own output through.
+log = "0.4"
 gethostname = "1"
 # Downloading a folder straight from a snapshot, without restoring it:
 # rustic's own `dump` only covers a single file, so a folder is Stellarshot's
@@ -106,65 +108,6 @@ atomicwrites = { git = "https://github.com/jackpot51/rust-atomicwrites" }
 # libfuse directly), so this is a small filesystem of Stellarshot's own,
 # backed by the same `Browser` the restore page already reads through.
 fuser = "0.18"
-# Generating a web interface API token: high-entropy bytes, not a UUID
-# (fewer bits, not meant as a secret).
-rand = "0.10"
-# The web interface's own HTTP server (`stellarshot-web`), on the same
-# tokio runtime already used elsewhere. Already pulled in transitively
-# (through libcosmic's own dependencies); these are direct dependencies on
-# compatible versions, not a second copy.
-axum = "0.8"
-# Matching addresses and CIDR ranges in the web interface's IP allow-list.
-ipnet = "2"
-# Decoding the web interface's HTTP Basic credentials.
-base64 = "0.23"
-# Comparing the web interface's password and API token in constant time, so
-# a network attacker gains nothing from how long a wrong guess took to
-# reject. Already pulled in transitively; a direct dependency on the same
-# version, not a second copy.
-subtle = "2"
-# A version pin, unlike every other entry, would need its own comment to
-# justify; there is none, so this tracks the latest compatible `0.8`/`0.14`.
-axum-server = { version = "0.8", features = ["tls-rustls"] }
-# `TokioTimer`, for the header-read timeout and HTTP/2 keepalive on
-# `axum_server::Server::http_builder()`'s own hyper connection builder, which
-# has none by default. Already pulled in transitively through axum-server
-# itself, at the same version; this is a direct dependency, not a second
-# copy.
-hyper-util = { version = "0.1", features = ["tokio"] }
-# Delegating `AsyncRead`/`AsyncWrite` through the web interface's own
-# accept-time allow-list/connection-cap wrapper without hand-written unsafe
-# pin projection. Already pulled in transitively; a direct dependency on
-# the same version, not a second copy.
-pin-project-lite = "0.2"
-# Two crypto providers would otherwise end up compiled in: `aws-lc-rs`
-# (rustls's own default, and what axum-server actually uses at runtime) and
-# `ring` (rcgen's own default). Installed explicitly as the one default
-# provider at startup (`web::main`) so a future dependency enabling
-# `rustls/ring` cannot make rustls unable to choose and panic; `rcgen` below
-# is pinned off `ring` for the same reason. Already pulled in transitively
-# through axum-server/tokio-rustls, at the same version; this is a direct
-# dependency, not a second copy.
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
-rcgen = { version = "0.14", default-features = false, features = [
-    "aws_lc_rs",
-    "pem",
-] }
-# `rcgen::CertificateParams`'s own `not_before`/`not_after` fields, for the
-# web interface's self-signed certificate's validity period. Already
-# pulled in transitively through rcgen itself, at the same version; this
-# is a direct dependency, not a second copy.
-time = "0.3"
-# Reading a certificate file's DER bytes back out, for its SHA-256
-# fingerprint shown in Settings. Already pulled in transitively through
-# rustls itself, at the same version; this is a direct dependency, not a
-# second copy.
-rustls-pki-types = { version = "1", features = ["std"] }
-# Per-request timeout, a body size cap, and fixed response headers
-# (`X-Content-Type-Options`, `Cache-Control`, a strict CSP) for the web
-# interface. Already pulled in transitively through axum's own dependency
-# tree, at the same version; this is a direct dependency, not a second copy.
-tower-http = { version = "0.7", features = ["timeout", "limit", "set-header"] }
 # Wraps the repository password (`engine::Secret`) so it zeroizes on drop and
 # its `Debug` is redacted by the crate itself, not by a hand-written impl that
 # could rot if a new field were ever added without updating it too.
@@ -208,9 +151,6 @@ features = ["fluent-system", "desktop-requester"]
 # integration alike, without threading a feature flag through each one.
 stellarshot = { path = ".", features = ["test-support"] }
 tempfile = "3"
-# Only to prove the `log`-to-`tracing` bridge in `app::settings::set_logger`
-# actually forwards what rustic_core and rustic_backend log through it.
-log = "0.4"
 # Only to set and read extended attributes in tests; production xattr
 # handling is entirely internal to rustic_core.
 xattr = "1"
@@ -238,12 +178,10 @@ recommends = "rclone, fuse3"
 assets = [
     ["target/release/stellarshot", "usr/bin/", "755"],
     ["target/release/stellarshot-applet", "usr/bin/", "755"],
-    ["target/release/stellarshot-web", "usr/bin/", "755"],
     ["res/io.github.stldave314.Stellarshot.desktop", "usr/share/applications/", "644"],
     ["res/io.github.stldave314.Stellarshot.Applet.desktop", "usr/share/applications/", "644"],
     ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
-    ["docs/web-interface.md", "usr/share/doc/stellarshot/", "644"],
     ["res/io.github.stldave314.Stellarshot.metainfo.xml", "usr/share/metainfo/", "644"],
     ["README.md", "usr/share/doc/stellarshot/README.md", "644"],
 ]
@@ -255,13 +193,11 @@ recommends = { rclone = "*", fuse3 = "*" }
 assets = [
     { source = "target/release/stellarshot", dest = "/usr/bin/stellarshot", mode = "755" },
     { source = "target/release/stellarshot-applet", dest = "/usr/bin/stellarshot-applet", mode = "755" },
-    { source = "target/release/stellarshot-web", dest = "/usr/bin/stellarshot-web", mode = "755" },
     { source = "res/io.github.stldave314.Stellarshot.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.desktop", mode = "644" },
     { source = "res/io.github.stldave314.Stellarshot.Applet.desktop", dest = "/usr/share/applications/io.github.stldave314.Stellarshot.Applet.desktop", mode = "644" },
     { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot.svg", mode = "644" },
     { source = "res/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", dest = "/usr/share/icons/hicolor/scalable/apps/io.github.stldave314.Stellarshot-symbolic.svg", mode = "644" },
     { source = "res/io.github.stldave314.Stellarshot.metainfo.xml", dest = "/usr/share/metainfo/io.github.stldave314.Stellarshot.metainfo.xml", mode = "644" },
-    { source = "docs/web-interface.md", dest = "/usr/share/doc/stellarshot/web-interface.md", mode = "644" },
     { source = "LICENSE", dest = "/usr/share/licenses/stellarshot/LICENSE", mode = "644" },
 ]
 
@@ -270,3 +206,13 @@ lto = "thin"
 opt-level = 2
 strip = true
 codegen-units = 4
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"

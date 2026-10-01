@@ -6,6 +6,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # A new advisory can land against an unchanged Cargo.lock; without this
+  # `cargo deny` only ever runs when something else changes.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -33,7 +37,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            dbus gnome-keyring rclone rpm2cpio cpio
+            dbus gnome-keyring rclone rpm2cpio cpio fuse3
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
@@ -43,7 +47,7 @@ jobs:
 
       - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
-          tool: cargo-deb,cargo-generate-rpm
+          tool: cargo-deb,cargo-generate-rpm,cargo-auditable
 
       # tests/rest_server.rs needs a real rustic-server; no prebuilt binary
       # is published, so this builds it from source like any other tool
@@ -89,6 +93,117 @@ jobs:
           dpkg-deb --info dist/*.deb
           dpkg-deb --contents dist/*.deb
 
+      # What the smoke test below installs: the very files built and
+      # verified above, not a second build.
+      - name: Keep the packages for the install test
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packages
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Installing is the only proof a package installs: `dpkg-deb --contents`
+  # shows a file list, not that the dependencies resolve, the binaries find
+  # their libraries, or that removing it leaves nothing behind. Each leg
+  # starts from a clean distribution image.
+  package-smoke:
+    name: Install the ${{ matrix.kind }} in a clean system
+    needs: test
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: deb
+            image: ubuntu:24.04
+          - kind: rpm
+            image: fedora:latest
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: packages
+          path: dist
+
+      - name: Install the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.kind }}" == deb ]]; then
+            apt-get update
+            apt-get install -y --no-install-recommends ./dist/*.deb lintian
+            lintian --fail-on error dist/*.deb
+          else
+            dnf install -y ./dist/*.rpm
+          fi
+
+      # A missing shared library would only otherwise show up on a user's
+      # machine. `ldd` reports it as "not found"; the usage error is the
+      # binary starting far enough to parse its own arguments.
+      - name: The binaries start
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bin in stellarshot stellarshot-applet; do
+            if ldd "/usr/bin/$bin" | grep -F 'not found'; then
+              echo "$bin has unresolved libraries" >&2
+              exit 1
+            fi
+          done
+          status=0
+          stellarshot --run no-such-operation </dev/null || status=$?
+          test "$status" -eq 2
+
+      - name: Remove the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.kind }}" == deb ]]; then
+            apt-get remove -y stellarshot
+          else
+            dnf remove -y stellarshot
+          fi
+          test ! -e /usr/bin/stellarshot
+          test ! -e /usr/bin/stellarshot-applet
+
+  # The portable tarball's own installer, run the way its README says: the
+  # archive extracted by an ordinary user, then installed as root. That is
+  # the path that once re-owned /usr to the extracting user.
+  tarball-smoke:
+    name: Install the tarball as root from a user's extraction
+    needs: test
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:24.04
+
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: packages
+          path: dist
+
+      - name: Install, check ownership, uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chmod -R a+rX dist
+          su builder -c 'mkdir -p ~/x && tar -xzf "$PWD/dist/"*.tar.gz -C ~/x'
+          dir=$(echo /home/builder/x/stellarshot-*)
+          (cd "$dir" && ./install-tarball.sh)
+          for path in /usr /usr/bin /usr/bin/stellarshot /usr/bin/stellarshot-applet; do
+            owner=$(stat -c %U "$path")
+            if [[ "$owner" != root ]]; then
+              echo "$path is owned by $owner after the install" >&2
+              exit 1
+            fi
+          done
+          (cd "$dir" && ./install-tarball.sh uninstall)
+          test ! -e /usr/bin/stellarshot
+
   metadata:
     name: Validate packaging metadata
     runs-on: ubuntu-24.04
@@ -96,6 +211,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0 # tags: validate-metadata.sh checks every release has an entry
           persist-credentials: false
 
       - name: Install validators

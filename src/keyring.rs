@@ -124,32 +124,3 @@ pub async fn forget(profile_id: &str) -> Result<(), String> {
     )
     .await
 }
-
-/// The attributes that identify the web interface's own shared password: a
-/// fixed key, not tied to any profile, since only one such password exists
-/// per install.
-fn web_attributes() -> [(&'static str, &'static str); 2] {
-    [("application", APP_ID), ("purpose", "web-interface")]
-}
-
-/// Remember the web interface's shared password, replacing any earlier one.
-pub async fn store_web_password(secret: &Secret) -> Result<(), String> {
-    store_item(
-        "Stellarshot web interface password",
-        &web_attributes(),
-        secret,
-        "the web interface password",
-    )
-    .await
-}
-
-/// The web interface's remembered shared password, if there is one and the
-/// keyring can be read.
-pub async fn load_web_password() -> Option<Secret> {
-    load_item(&web_attributes(), "the web interface password").await
-}
-
-/// Forget the web interface's shared password. Succeeds if there was none.
-pub async fn forget_web_password() -> Result<(), String> {
-    forget_item(&web_attributes(), "the web interface password").await
-}

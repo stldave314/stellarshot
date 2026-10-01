@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! Store or forget a demo profile's password in the keyring, through
 //! Stellarshot's own keyring module: `scripts/screenshots.sh` runs this so

@@ -70,7 +70,13 @@ note in the [README](README.md).
   snapshot are never deleted. **Open Copy** restores a single file into a
   folder only you can open (mode 0700) in your session's runtime directory
   (`$XDG_RUNTIME_DIR`, which a desktop login keeps in memory and clears at
-  logout), and makes the copy read-only.
+  logout), and makes the copy read-only. A file over 512 MiB is refused, and
+  copies older than a day are removed.
+- **Your settings and history are private to you.** The `profiles` file holds
+  hook commands, a password command and SFTP details. Stellarshot's settings
+  and state folders under `~/.config/cosmic/` and `~/.local/state/cosmic/` are
+  made owner-only (mode 0700) every time the window, the applet or a backup
+  starts, and refused if they are a symlink or belong to someone else.
 - **Scheduled backups add nothing to trust.** A timer runs Stellarshot as you,
   with the password it reads from your keyring at run time; nothing is
   stored in the systemd unit files, which contain only the program's path and
@@ -88,30 +94,6 @@ note in the [README](README.md).
 - **Release builds cannot carry debug logging.** Developer logging is compiled
   out by the `release-build` feature that every packaging target passes. CI
   proves this by checking the built binary, not by trusting the source.
-- **The web interface is off by default, and reached only over TLS.** Turning
-  it on requires an explicit choice of network scope; with no authentication
-  method enabled it rejects every request rather than becoming an open API by
-  omission, and a wrong password or token is compared by hashing both sides
-  first, so neither its timing nor even its length gives anything away. A
-  request with no credentials at all — the way a same-origin page in your own
-  browser could otherwise probe this daemon — is rejected without counting
-  against anything. Repeated *wrong* guesses from one address are throttled
-  and escalate the longer they keep coming back (5 minutes, 15, 60, capped at
-  a day), and a burst of failures across many addresses at once pauses
-  password authentication for everyone until it passes. A request that did
-  not come from this daemon's own origin is refused outright, before
-  authentication is even attempted — see
-  [Cross-site requests](docs/web-interface.md#cross-site-requests). It runs
-  as your own per-user systemd service — no elevated privileges, `NoNewPrivileges`,
-  a private `UMask`, and a restricted address-family/file-descriptor/memory
-  budget on top — and an IP allow-list can restrict it further than the
-  network scope alone does, checked before the TLS handshake even starts,
-  not only afterward, with a cap on how many connections may be open at
-  once and no way for one to sit open sending nothing forever. It also
-  notices a package upgrade replacing
-  its own binary and restarts itself into the new one within a minute,
-  rather than an old, possibly since-fixed version running until the next
-  login. See [docs/web-interface.md](docs/web-interface.md).
 
 ## What it does not protect against
 
@@ -132,11 +114,6 @@ note in the [README](README.md).
   reused password strong.
 - **Data that was never backed up.** Files you cannot read (other users'
   files, some system files) are skipped.
-- **The self-signed certificate the web interface generates by default is
-  not backed by a certificate authority.** Your browser or `curl` has to
-  trust it on first use, the same as any self-signed certificate; if that
-  trust-on-first-use model does not fit your situation, set your own
-  certificate instead.
 
 ## Handling of your data
 

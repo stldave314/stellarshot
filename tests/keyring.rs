@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "tests and demos state their expectations by panicking"
+)]
 
 //! Passwords round-trip through a real Secret Service.
 //!
@@ -52,55 +58,5 @@ fn keyring_round_trip() {
         keyring::forget(&profile)
             .await
             .expect("forgetting twice is not an error");
-    });
-}
-
-#[test]
-fn web_password_round_trip() {
-    use futures_util::FutureExt;
-
-    let runtime = runtime();
-
-    runtime.block_on(async {
-        // Unlike a profile's password, the web interface's has no
-        // disambiguating ID to test against safely: whatever is already
-        // there (nothing, on a machine that has never set this up) is saved
-        // and put back at the end — including if an assertion below panics,
-        // caught here so this test can never leave a real saved password
-        // clobbered with its own "first"/"second" test values.
-        let previous = keyring::load_web_password().await;
-
-        let result = std::panic::AssertUnwindSafe(async {
-            keyring::store_web_password(&Secret::new("first"))
-                .await
-                .expect("a Secret Service must be running and unlocked for this test");
-            assert_eq!(
-                keyring::load_web_password()
-                    .await
-                    .map(|s| s.expose().to_owned()),
-                Some("first".to_owned())
-            );
-
-            keyring::store_web_password(&Secret::new("second"))
-                .await
-                .unwrap();
-            assert_eq!(
-                keyring::load_web_password()
-                    .await
-                    .map(|s| s.expose().to_owned()),
-                Some("second".to_owned())
-            );
-        })
-        .catch_unwind()
-        .await;
-
-        match &previous {
-            Some(secret) => keyring::store_web_password(secret).await.unwrap(),
-            None => keyring::forget_web_password().await.unwrap(),
-        }
-
-        if let Err(err) = result {
-            std::panic::resume_unwind(err);
-        }
     });
 }

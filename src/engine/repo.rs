@@ -2,7 +2,6 @@
 
 //! Opening and creating repositories.
 
-use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,6 +17,7 @@ use sha2::{Digest, Sha256};
 use super::error::{EngineError, ErrorKind};
 use super::location::{InitCheck, check_init_location, is_repository};
 use super::progress::{ProgressSink, SinkBars, SlotGuard};
+use super::serve::Serve;
 use super::uploads::ParallelUploads;
 use crate::constants::RCLONE_SERVE_FLAGS;
 use crate::debug::ENGINE;
@@ -217,7 +217,10 @@ impl Location {
             .collect()
     }
 
-    fn backend_options(&self) -> Result<BackendOptions, EngineError> {
+    /// What rustic needs to reach this location, and, for one reached over
+    /// rclone, the `rclone serve restic` process it talks to, which must be
+    /// kept alive (and dropped after) for as long as rustic uses it.
+    fn backend_options(&self) -> Result<(BackendOptions, Option<Serve>), EngineError> {
         match self {
             Self::Local { path } => {
                 let repository = path.to_str().map(str::to_owned).ok_or_else(|| {
@@ -226,7 +229,7 @@ impl Location {
                         format!("{} is not valid UTF-8", path.display()),
                     )
                 })?;
-                Ok(BackendOptions::default().repository(repository))
+                Ok((BackendOptions::default().repository(repository), None))
             }
             Self::Rclone {
                 remote,
@@ -237,16 +240,23 @@ impl Location {
                 if !super::rclone::available() {
                     return Err(EngineError::new(ErrorKind::RcloneMissing, "rclone"));
                 }
-                let mut options = BTreeMap::new();
-                options.insert(
-                    "rclone-command".to_owned(),
-                    rclone_command(config, bandwidth_limit),
-                );
-                Ok(BackendOptions::default()
-                    .repository(format!("rclone:{}", super::rclone::target(remote, path)))
-                    .options(options))
+                if config.to_str().is_none() {
+                    return Err(EngineError::new(
+                        ErrorKind::Io,
+                        format!("{} is not valid UTF-8", config.display()),
+                    ));
+                }
+                let serve = Serve::start(
+                    &rclone_command(config, bandwidth_limit),
+                    &super::rclone::target(remote, path),
+                )?;
+                let options = BackendOptions::default().repository(format!("rest:{}", serve.url()));
+                Ok((options, Some(serve)))
             }
-            Self::Rest { url } => Ok(BackendOptions::default().repository(format!("rest:{url}"))),
+            Self::Rest { url } => Ok((
+                BackendOptions::default().repository(format!("rest:{url}")),
+                None,
+            )),
         }
     }
 
@@ -388,7 +398,7 @@ pub fn probe(location: &Location) -> Result<Probe, EngineError> {
         // file already exists.
         Location::Rest { .. } => {
             let bars = SinkBars::default();
-            match unopened(location, &bars)?.config_id()? {
+            match unopened(location, &bars)?.0.config_id()? {
                 Some(_) => Ok(Probe::Repository),
                 None => Ok(Probe::Empty),
             }
@@ -428,6 +438,9 @@ pub struct Repo {
     pub(crate) location: Location,
     pub(crate) bars: SinkBars,
     pub(crate) inner: Repository<OpenStatus>,
+    /// The rclone process `inner` talks to. After it, so it is dropped after
+    /// it.
+    pub(crate) serve: Option<Serve>,
 }
 
 impl fmt::Debug for Repo {
@@ -463,22 +476,31 @@ impl Repo {
     }
 }
 
-fn unopened(location: &Location, bars: &SinkBars) -> Result<Repository<()>, EngineError> {
-    let mut backends = location.backend_options()?.to_backends()?;
+fn unopened(
+    location: &Location,
+    bars: &SinkBars,
+) -> Result<(Repository<()>, Option<Serve>), EngineError> {
+    let (options, serve) = location.backend_options()?;
+    let mut backends = options.to_backends()?;
     // Storage behind a network connection gets several uploads at once.
     if let Location::Rclone { .. } = location {
         let uploads = ParallelUploads::new(backends.repository(), bars.slot.clone());
         backends = RepositoryBackends::new(Arc::new(uploads), backends.repo_hot());
     }
-    #[cfg(feature = "test-support")]
-    super::cache_settings::disable_for_tests();
     let mut options = RepositoryOptions::default();
     super::cache_settings::apply(&mut options);
-    Ok(Repository::new_with_progress(
-        &options,
-        &backends,
-        bars.clone(),
-    )?)
+    // A test build that has not chosen a cache location of its own gets a
+    // private one, with the cache *on*: see `cache_settings::test_cache_dir`
+    // for why that, and not `no_cache`, is what keeps tests out of
+    // `~/.cache/rustic`.
+    #[cfg(feature = "test-support")]
+    if options.cache_dir.is_none() && !options.no_cache {
+        options.cache_dir = Some(super::cache_settings::test_cache_dir());
+    }
+    Ok((
+        Repository::new_with_progress(&options, &backends, bars.clone())?,
+        serve,
+    ))
 }
 
 /// Create a repository. Refuses a location that already holds a repository or
@@ -534,7 +556,8 @@ pub fn init_with(
     if let Some(level) = compression {
         config = config.set_compression(level);
     }
-    let inner = unopened(location, &bars)?.init(
+    let (unopened, serve) = unopened(location, &bars)?;
+    let inner = unopened.init(
         &Credentials::password(secret.expose()),
         &KeyOptions::default(),
         &config,
@@ -543,6 +566,7 @@ pub fn init_with(
         location: location.clone(),
         bars,
         inner,
+        serve,
     })
 }
 
@@ -556,11 +580,13 @@ pub fn open(location: &Location, secret: &Secret) -> Result<Repo, EngineError> {
     }
     debug_log!(ENGINE, "open {}", location.describe());
     let bars = SinkBars::default();
-    let inner = unopened(location, &bars)?.open(&Credentials::password(secret.expose()))?;
+    let (unopened, serve) = unopened(location, &bars)?;
+    let inner = unopened.open(&Credentials::password(secret.expose()))?;
     Ok(Repo {
         location: location.clone(),
         bars,
         inner,
+        serve,
     })
 }
 

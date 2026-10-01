@@ -371,7 +371,10 @@ pub struct Hook {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     /// Stable identifier: the keyring item, logs and (later) the schedule are
-    /// keyed by it, so renaming a profile never breaks them.
+    /// keyed by it, so renaming a profile never breaks them. Checked when
+    /// read (see [`deserialize_id`]): it becomes a config key, a keyring
+    /// attribute, a lock name and a unit name.
+    #[serde(deserialize_with = "deserialize_id")]
     pub id: String,
     pub name: String,
     pub destination: Destination,
@@ -574,6 +577,20 @@ impl Profile {
     }
 }
 
+/// Reads a profile ID, refusing one [`valid_id`] would not accept. A
+/// hand-edited `a/b` would otherwise reach the config key (`run-a/b` is a
+/// sub-path), the keyring attributes and the lock names.
+fn deserialize_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let id = String::deserialize(deserializer)?;
+    if valid_id(&id) {
+        Ok(id)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "{id:?} is not a valid backup ID (letters, digits and dashes only, at most 64)"
+        )))
+    }
+}
+
 /// A profile ID safe to put in a unit name and a command line: non-empty,
 /// letters, digits and dashes only, at most 64 characters. Shared by
 /// `schedule` (a systemd unit name and `--scheduled <id>` argument) and
@@ -649,6 +666,22 @@ pub fn profiles_from_v1(ron_text: &str) -> Vec<Profile> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_profile_with_an_unsafe_id_does_not_deserialize() {
+        let mut profile = Profile::new("Home".into(), local("/mnt/backup"), Vec::new());
+        for bad in ["a/b", "../x", "", "with space", &"x".repeat(65)] {
+            profile.id = bad.to_owned();
+            let text = ron::to_string(&profile).unwrap();
+            assert!(
+                ron::from_str::<Profile>(&text).is_err(),
+                "{bad:?} must be refused when read"
+            );
+        }
+        profile.id = "abc-123".to_owned();
+        let text = ron::to_string(&profile).unwrap();
+        assert_eq!(ron::from_str::<Profile>(&text).unwrap().id, "abc-123");
+    }
 
     #[tokio::test]
     async fn a_password_command_is_used_instead_of_the_keyring() {

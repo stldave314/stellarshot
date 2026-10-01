@@ -280,3 +280,8 @@ pub const CHECK_RETRY: std::time::Duration = std::time::Duration::from_secs(86_4
 /// (folders, exclusions and a password), and a cap on what a wrong caller can
 /// make the child buffer.
 pub const JOB_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+/// How deeply folders in a snapshot may be nested before comparing two
+/// snapshots gives up: far beyond any real file system's paths, and well
+/// short of what the recursion's stack can hold.
+pub const TREE_MAX_DEPTH: usize = 1024;

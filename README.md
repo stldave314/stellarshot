@@ -347,7 +347,9 @@ unavailable until the dry run for your current choices has finished. The
 restore then runs in the background with progress and **Cancel**.
 
 Restoring never deletes anything: files that are on disk but not in the
-snapshot are left alone.
+snapshot are left alone. A restored file never keeps the setuid or setgid bit,
+so a program in someone else's snapshot cannot come back able to run with your
+rights.
 
 **Open Copy** restores the one file into a private folder in your session's
 runtime directory (`$XDG_RUNTIME_DIR`, which is cleared when you log out, or

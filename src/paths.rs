@@ -127,6 +127,15 @@ pub fn tighten_app_dirs() {
         if let Err(err) = tighten_private(&dir) {
             error_log!(CONFIG, "could not make {} private: {err}", dir.display());
         }
+        // Settings from before the app ID changed, copied over once but
+        // still there with whatever mode they had: the same hook commands
+        // and password command. Tightened only if present, never created.
+        let old = root.join("cosmic").join(crate::app::migrate::OLD_APP_ID);
+        if old.is_dir()
+            && let Err(err) = tighten_private(&old)
+        {
+            error_log!(CONFIG, "could not make {} private: {err}", old.display());
+        }
     }
 }
 

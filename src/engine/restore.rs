@@ -105,6 +105,12 @@ impl std::ops::AddAssign for RestorePreview {
 /// extension that is not valid UTF-8 keeps its exact bytes rather than
 /// having them replaced.
 fn keep_both_name(path: &Path, date: &str) -> PathBuf {
+    keep_both_name_with(path, date, |candidate| candidate.symlink_metadata().is_ok())
+}
+
+/// [`keep_both_name`], with `taken` deciding whether a candidate is already
+/// in use: on disk, or also by something the same restore will write.
+fn keep_both_name_with(path: &Path, date: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_os_string();
     let extension = path.extension();
     let parent = path.parent().unwrap_or(Path::new(""));
@@ -124,7 +130,7 @@ fn keep_both_name(path: &Path, date: &str) -> PathBuf {
     };
     let mut candidate = parent.join(name(None));
     let mut counter = 2;
-    while candidate.symlink_metadata().is_ok() {
+    while taken(&candidate) {
         candidate = parent.join(name(Some(counter)));
         counter += 1;
     }
@@ -342,12 +348,32 @@ enum Decision {
 /// What [`shape`] needs to know about the restore as a whole.
 struct ShapeContext<'a> {
     destination: &'a Path,
+    /// Whether the snapshot itself has an item at this path (relative to
+    /// `destination`): a Keep both name must not be one the same restore is
+    /// about to write.
+    in_snapshot: &'a dyn Fn(&Path) -> bool,
     policy: ConflictPolicy,
     date: &'a str,
     /// A single file is being restored: its one item lands at
     /// `destination` itself, whose conflicts `restore_one` has already
     /// handled.
     single_file: bool,
+}
+
+/// `mode` (as a restic snapshot stores it: Go's `os.FileMode` layout, where
+/// setuid and setgid are bits 23 and 22, not `0o4000`/`0o2000`) without
+/// setuid and setgid.
+fn without_set_id(mode: u32) -> u32 {
+    const GO_SETUID: u32 = 1 << 23;
+    const GO_SETGID: u32 = 1 << 22;
+    mode & !(GO_SETUID | GO_SETGID)
+}
+
+/// What rustic uses to recognize names of one hard-linked file: the same
+/// device and inode, on a file with more than one link.
+fn hardlink_key(node: &Node) -> Option<(u64, u64)> {
+    (node.is_file() && node.meta.links > 1 && node.meta.device_id != 0 && node.meta.inode != 0)
+        .then_some((node.meta.device_id, node.meta.inode))
 }
 
 /// Overwrite cannot replace a folder with a file or a file with a folder.
@@ -360,6 +386,11 @@ fn type_conflict(path: &Path) -> EngineError {
 struct Decisions {
     skipped: Vec<bool>,
     renamed: std::collections::HashMap<usize, PathBuf>,
+    /// Second and later names of a hard-linked file whose path already
+    /// exists: restored as a file of their own. rustic would otherwise link
+    /// them to the first name in its last pass, which fails on a path that
+    /// is already there and aborts the whole restore.
+    unlinked: std::collections::HashSet<usize>,
 }
 
 impl Decisions {
@@ -372,12 +403,14 @@ impl Decisions {
     }
 
     /// `None` for an item left out; otherwise the relative path to restore
-    /// it under, if that is not its own.
-    fn get(&self, index: usize) -> Option<Option<&PathBuf>> {
-        if self.skipped.get(index).copied().unwrap_or(false) {
-            None
-        } else {
-            Some(self.renamed.get(&index))
+    /// it under, if that is not its own. `Err` for an item that was never
+    /// decided on: the listing has changed since it was read, and nothing
+    /// may be restored on a guess.
+    fn get(&self, index: usize) -> Result<Option<Option<&PathBuf>>, ()> {
+        match self.skipped.get(index) {
+            None => Err(()),
+            Some(true) => Ok(None),
+            Some(false) => Ok(Some(self.renamed.get(&index))),
         }
     }
 }
@@ -393,6 +426,7 @@ fn shape(
 ) -> Result<Decision, EngineError> {
     let ShapeContext {
         destination,
+        in_snapshot,
         policy,
         date,
         single_file,
@@ -473,7 +507,12 @@ fn shape(
     Ok(match policy {
         ConflictPolicy::Overwrite => Decision::Keep,
         ConflictPolicy::KeepBoth => {
-            let renamed = keep_both_name(&on_disk, date);
+            let renamed = keep_both_name_with(&on_disk, date, |candidate| {
+                candidate.symlink_metadata().is_ok()
+                    || candidate
+                        .strip_prefix(destination)
+                        .is_ok_and(|relative| in_snapshot(relative))
+            });
             Decision::Rename(
                 renamed
                     .strip_prefix(destination)
@@ -510,7 +549,35 @@ fn shaped_stream<'a>(
         .filter_map(move |(index, entry)| match entry {
             Err(err) => Some(Err(err)),
             Ok((relative, item)) => {
-                let relative = decisions.get(index)?.cloned().unwrap_or(relative);
+                let decided = match decisions.get(index) {
+                    Ok(decided) => decided?,
+                    Err(()) => {
+                        return Some(Err(rustic_core::RusticError::new(
+                            rustic_core::ErrorKind::Internal,
+                            "the snapshot's listing changed between reading it and restoring it",
+                        )));
+                    }
+                };
+                // Checked again here, not trusted from the first pass: it
+                // is what is actually handed to rustic.
+                if check_walked(&relative, &item).is_err() {
+                    return Some(Err(rustic_core::RusticError::new(
+                        rustic_core::ErrorKind::Internal,
+                        "an unsafe path appeared in the snapshot's listing",
+                    )));
+                }
+                let relative = decided.cloned().unwrap_or(relative);
+                let mut item = item;
+                if decisions.unlinked.contains(&index) {
+                    item.meta.links = 1;
+                }
+                // A file comes back without setuid or setgid: in a snapshot
+                // from someone else's machine (or a crafted one) they would
+                // make a restored program run with the restoring user's
+                // rights for whoever can reach it.
+                if !item.is_dir() {
+                    item.meta.mode = item.meta.mode.map(without_set_id);
+                }
                 let relative = match rooted {
                     Rooting::Same => relative,
                     Rooting::Below(leaf) => leaf.join(relative),
@@ -626,16 +693,21 @@ fn restore_one(
     // Nothing is collected into memory, so a whole-home restore costs a byte
     // per file instead of a copy of every node.
     let ls_options = LsOptions::default();
+    let in_snapshot = |relative: &Path| node_at(repo, snapshot, &path.join(relative)).is_ok();
     let context = ShapeContext {
         destination: &destination,
+        in_snapshot: &in_snapshot,
         policy: request.policy,
         date,
         single_file: !node.is_dir(),
     };
     let mut decisions = Decisions::default();
+    let mut linked = std::collections::HashSet::new();
+    super::browse::listable(&node)?;
     for entry in repo.ls(&node, &ls_options)? {
         let (relative, item) = entry?;
         check_walked(&relative, &item)?;
+        let index = decisions.skipped.len();
         let decision = shape(
             &context,
             &relative,
@@ -643,7 +715,23 @@ fn restore_one(
             &mut conflicts,
             &mut unchanged_by_us,
         )?;
+        // Where this item will land, for the hard-link check below.
+        let lands = match &decision {
+            Decision::Skip => None,
+            Decision::Keep if !node.is_dir() || relative.as_os_str().is_empty() => {
+                Some(destination.clone())
+            }
+            Decision::Keep => Some(destination.join(&relative)),
+            Decision::Rename(renamed) => Some(destination.join(renamed)),
+        };
+        let link = hardlink_key(&item);
         decisions.push(decision);
+        if let (Some(key), Some(lands)) = (link, lands)
+            && !linked.insert(key)
+            && lands.symlink_metadata().is_ok()
+        {
+            decisions.unlinked.insert(index);
+        }
     }
 
     // `LocalDestination::new` needs a UTF-8 `&str` root, but `destination`
@@ -730,12 +818,17 @@ mod tests {
         decisions.push(Decision::Skip);
         decisions.push(Decision::Rename(PathBuf::from("a (restored)")));
 
-        assert_eq!(decisions.get(0), Some(None), "restored as it is");
-        assert_eq!(decisions.get(1), None, "left out");
+        assert_eq!(decisions.get(0), Ok(Some(None)), "restored as it is");
+        assert_eq!(decisions.get(1), Ok(None), "left out");
         assert_eq!(
             decisions.get(2),
-            Some(Some(&PathBuf::from("a (restored)"))),
+            Ok(Some(Some(&PathBuf::from("a (restored)")))),
             "restored under another name"
+        );
+        assert_eq!(
+            decisions.get(3),
+            Err(()),
+            "never decided: refused, not guessed"
         );
     }
 

@@ -227,6 +227,110 @@ fn a_large_file_and_the_metadata_around_it_survive_a_round_trip() {
     );
 }
 
+/// Restoring in place over a hard-linked pair that is still there: rustic
+/// links the second name to the first in its last pass, which fails if that
+/// name already exists.
+#[test]
+fn restoring_hard_linked_files_over_themselves_works() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("one.txt"), b"two names").unwrap();
+    fs::hard_link(
+        fixture.source.join("one.txt"),
+        fixture.source.join("two.txt"),
+    )
+    .unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    for policy in [
+        ConflictPolicy::Overwrite,
+        ConflictPolicy::KeepBoth,
+        ConflictPolicy::Skip,
+    ] {
+        open(&fixture.repo, &secret())
+            .unwrap()
+            .restore(
+                &restore_request(vec![fixture.source.clone()], Target::Original, policy),
+                Arc::new(NoProgress),
+            )
+            .unwrap_or_else(|err| panic!("{policy:?}: {err:?}"));
+        assert_eq!(
+            fs::read(fixture.source.join("two.txt")).unwrap(),
+            b"two names"
+        );
+    }
+}
+
+/// Keep both must not pick a name the same restore also writes: here the
+/// snapshot itself holds a file named exactly like today's "restored" copy.
+#[test]
+fn keep_both_never_picks_a_name_the_snapshot_also_restores() {
+    let fixture = fixture();
+    let today = jiff::Zoned::now().strftime("%Y-%m-%d").to_string();
+    let taken = format!("notes (restored {today}).txt");
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("notes.txt"), b"backed-up notes").unwrap();
+    fs::write(
+        fixture.source.join(&taken),
+        b"a file that happens to have that name",
+    )
+    .unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("notes.txt"), b"edited since").unwrap();
+    fs::remove_file(fixture.source.join(&taken)).unwrap();
+
+    run_restore(
+        &fixture,
+        &restore_request(
+            vec![fixture.source.clone()],
+            Target::Original,
+            ConflictPolicy::KeepBoth,
+        ),
+    );
+
+    assert_eq!(
+        fs::read(fixture.source.join(&taken)).unwrap(),
+        b"a file that happens to have that name",
+        "the snapshot's own file is restored intact"
+    );
+    let second = format!("notes (restored {today} 2).txt");
+    assert_eq!(
+        fs::read(fixture.source.join(second)).unwrap(),
+        b"backed-up notes"
+    );
+    assert_eq!(
+        fs::read(fixture.source.join("notes.txt")).unwrap(),
+        b"edited since"
+    );
+}
+
+#[test]
+fn a_restored_file_never_keeps_setuid_or_setgid() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    let program = fixture.source.join("program");
+    fs::write(&program, b"#!/bin/sh\n").unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o6755)).unwrap();
+    assert_eq!(
+        fs::metadata(&program).unwrap().permissions().mode() & 0o7777,
+        0o6755,
+        "the fixture really has both bits"
+    );
+    back_up(&fixture, &sources(&fixture.source));
+    let destination = fixture.work.join("restore");
+
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all("latest", &destination, Arc::new(NoProgress))
+        .unwrap();
+
+    let restored = restored(&destination, &fixture.source).join("program");
+    assert_eq!(
+        fs::metadata(restored).unwrap().permissions().mode() & 0o7777,
+        0o755
+    );
+}
+
 #[test]
 fn excluded_folder_is_not_in_the_snapshot() {
     let fixture = fixture();

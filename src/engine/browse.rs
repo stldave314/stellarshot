@@ -18,6 +18,8 @@ use rustic_core::vfs::OpenFile;
 use rustic_core::{IndexedFullStatus, LsOptions, Repository, TreeId};
 use serde::{Deserialize, Serialize};
 
+use crate::constants::TREE_MAX_DEPTH;
+
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
 use super::restore::{check_walked, reject_unsafe_name, reject_unsafe_relative_path};
@@ -479,6 +481,8 @@ impl Browser {
         write_atomically(destination, |out| {
             let gzip = flate2::write::GzEncoder::new(out, flate2::Compression::default());
             let mut tar = tar::Builder::new(gzip);
+            listable(&root)?;
+            listable(&root)?;
             for item in repo.ls(&root, &LsOptions::default())? {
                 let (relative, node) = item?;
                 check_walked(&relative, &node)?;
@@ -559,6 +563,7 @@ impl Browser {
         let repo = self.repo()?;
         let root = node_at(&repo, file, Path::new("/"))?;
         let mut found = Vec::new();
+        listable(&root)?;
         for item in repo.ls(&root, &LsOptions::default())? {
             let (path, node) = item?;
             check_walked(&path, &node)?;
@@ -719,6 +724,7 @@ impl Browser {
                 if !node.is_dir() {
                     continue;
                 }
+                listable(&node)?;
                 for item in repo.ls(&node, &LsOptions::default())? {
                     let (relative, node) = item?;
                     check_walked(&relative, &node)?;
@@ -751,6 +757,19 @@ impl Browser {
     }
 }
 
+/// A folder node whose contents were never recorded (no subtree): rustic's
+/// own listing assumes every folder has one and panics on it, so it is
+/// refused here first. Only a damaged or crafted repository has one.
+pub(super) fn listable(node: &Node) -> Result<(), EngineError> {
+    if node.is_dir() && node.subtree.is_none() {
+        return Err(EngineError::new(
+            ErrorKind::Internal,
+            "a folder in this snapshot has no contents recorded",
+        ));
+    }
+    Ok(())
+}
+
 fn diff_trees(
     repo: &Repository<IndexedFullStatus>,
     a: TreeId,
@@ -758,6 +777,15 @@ fn diff_trees(
     prefix: &Path,
     out: &mut Vec<DiffEntry>,
 ) -> Result<(), EngineError> {
+    // Every level of a snapshot's tree is a level of recursion here: a
+    // crafted repository nested deeply enough would overflow the stack and
+    // abort the whole program, so stop well before that.
+    if prefix.components().count() > TREE_MAX_DEPTH {
+        return Err(EngineError::new(
+            ErrorKind::Internal,
+            format!("folders in this snapshot are nested more than {TREE_MAX_DEPTH} deep"),
+        ));
+    }
     if a == b {
         return Ok(());
     }
@@ -1062,5 +1090,17 @@ mod tests {
         let error = checked_mount_entry(&node).unwrap_err();
 
         assert_eq!(error.kind, ErrorKind::UnsafePath);
+    }
+
+    #[test]
+    fn a_folder_without_recorded_contents_is_refused_before_listing() {
+        let mut folder = Node::new_node(
+            std::ffi::OsStr::new("x"),
+            NodeType::Dir,
+            rustic_core::repofile::Metadata::default(),
+        );
+        assert!(listable(&folder).is_err(), "rustic would panic listing it");
+        folder.subtree = Some(TreeId::default());
+        assert!(listable(&folder).is_ok());
     }
 }

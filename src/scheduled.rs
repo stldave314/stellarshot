@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::app::config::StellarshotConfig;
 use crate::app::errors;
 use crate::app::format::now;
-use crate::constants::CHECK_INTERVAL;
+use crate::constants::{CHECK_INTERVAL, CHECK_RETRY};
 use crate::debug::SCHED;
 use crate::engine::{EngineError, ErrorKind, KeepRules, Location, Secret, profile_tag};
 use crate::event_log;
@@ -48,7 +48,18 @@ impl Plan {
             forget: (!profile.append_only)
                 .then(|| profile.retention.keep_rules())
                 .flatten(),
-            check: state.last_check.is_none_or(|last| now - last >= interval),
+            // A check stamped in the future (a wrong clock) is not trusted to
+            // postpone the next one.
+            check: state
+                .last_check
+                .filter(|&last| last <= now)
+                .is_none_or(|last| now - last >= interval)
+                // A check that failed (not one that found damage) waits a
+                // day before the next try rather than running at every slot.
+                && state
+                    .last_check_attempt
+                    .filter(|&attempt| attempt <= now)
+                    .is_none_or(|attempt| now - attempt >= CHECK_RETRY.as_secs() as i64),
             prune: profile.prune_enabled(),
         }
     }
@@ -67,7 +78,13 @@ impl Plan {
 fn is_quiet(error: &EngineError) -> bool {
     matches!(
         error.kind,
-        ErrorKind::DestinationUnavailable | ErrorKind::Locked | ErrorKind::ConditionsNotMet
+        ErrorKind::DestinationUnavailable
+            | ErrorKind::Locked
+            | ErrorKind::ConditionsNotMet
+            // The keyring is not unlocked yet (a timer that fires at login):
+            // the next slot tries again, and a keyring that stays out of
+            // reach is noticed as an overdue backup.
+            | ErrorKind::KeyringUnavailable
     )
 }
 
@@ -185,10 +202,15 @@ fn run(
     if plan.check {
         let result = operation(Operation::Check, job());
         let damaged = matches!(&result, Err(err) if err.kind == ErrorKind::RepositoryDamaged);
+        if result.is_err() && !damaged {
+            let attempted = now();
+            record(profile, |state| state.last_check_attempt = Some(attempted));
+        }
         if result.is_ok() || damaged {
             let checked = now();
             record(profile, |state| {
                 state.last_check = Some(checked);
+                state.last_check_attempt = None;
                 state.damaged = damaged;
             });
             event_log::record(
@@ -412,6 +434,27 @@ mod tests {
             ..RunState::default()
         };
         assert!(Plan::new(&profile(), &old, now).check);
+        let failed_today = RunState {
+            last_check_attempt: Some(now - DAY / 2),
+            ..old.clone()
+        };
+        assert!(
+            !Plan::new(&profile(), &failed_today, now).check,
+            "a check that failed earlier today is not retried at every slot"
+        );
+        let failed_yesterday = RunState {
+            last_check_attempt: Some(now - DAY),
+            ..old
+        };
+        assert!(Plan::new(&profile(), &failed_yesterday, now).check);
+        let future = RunState {
+            last_check: Some(now + 365 * DAY),
+            ..RunState::default()
+        };
+        assert!(
+            Plan::new(&profile(), &future, now).check,
+            "a check stamped in the future (a wrong clock) does not postpone the next"
+        );
     }
 
     #[test]
@@ -466,6 +509,7 @@ mod tests {
         assert!(is_quiet(&error(ErrorKind::DestinationUnavailable)));
         assert!(is_quiet(&error(ErrorKind::Locked)));
         assert!(is_quiet(&error(ErrorKind::ConditionsNotMet)));
+        assert!(is_quiet(&error(ErrorKind::KeyringUnavailable)));
         for kind in [
             ErrorKind::WrongPassword,
             ErrorKind::PasswordNotRemembered,

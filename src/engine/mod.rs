@@ -48,3 +48,9 @@ pub use statistics::Statistics;
 
 #[cfg(test)]
 mod tests;
+
+/// Stop `rclone serve` processes a crashed Stellarshot left running with its
+/// own rclone configuration (see [`serve::stop_orphans`]). Returns how many.
+pub fn stop_orphan_rclones() -> usize {
+    serve::stop_orphans(&rclone::config_path())
+}

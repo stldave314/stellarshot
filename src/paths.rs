@@ -130,6 +130,39 @@ pub fn tighten_app_dirs() {
     }
 }
 
+/// Run `change` holding an exclusive lock shared by every Stellarshot process
+/// of this user: for a read-change-write of the run state or the history,
+/// which the window and a scheduled run can do at the same moment, each
+/// otherwise losing the other's change. The lock is held only for that, so
+/// waiting for it is brief. Without a state folder to keep the lock file in,
+/// `change` runs unlocked rather than not at all.
+pub fn with_state_lock<T>(change: impl FnOnce() -> T) -> T {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = state_root().and_then(|root| {
+        let dir = root.join("stellarshot");
+        crate::engine::lock::create_private_dir(&dir).ok()?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(dir.join("state.lock"))
+            .ok()
+    });
+    if let Some(file) = &file {
+        // SAFETY: a valid, open descriptor for the duration of the call.
+        // Released when `file` is dropped (closed) after `change`.
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    } else {
+        crate::debug_log!(CONFIG, "no state lock; updating unlocked");
+    }
+    let result = change();
+    drop(file);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +218,12 @@ mod tests {
         assert!(tighten_private(&link).is_err());
 
         assert_eq!(mode(&target), 0o755, "the target's mode was not touched");
+    }
+
+    #[test]
+    fn the_state_lock_runs_the_change_and_returns_its_value() {
+        assert_eq!(with_state_lock(|| 41 + 1), 42);
+        // And again, so a lock left held would show up as a hang here.
+        assert_eq!(with_state_lock(|| "again"), "again");
     }
 }

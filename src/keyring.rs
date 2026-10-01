@@ -53,35 +53,35 @@ async fn store_item(
     Ok(())
 }
 
-/// The item identified by `attrs`, if there is one and the keyring can be
-/// read. `what` names it for the log; every failure is logged, since a
-/// caller that gets `None` back cannot otherwise tell a genuinely empty
-/// keyring apart from one that could not be reached or read.
-async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Option<Secret> {
+/// The item identified by `attrs`: `Ok(None)` if the keyring holds none,
+/// `Err` if the keyring could not be reached or read at all (not unlocked
+/// yet at login, no Secret Service, a timeout). `what` names it for the
+/// log; every failure is logged.
+async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Result<Option<Secret>, String> {
     let keyring = bounded(oo7::Keyring::new())
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not open the keyring for {what}: {err}"))
-        .ok()?;
+        .inspect_err(|err| error_log!(CONFIG, "could not open the keyring for {what}: {err}"))?;
     let items = bounded(keyring.search_items(attrs))
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not search the keyring for {what}: {err}"))
-        .ok()?;
+        .inspect_err(|err| error_log!(CONFIG, "could not search the keyring for {what}: {err}"))?;
     let Some(item) = items.first() else {
         debug_log!(CONFIG, "no {what} remembered");
-        return None;
+        return Ok(None);
     };
     let secret = bounded(item.secret())
         .await
-        .inspect_err(|err| error_log!(CONFIG, "could not read {what} from the keyring: {err}"))
-        .ok()?;
+        .inspect_err(|err| error_log!(CONFIG, "could not read {what} from the keyring: {err}"))?;
     match String::from_utf8(secret.as_bytes().to_vec()) {
         Ok(password) => {
             debug_log!(CONFIG, "loaded {what}");
-            Some(Secret::new(password))
+            Ok(Some(Secret::new(password)))
         }
         Err(err) => {
-            error_log!(CONFIG, "{what} in the keyring was not valid UTF-8: {err}");
-            None
+            error_log!(CONFIG, "{what} in the keyring was not valid UTF-8");
+            // The bytes are the password, or most of it: wiped, not just
+            // dropped.
+            zeroize::Zeroize::zeroize(&mut err.into_bytes());
+            Ok(None)
         }
     }
 }
@@ -109,6 +109,14 @@ pub async fn store(profile_id: &str, profile_name: &str, secret: &Secret) -> Res
 /// The remembered password for the profile, if there is one and the keyring
 /// can be read.
 pub async fn load(profile_id: &str) -> Option<Secret> {
+    load_checked(profile_id).await.ok().flatten()
+}
+
+/// [`load`], telling "nothing remembered" (`Ok(None)`) apart from "the
+/// keyring could not be reached" (`Err`): a scheduled run at login can start
+/// before the keyring is unlocked, which is a reason to try again at the
+/// next slot, not to report that no password is remembered.
+pub async fn load_checked(profile_id: &str) -> Result<Option<Secret>, String> {
     load_item(
         &attributes(profile_id),
         &format!("the password for profile {profile_id}"),

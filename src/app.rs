@@ -505,6 +505,8 @@ fn remove_old_open_copies() -> Task<Message> {
     Task::perform(
         tasks::blocking(|| {
             engine::lock::remove_stale_open_copies(OPEN_COPY_MAX_AGE);
+            // And any rclone a crashed run or window left connected.
+            engine::stop_orphan_rclones();
             Ok(())
         }),
         |_| cosmic::Action::App(Message::Noop),

@@ -390,7 +390,13 @@ impl ProfileState {
             // doing it any earlier, before the keyring lookup resolves,
             // would steal focus into a field that might disappear right
             // away if a password was found after all.
-            Message::KeyringLoaded(Ok(None)) => {
+            // A keyring that cannot be reached is, for unlocking by hand, the
+            // same as one with nothing remembered: ask for the password.
+            Message::KeyringLoaded(Ok(None))
+            | Message::KeyringLoaded(Err(EngineError {
+                kind: ErrorKind::KeyringUnavailable,
+                ..
+            })) => {
                 if self.unlock_focused {
                     Vec::new()
                 } else {
@@ -1157,7 +1163,7 @@ fn trouble<'a>(
             Some((fl!("check-again"), Message::CheckNow)),
         )
     } else {
-        let failure = run.current_failure(profile.last_success)?;
+        let failure = run.current_failure(profile.last_success, now)?;
         let when = format::failed_ago(now, failure.time);
         let title = match failure.stage {
             Stage::Backup => fl!("scheduled-backup-failed", when = when),

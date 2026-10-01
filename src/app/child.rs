@@ -168,10 +168,8 @@ async fn drive(
     // `Secret`, already zeroized on its own drop) is serialized into a
     // second, temporary copy here that `secrecy` has no reach into, purely
     // to get it onto the wire to the child.
-    let job = zeroize::Zeroizing::new(
-        serde_json::to_vec(&job)
-            .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?,
-    );
+    let job = crate::bounded::json_secret(&job)
+        .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
     if let Some(mut stdin) = child.stdin.take()
         && let Err(err) = stdin.write_all(&job).await
     {
@@ -243,14 +241,13 @@ async fn drive(
 
     let status = wait(&handle).await?;
     let canceled = handle.canceled_at().is_some();
-    if canceled {
-        // The child stops its own group on SIGTERM (see `proc_signal`), and
-        // `wait` already killed it if it never answered; this is for
-        // anything either of those left. The child was reaped only just
-        // now, so its group ID has had no time to be given out again —
-        // and a group with nothing left in it is a harmless ESRCH.
-        handle.kill_group();
-    }
+    // Whatever the child left in its group: after a cancel, what its own
+    // SIGTERM handling missed; after a crash or the OOM killer, everything,
+    // since nothing ran its cleanup, including the `rclone serve` it started.
+    // A process group's ID cannot be given out again while anything is still
+    // in it, and the child was reaped only just now, so a group with nothing
+    // left is a harmless ESRCH.
+    handle.kill_group();
     if reported {
         return Ok(true);
     }

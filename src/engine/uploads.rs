@@ -260,10 +260,18 @@ impl WriteBackend for ParallelUploads {
         }
         {
             let mut state = self.state.0.lock().map_err(|_| poisoned())?;
-            // Stop at the first failure rather than uploading the rest.
+            // Stop at the first failure rather than uploading the rest: it
+            // is reported once, and every pack after it is refused too, since
+            // nothing can make use of them any more.
             if let Some(failure) = state.failure.take() {
                 state.failed = true;
                 return Err(failure);
+            }
+            if state.failed {
+                return Err(RusticError::new(
+                    ErrorKind::Internal,
+                    "an earlier upload failed; not uploading more",
+                ));
             }
             state.in_flight += 1;
         }

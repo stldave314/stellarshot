@@ -10,6 +10,7 @@
 //! location instead.
 
 use std::io::{BufRead, BufReader};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -107,7 +108,10 @@ impl Serve {
             let wait = deadline.saturating_duration_since(std::time::Instant::now());
             match rx.recv_timeout(wait) {
                 Ok(line) => {
-                    if let Some(address) = address_in(&line) {
+                    // Only an address on this machine: a line from the remote
+                    // that happens to contain the marker must not send the
+                    // credentials, and every request, somewhere else.
+                    if let Some(address) = address_in(&line).filter(|a| is_loopback(a)) {
                         break address;
                     }
                     said.push_str(&line);
@@ -165,12 +169,95 @@ impl Drop for Serve {
     }
 }
 
+/// Stop every `rclone serve restic` left running with Stellarshot's own
+/// rclone configuration (`config`) whose parent is no longer a Stellarshot
+/// process: one that a window or `--run` child started and then crashed
+/// without stopping, still holding its connection to the remote. Only this
+/// user's processes are looked at. Returns how many were stopped.
+pub fn stop_orphans(config: &Path) -> usize {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return 0;
+    };
+    // SAFETY: `getuid` has no preconditions and cannot fail.
+    let uid = unsafe { libc::getuid() };
+    let mut stopped = 0;
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if !entry.metadata().is_ok_and(|meta| meta.uid() == uid) {
+            continue;
+        }
+        let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if !is_our_serve(&cmdline, config) || parent_is_stellarshot(pid) {
+            continue;
+        }
+        if let Some(pid) = rustix::process::Pid::from_raw(pid)
+            && rustix::process::kill_process(pid, rustix::process::Signal::TERM).is_ok()
+        {
+            debug_log!(ENGINE, "stopped a left-over rclone serve ({pid:?})");
+            stopped += 1;
+        }
+    }
+    stopped
+}
+
+/// Whether `cmdline` (NUL-separated, as in `/proc/<pid>/cmdline`) is
+/// `rclone … serve restic … --config <config>`.
+fn is_our_serve(cmdline: &[u8], config: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let args: Vec<&[u8]> = cmdline.split(|&byte| byte == 0).collect();
+    let program_is_rclone = args.first().is_some_and(|program| {
+        Path::new(std::ffi::OsStr::from_bytes(program)).file_name()
+            == Some(std::ffi::OsStr::new("rclone"))
+    });
+    let has = |word: &[u8]| args.contains(&word);
+    let uses_config = args
+        .windows(2)
+        .any(|pair| pair[0] == b"--config" && pair[1] == config.as_os_str().as_bytes());
+    program_is_rclone && has(b"serve") && has(b"restic") && uses_config
+}
+
+/// Whether `pid`'s parent is a Stellarshot process (the window, a `--run`
+/// child or a `--scheduled` run), which still owns and will stop it.
+fn parent_is_stellarshot(pid: i32) -> bool {
+    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return true;
+    };
+    // `pid (comm) state ppid …`: the name can hold spaces and parentheses.
+    let Some(ppid) = stat
+        .rsplit_once(')')
+        .and_then(|(_, rest)| rest.split_whitespace().nth(1))
+    else {
+        return true;
+    };
+    std::fs::read_to_string(format!("/proc/{ppid}/comm"))
+        .is_ok_and(|comm| comm.trim() == "stellarshot")
+}
+
 /// The address in a "Serving restic REST API on …" line. rclone 1.61 and
 /// later put it in brackets.
 fn address_in(line: &str) -> Option<String> {
     let at = line.find(READY_MARKER)?;
     let address = line[at + READY_MARKER.len()..].trim_end();
     Some(address.trim_matches(['[', ']']).to_owned())
+}
+
+/// Whether `address` (`http://host:port/`) is on this machine.
+fn is_loopback(address: &str) -> bool {
+    url::Url::parse(address).is_ok_and(|url| match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(name)) => name == "localhost",
+        None => false,
+    })
 }
 
 /// `detail`, then the last of what rclone said, bounded.
@@ -189,6 +276,7 @@ fn with_tail(detail: String, said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::process::CommandExt;
 
     #[test]
     fn the_address_is_found_with_or_without_brackets() {
@@ -283,5 +371,53 @@ mod tests {
             ErrorKind::Internal,
             "a refused login is a real failure, not a quiet skip"
         );
+    }
+
+    #[test]
+    fn only_our_own_rclone_serve_is_recognized() {
+        let config = Path::new("/home/a/.config/stellarshot/rclone.conf");
+        let ours = b"rclone\0serve\0restic\0--addr\0localhost:0\0--config\0/home/a/.config/stellarshot/rclone.conf\0--\0r:x\0";
+        assert!(is_our_serve(ours, config));
+        let other_config = b"rclone\0serve\0restic\0--config\0/home/a/.config/rclone/rclone.conf\0";
+        assert!(!is_our_serve(other_config, config), "the user's own rclone");
+        let not_serve =
+            b"/usr/bin/rclone\0lsf\0--config\0/home/a/.config/stellarshot/rclone.conf\0";
+        assert!(!is_our_serve(not_serve, config));
+    }
+
+    /// A left-over serve whose parent is not Stellarshot (here, the test
+    /// binary) is stopped; the test makes its own stand-in with the same
+    /// command line.
+    #[test]
+    fn a_left_over_serve_is_stopped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("rclone.conf");
+        let mut child = std::process::Command::new("python3")
+            .arg0("rclone")
+            .args([
+                "-c",
+                "import time; time.sleep(60)",
+                "serve",
+                "restic",
+                "--config",
+            ])
+            .arg(&config)
+            .spawn()
+            .expect("python3 stands in for rclone here");
+        // Give the exec a moment to settle the command line.
+        std::thread::sleep(Duration::from_millis(300));
+
+        assert_eq!(stop_orphans(&config), 1);
+        let status = child.wait().unwrap();
+        assert!(!status.success(), "stopped, not finished: {status:?}");
+    }
+
+    #[test]
+    fn only_a_loopback_address_is_accepted() {
+        assert!(is_loopback("http://127.0.0.1:41234/"));
+        assert!(is_loopback("http://[::1]:5000/"));
+        assert!(is_loopback("http://localhost:5000/"));
+        assert!(!is_loopback("http://10.0.0.5:8080/"));
+        assert!(!is_loopback("http://evil.example:80/"));
     }
 }

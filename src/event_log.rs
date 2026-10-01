@@ -171,6 +171,18 @@ fn merge_sorted(logs: Vec<(String, Vec<Event>)>) -> Vec<(String, Event)> {
 /// module's own tests never call `store()`, which would read and write the
 /// machine's actual state directory.
 fn push(log: &mut Vec<Event>, event: Event) {
+    // A destination that stays unplugged is skipped at every slot: an
+    // hourly backup would otherwise fill the log with identical "skipped"
+    // entries within days and push every real one out. A run of the same
+    // skip is one entry, with the latest time.
+    if let EventKind::Skipped { .. } = event.kind
+        && let Some(last) = log.last_mut()
+        && last.kind == event.kind
+        && last.source == event.source
+    {
+        last.time = event.time;
+        return;
+    }
     log.push(event);
     if log.len() > EVENT_LOG_CAPACITY {
         let excess = log.len() - EVENT_LOG_CAPACITY;
@@ -184,6 +196,10 @@ pub fn record(profile_id: &str, time: i64, kind: EventKind, source: Source) {
 }
 
 fn push_event(profile_id: &str, event: Event) {
+    crate::paths::with_state_lock(|| push_event_unlocked(profile_id, event));
+}
+
+fn push_event_unlocked(profile_id: &str, event: Event) {
     let Some(store) = store() else {
         return;
     };
@@ -236,6 +252,10 @@ fn merge_into(log: &mut Vec<Event>, incoming: &[Event]) {
 /// run more than once): see [`merge_into`]. Does disk I/O; call it off the
 /// UI thread.
 pub fn merge(profile_id: &str, incoming: &[Event]) {
+    crate::paths::with_state_lock(|| merge_unlocked(profile_id, incoming));
+}
+
+fn merge_unlocked(profile_id: &str, incoming: &[Event]) {
     let Some(store) = store() else {
         return;
     };
@@ -341,6 +361,24 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert_eq!(log[0].time, 1);
         assert_eq!(log[1].time, 2);
+    }
+
+    #[test]
+    fn a_run_of_the_same_skip_is_one_entry_with_the_latest_time() {
+        let skipped = || EventKind::Skipped {
+            kind: ErrorKind::DestinationUnavailable,
+        };
+        let mut log = Vec::new();
+        push(&mut log, event(1, EventKind::BackedUp));
+        for time in 2..500 {
+            push(&mut log, event(time, skipped()));
+        }
+        assert_eq!(log.len(), 2, "the real history survives");
+        assert_eq!(log[1].time, 499);
+
+        push(&mut log, event(500, EventKind::BackedUp));
+        push(&mut log, event(501, skipped()));
+        assert_eq!(log.len(), 4, "a skip after something else is new again");
     }
 
     #[test]

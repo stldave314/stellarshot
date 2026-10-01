@@ -270,3 +270,13 @@ pub const OPEN_COPY_MAX_AGE: std::time::Duration = std::time::Duration::from_sec
 /// How long a cloud sign-in may take in the browser before rclone is stopped
 /// and the sign-in reported as timed out.
 pub const SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// How long a scheduled run waits before trying again a check that failed
+/// with an error (not one that found damage): long enough that a check that
+/// cannot run does not repeat at every slot.
+pub const CHECK_RETRY: std::time::Duration = std::time::Duration::from_secs(86_400);
+
+/// The most a `--run` job read from stdin may be: far more than any real job
+/// (folders, exclusions and a password), and a cap on what a wrong caller can
+/// make the child buffer.
+pub const JOB_MAX_BYTES: usize = 16 * 1024 * 1024;

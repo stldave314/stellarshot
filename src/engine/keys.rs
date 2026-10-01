@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::error::{EngineError, ErrorKind};
 use super::repo::{Repo, Secret, open};
 use crate::debug::ENGINE;
-use crate::debug_log;
+use crate::{debug_log, error_log};
 
 /// One password that can open the repository.
 ///
@@ -87,12 +87,29 @@ impl Repo {
     /// that same guard. **Caught by a test**, not assumed: it opens the
     /// repository again with the new password afterwards and expects to
     /// find only one key.
+    ///
+    /// If anything fails after the new key was added, the new key is removed
+    /// again, so the repository is left with exactly the password it had.
     pub fn change_password(&self, new_password: &str) -> Result<(), EngineError> {
-        let previous = *self.inner.key_id();
-        self.inner.add_key(new_password, &KeyOptions::default())?;
-        if let Some(previous) = previous {
-            let reopened = open(&self.location, &Secret::new(new_password))?;
-            reopened.inner.delete_key(&previous)?;
+        let Some(previous) = *self.inner.key_id() else {
+            return Err(EngineError::new(
+                ErrorKind::Internal,
+                "the repository was not opened with a key, so there is no password to replace",
+            ));
+        };
+        let added = self.inner.add_key(new_password, &KeyOptions::default())?;
+        let removed = open(&self.location, &Secret::new(new_password))
+            .and_then(|reopened| Ok(reopened.inner.delete_key(&previous)?));
+        if let Err(err) = removed {
+            // Through `self`, still opened with the old key: rustic only
+            // refuses to delete the key a handle was opened with.
+            if let Err(undo) = self.inner.delete_key(&added) {
+                error_log!(
+                    ENGINE,
+                    "changing the password failed ({err}), and removing the new key again failed too: {undo}"
+                );
+            }
+            return Err(err);
         }
         debug_log!(ENGINE, "changed the repository's password");
         Ok(())

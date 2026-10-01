@@ -31,9 +31,11 @@ const APP_ID: &str = "io.github.stldave314.Stellarshot";
 const PASSWORD: &str = "correct horse battery staple";
 const DEADLINE: Duration = Duration::from_secs(30);
 
-/// A session bus with no services and none that can be started.
+/// A session bus with no services and none that can be started, and,
+/// optionally, a throwaway Secret Service of its own.
 struct PrivateBus {
     daemon: Child,
+    keyring: Option<Child>,
     address: String,
     _dir: TempDir,
 }
@@ -75,14 +77,70 @@ impl PrivateBus {
         assert!(address.starts_with("unix:"), "no bus address: {address:?}");
         Self {
             daemon,
+            keyring: None,
             address: address.trim().to_owned(),
             _dir: dir,
         }
+    }
+
+    /// [`PrivateBus::start`], plus an unlocked, empty keyring on it, with its
+    /// own home folder: nothing of the real keyring is touched.
+    fn with_empty_keyring() -> Self {
+        use std::io::Write;
+        let mut bus = Self::start();
+        let home = bus._dir.path().join("home");
+        let runtime = bus._dir.path().join("runtime");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&runtime).unwrap();
+        std::fs::set_permissions(
+            &runtime,
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .unwrap();
+        let mut keyring = Command::new("gnome-keyring-daemon")
+            .args(["--unlock", "--components=secrets", "--foreground"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", &home)
+            .env("XDG_RUNTIME_DIR", &runtime)
+            .env("DBUS_SESSION_BUS_ADDRESS", &bus.address)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("gnome-keyring-daemon must be installed for this test");
+        let mut stdin = keyring.stdin.take().unwrap();
+        stdin.write_all(b"test").unwrap();
+        drop(stdin);
+        bus.keyring = Some(keyring);
+        // Wait for it to take its name on the bus.
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(10) {
+            let names = Command::new("dbus-send")
+                .args([
+                    &format!("--bus={}", bus.address),
+                    "--print-reply",
+                    "--dest=org.freedesktop.DBus",
+                    "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus.ListNames",
+                ])
+                .output()
+                .unwrap();
+            if String::from_utf8_lossy(&names.stdout).contains("org.freedesktop.secrets") {
+                return bus;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("the throwaway keyring never appeared on the private bus");
     }
 }
 
 impl Drop for PrivateBus {
     fn drop(&mut self) {
+        if let Some(keyring) = self.keyring.as_mut() {
+            let _ = keyring.kill();
+            let _ = keyring.wait();
+        }
         let _ = self.daemon.kill();
         let _ = self.daemon.wait();
     }
@@ -198,7 +256,7 @@ fn read(path: &Path) -> String {
 
 #[test]
 fn a_backup_with_no_remembered_password_does_not_run_and_says_so() {
-    let bus = PrivateBus::start();
+    let bus = PrivateBus::with_empty_keyring();
     let home = Home::new();
     let id = uuid::Uuid::new_v4().to_string();
     home.save_profile(&id, "");
@@ -215,6 +273,32 @@ fn a_backup_with_no_remembered_password_does_not_run_and_says_so() {
     assert!(
         home.event_log(&id).contains("password-not-remembered"),
         "and it is in the history"
+    );
+}
+
+/// No keyring on the bus at all, as at a login before the keyring is
+/// unlocked: not a missing password, just not reachable yet. The run is
+/// skipped quietly for the next slot to try again, with no failure recorded.
+#[test]
+fn a_keyring_that_cannot_be_reached_skips_the_run_quietly() {
+    let bus = PrivateBus::start();
+    let home = Home::new();
+    let id = uuid::Uuid::new_v4().to_string();
+    home.save_profile(&id, "");
+
+    let status = home.run(&id, &bus);
+
+    assert!(status.success(), "a quiet skip is not a failed run");
+    assert_eq!(home.snapshots(), 0);
+    assert!(
+        !home.run_state(&id).contains("failure: Some("),
+        "no failure recorded: {:?}",
+        home.run_state(&id)
+    );
+    let events = home.event_log(&id);
+    assert!(
+        events.contains("Skipped") && events.contains("keyring-unavailable"),
+        "{events:?}"
     );
 }
 

@@ -60,7 +60,7 @@ pub fn of(profile: &Profile, run: &RunState, now: i64) -> Status {
         name: profile.name.clone(),
         running,
         last_success: run.last_success.max(profile.last_success),
-        failed: run.current_failure(profile.last_success).is_some(),
+        failed: run.current_failure(profile.last_success, now).is_some(),
         overdue: run_state::is_overdue(profile, run, now),
         damaged: run.damaged,
     }

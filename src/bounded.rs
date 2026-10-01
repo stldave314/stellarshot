@@ -69,6 +69,59 @@ fn keep_head(head: &mut Vec<u8>, chunk: &[u8], limit: usize) -> bool {
     chunk.len() > room
 }
 
+/// Read `reader` to the end into a buffer that is wiped when dropped, and that
+/// never leaves a stray copy behind: a `Vec` that grows in place frees its old
+/// allocation with the bytes still in it, so this grows by copying into a new
+/// wiped buffer and wiping the old one. For input that holds a password (the
+/// job a `--run` child reads). Fails past `limit` bytes.
+pub fn read_secret(
+    mut reader: impl Read,
+    limit: usize,
+) -> std::io::Result<zeroize::Zeroizing<Vec<u8>>> {
+    let mut buffer = zeroize::Zeroizing::new(Vec::with_capacity(CHUNK * 8));
+    let mut chunk = zeroize::Zeroizing::new([0u8; CHUNK]);
+    loop {
+        let n = reader.read(&mut chunk[..])?;
+        if n == 0 {
+            return Ok(buffer);
+        }
+        if buffer.len() + n > limit {
+            return Err(std::io::Error::other("more input than allowed"));
+        }
+        if buffer.len() + n > buffer.capacity() {
+            let mut larger = zeroize::Zeroizing::new(Vec::with_capacity(
+                (buffer.capacity() * 2).max(buffer.len() + n),
+            ));
+            larger.extend_from_slice(&buffer);
+            // The old buffer is wiped as it drops here.
+            buffer = larger;
+        }
+        buffer.extend_from_slice(&chunk[..n]);
+    }
+}
+
+/// `value` as JSON in a buffer that is wiped when dropped, sized exactly
+/// before anything is written, so no partial copy is left in freed memory.
+pub fn json_secret<T: serde::Serialize>(
+    value: &T,
+) -> serde_json::Result<zeroize::Zeroizing<Vec<u8>>> {
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, value)?;
+    let mut buffer = zeroize::Zeroizing::new(Vec::with_capacity(counter.0));
+    serde_json::to_writer(&mut *buffer, value)?;
+    Ok(buffer)
+}
+
 /// The most recent `limit` bytes of `text`, starting on a `char` boundary,
 /// for whatever goes into an error message or the log.
 pub fn tail_str(text: &str, limit: usize) -> &str {
@@ -114,5 +167,20 @@ mod tests {
         let tail = tail_str(text, 3);
         assert!(tail.len() <= 3);
         assert!(text.ends_with(tail));
+    }
+
+    #[test]
+    fn a_secret_is_read_whole_and_refused_past_its_limit() {
+        let data: Vec<u8> = (0..200_000u32).map(|n| (n % 251) as u8).collect();
+        assert_eq!(*read_secret(&data[..], 1 << 20).unwrap(), data);
+        assert!(read_secret(&data[..], 1000).is_err());
+    }
+
+    #[test]
+    fn json_is_written_into_a_buffer_of_exactly_its_size() {
+        let value = vec!["password"; 100];
+        let buffer = json_secret(&value).unwrap();
+        assert_eq!(buffer.len(), buffer.capacity());
+        assert_eq!(*buffer, serde_json::to_vec(&value).unwrap());
     }
 }

@@ -12,13 +12,14 @@
 //! user can read from `/proc`). Progress and the outcome leave as JSON lines on
 //! stdout. The exit status is 0 on success and 1 when an error was reported.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
+use crate::constants::JOB_MAX_BYTES;
 use crate::debug::ENGINE;
 use crate::engine::{
     self, BackupReport, BackupRequest, EngineError, ErrorKind, ForgetReport, KeepRules, Location,
@@ -484,12 +485,12 @@ pub fn main(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let mut input = zeroize::Zeroizing::new(Vec::new());
-    let job = std::io::stdin()
-        .read_to_end(&mut input)
-        .map_err(EngineError::from)
-        .and_then(|_| {
-            serde_json::from_slice::<Job>(&input)
+    let input = crate::bounded::read_secret(std::io::stdin(), JOB_MAX_BYTES);
+    let job = input
+        .as_ref()
+        .map_err(|err| EngineError::new(ErrorKind::Io, err.to_string()))
+        .and_then(|input| {
+            serde_json::from_slice::<Job>(input)
                 .map_err(|err| EngineError::new(ErrorKind::Internal, format!("invalid job: {err}")))
         });
     // The job holds the password; `Zeroizing` wipes this buffer when it

@@ -92,7 +92,7 @@ fn status_at(profile: &Profile, run: &RunState, running: bool, now: i64) -> Back
     if run.damaged {
         return BackupStatus::Damaged;
     }
-    if run.current_failure(profile.last_success).is_some() {
+    if run.current_failure(profile.last_success, now).is_some() {
         return BackupStatus::Failed;
     }
     if is_overdue(profile, run, now) {
@@ -111,7 +111,12 @@ pub fn is_overdue(profile: &Profile, run: &RunState, now: i64) -> bool {
     let Some(period) = profile.schedule.period() else {
         return false;
     };
-    match run.last_success.max(profile.last_success) {
+    // A success stamped in the future (a wrong clock) counts as none.
+    match run
+        .last_success
+        .max(profile.last_success)
+        .filter(|&last| last <= now)
+    {
         Some(last) => now - last > period * OVERDUE_FACTOR,
         None => false,
     }
@@ -153,6 +158,11 @@ pub struct RunState {
     /// When an integrity check last ran to the end, damaged or not.
     #[serde(default)]
     pub last_check: Option<i64>,
+    /// When a check last started but did not run to the end (an error other
+    /// than damage), so a check that keeps failing is retried after a while
+    /// rather than at every slot.
+    #[serde(default)]
+    pub last_check_attempt: Option<i64>,
     /// The last scheduled run that failed. It stays until a later run
     /// succeeds, and is shown while it is newer than the last success.
     #[serde(default)]
@@ -176,11 +186,21 @@ pub struct RunState {
 impl RunState {
     /// The failure to show, if it happened after the last success. `other`
     /// is a success recorded elsewhere, such as a backup from the window.
-    pub fn current_failure(&self, other: Option<i64>) -> Option<&Failure> {
-        let last_success = self.last_success.max(other);
-        self.failure
-            .as_ref()
-            .filter(|failure| last_success.is_none_or(|success| failure.time > success))
+    ///
+    /// A clean-up or check failure comes after the backup's own success in
+    /// the same run, often within the same second, so it shows when it is at
+    /// or after that success; a backup failure only when strictly after. A
+    /// success stamped later than `now` (the clock was wrong when it was
+    /// recorded) is ignored rather than hiding every failure until the clock
+    /// catches up.
+    pub fn current_failure(&self, other: Option<i64>, now: i64) -> Option<&Failure> {
+        let last_success = self.last_success.max(other).filter(|&time| time <= now);
+        self.failure.as_ref().filter(|failure| {
+            last_success.is_none_or(|success| match failure.stage {
+                Stage::Backup => failure.time > success,
+                Stage::Cleanup | Stage::Check => failure.time >= success,
+            })
+        })
     }
 }
 
@@ -261,6 +281,10 @@ pub fn save(profile_id: &str, state: &RunState) -> Result<(), String> {
 /// automatic pruning stayed paused indefinitely, with nothing in the log
 /// or the window saying why.
 pub fn update(profile_id: &str, change: impl FnOnce(&mut RunState)) -> Result<(), String> {
+    crate::paths::with_state_lock(|| update_unlocked(profile_id, change))
+}
+
+fn update_unlocked(profile_id: &str, change: impl FnOnce(&mut RunState)) -> Result<(), String> {
     let Ok(mut state) = load_checked(profile_id) else {
         return Err(format!(
             "the run state for {profile_id} could not be read, so it was left as it was"
@@ -391,13 +415,13 @@ mod tests {
             failure: failure(200),
             ..RunState::default()
         };
-        assert!(state.current_failure(None).is_some());
+        assert!(state.current_failure(None, i64::MAX).is_some());
         assert!(
-            state.current_failure(Some(300)).is_none(),
+            state.current_failure(Some(300), i64::MAX).is_none(),
             "a later backup from the window clears it"
         );
         state.last_success = Some(300);
-        assert!(state.current_failure(None).is_none());
+        assert!(state.current_failure(None, i64::MAX).is_none());
     }
 
     /// A run state written by a newer Stellarshot, with an `ErrorKind` this
@@ -425,6 +449,39 @@ mod tests {
             failure: failure(5),
             ..RunState::default()
         };
-        assert!(state.current_failure(None).is_some());
+        assert!(state.current_failure(None, i64::MAX).is_some());
+    }
+
+    #[test]
+    fn a_clean_up_failure_in_the_same_second_as_the_backup_still_shows() {
+        let state = RunState {
+            last_success: Some(500),
+            failure: Some(Failure {
+                time: 500,
+                stage: Stage::Cleanup,
+                kind: ErrorKind::Io,
+                detail: String::new(),
+            }),
+            ..RunState::default()
+        };
+        assert!(state.current_failure(None, 1000).is_some());
+        let backup_same_second = RunState {
+            failure: failure(500),
+            ..state
+        };
+        assert!(backup_same_second.current_failure(None, 1000).is_none());
+    }
+
+    #[test]
+    fn a_success_stamped_in_the_future_hides_nothing() {
+        let state = RunState {
+            last_success: Some(9_999_999),
+            failure: failure(200),
+            ..RunState::default()
+        };
+        assert!(
+            state.current_failure(None, 1000).is_some(),
+            "a wrong clock must not hide a real failure"
+        );
     }
 }

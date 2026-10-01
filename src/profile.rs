@@ -517,7 +517,9 @@ impl Profile {
     pub async fn password(&self) -> Result<Option<Secret>, EngineError> {
         let command = self.password_command.trim();
         if command.is_empty() {
-            Ok(keyring::load(&self.id).await)
+            keyring::load_checked(&self.id)
+                .await
+                .map_err(|detail| EngineError::new(ErrorKind::KeyringUnavailable, detail))
         } else {
             password_command::run(command).await.map(Some)
         }

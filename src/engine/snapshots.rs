@@ -18,6 +18,10 @@ pub struct SnapshotSummary {
     pub id: String,
     /// When the snapshot was taken, in Unix seconds.
     pub time: i64,
+    /// The nanoseconds within that second: what orders two snapshots taken
+    /// in the same one. Zero from a version that did not send it.
+    #[serde(default)]
+    pub time_subsec_ns: u32,
     /// The source paths it covers.
     pub paths: Vec<String>,
     pub hostname: String,
@@ -53,12 +57,22 @@ pub fn short_id(id: &str) -> &str {
     id.get(..SHORT_ID_LEN).unwrap_or(id)
 }
 
+/// Newest first, to the nanosecond; the ID settles a true tie, so the order
+/// is the same every time.
+pub(crate) fn newest_first(a: &SnapshotSummary, b: &SnapshotSummary) -> std::cmp::Ordering {
+    (b.time, b.time_subsec_ns)
+        .cmp(&(a.time, a.time_subsec_ns))
+        .then_with(|| a.id.cmp(&b.id))
+}
+
 impl From<&SnapshotFile> for SnapshotSummary {
     fn from(snap: &SnapshotFile) -> Self {
         let summary = snap.summary.as_ref();
         Self {
             id: snap.id.to_string(),
             time: snap.time.timestamp().as_second(),
+            time_subsec_ns: u32::try_from(snap.time.timestamp().subsec_nanosecond())
+                .unwrap_or_default(),
             paths: snap.paths.iter().cloned().collect(),
             hostname: snap.hostname.clone(),
             files_new: summary.map_or(0, |s| s.files_new),
@@ -80,7 +94,7 @@ impl Repo {
             .iter()
             .map(SnapshotSummary::from)
             .collect();
-        snapshots.sort_by(|a, b| b.time.cmp(&a.time).then_with(|| a.id.cmp(&b.id)));
+        snapshots.sort_by(newest_first);
         debug_log!(ENGINE, "{} snapshots", snapshots.len());
         Ok(snapshots)
     }

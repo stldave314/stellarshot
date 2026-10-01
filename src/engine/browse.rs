@@ -326,7 +326,7 @@ impl Repo {
                 (snapshot, summary)
             })
             .collect();
-        snapshots.sort_by(|a, b| b.1.time.cmp(&a.1.time).then_with(|| a.1.id.cmp(&b.1.id)));
+        snapshots.sort_by(|a, b| super::snapshots::newest_first(&a.1, &b.1));
         let repo = self.inner.to_indexed()?;
         Ok(Browser {
             snapshots,

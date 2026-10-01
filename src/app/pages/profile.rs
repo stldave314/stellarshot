@@ -163,6 +163,8 @@ pub enum Message {
     CleanUpNow,
     CleanedUp(ChildEvent),
     EditSchedule,
+    /// Start the scheduled run now, the way its timer would.
+    RunAsScheduled,
     EditHooks,
     EditPasswordCommand,
     ChangePassword,
@@ -242,6 +244,8 @@ pub enum Effect {
     LogEvent(EventKind),
     /// Replace this backup's unreadable status with a fresh one.
     ResetStatus,
+    /// Start this backup's scheduled run now, through systemd.
+    RunAsScheduled,
     /// Read this backup's history from disk: once, when the page opens.
     FetchHistory,
 }
@@ -530,6 +534,7 @@ impl ProfileState {
                 effects
             }
             Message::EditSchedule => vec![Effect::EditSchedule],
+            Message::RunAsScheduled => vec![Effect::RunAsScheduled],
             Message::EditHooks => vec![Effect::EditHooks],
             Message::EditPasswordCommand => vec![Effect::EditPasswordCommand],
             Message::ChangePassword => vec![Effect::ChangePassword],
@@ -790,6 +795,14 @@ impl ProfileState {
                             widget::button::standard(fl!("change")).on_press(Message::EditSchedule),
                         ),
                 )
+                .add_maybe((profile.schedule != Schedule::Manual).then(|| {
+                    widget::settings::item::builder(fl!("run-as-scheduled-row"))
+                        .description(fl!("run-as-scheduled-description"))
+                        .control(
+                            widget::button::standard(fl!("run-as-scheduled"))
+                                .on_press_maybe(self.can_work().then_some(Message::RunAsScheduled)),
+                        )
+                }))
                 .add(
                     widget::settings::item::builder(fl!("hooks-row"))
                         .description(hooks_summary(&profile.hooks))
@@ -1308,6 +1321,7 @@ mod tests {
         SnapshotSummary {
             id: "0123456789abcdef".into(),
             time,
+            time_subsec_ns: 0,
             paths: vec!["/home/dave".into()],
             hostname: "host".into(),
             files_new: 1,

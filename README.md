@@ -520,7 +520,11 @@ on the timer, with only the command's own error to go on. To see what the
 timer sees, run `systemd-run --user --wait --pipe --collect -- env` and
 compare it with `env` in a terminal; if a variable is missing, export it to
 the manager with `systemctl --user import-environment NAME` (or set it in
-`~/.config/environment.d/`).
+`~/.config/environment.d/`). **Test the automatic backup → Run Now**, on the
+backup's page while it has a schedule, starts its scheduled run through
+systemd straight away, so you can find this out without waiting for the
+timer; the result shows on the page, in History and, if it fails, as a
+notification.
 
 Individual snapshots are deleted with the bin icon on their row; the pin icon
 next to it keeps one however old it gets, until unpinned.

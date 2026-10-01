@@ -208,6 +208,30 @@ opt-level = 2
 strip = true
 codegen-units = 4
 
+# Debug and test builds still optimize the few crates every repository
+# operation spends its time in: the key derivation run at every open, the
+# encryption and hashing of every blob, and compression. Unoptimized, the
+# engine tests spend most of their time there; the rest of the tree stays
+# a fast debug build.
+[profile.dev.package.scrypt]
+opt-level = 3
+[profile.dev.package.salsa20]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.ctr]
+opt-level = 3
+[profile.dev.package.poly1305]
+opt-level = 3
+[profile.dev.package.zstd-sys]
+opt-level = 3
+[profile.dev.package.zstd-safe]
+opt-level = 3
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
 missing_debug_implementations = "warn"

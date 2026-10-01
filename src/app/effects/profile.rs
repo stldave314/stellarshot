@@ -194,6 +194,28 @@ impl App {
                     cosmic::iced::widget::operation::focus(new_password_input_id())
                 }
                 profile::Effect::LogEvent(kind) => record_event(id.clone(), kind),
+                profile::Effect::RunAsScheduled => {
+                    // An on-connect backup whose drive is not plugged in
+                    // would be queued and fail without a word: say so now.
+                    if let Err(err) = profile.location() {
+                        self.show_error(&fl!("run-as-scheduled-failed"), &err);
+                        continue;
+                    }
+                    let id = id.clone();
+                    Task::perform(
+                        tasks::blocking(move || {
+                            crate::timers::start_now(&id)
+                                .map_err(|err| EngineError::new(engine::ErrorKind::Internal, err))
+                        }),
+                        |result| match result {
+                            Ok(()) => app(Message::Dialog(DialogMessage::ScheduledRunStarted)),
+                            Err(err) => app(Message::Dialog(DialogMessage::Failed(
+                                fl!("run-as-scheduled-failed"),
+                                err,
+                            ))),
+                        },
+                    )
+                }
                 profile::Effect::ResetStatus => {
                     let ids = id.clone();
                     let reset = Task::perform(

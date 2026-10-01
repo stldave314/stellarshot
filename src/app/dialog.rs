@@ -189,6 +189,8 @@ pub enum DialogMessage {
     Deleted(String, Result<(), EngineError>),
     /// Show an error from a background task.
     Failed(String, EngineError),
+    /// A scheduled run was started by hand: say where its result shows.
+    ScheduledRunStarted,
     /// Keep the wizard's draft, only hide it: `Dialog::WizardCancel`'s own
     /// two actions, kept apart from `Confirm`/`Close` since neither means
     /// "just dismiss" here.

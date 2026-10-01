@@ -88,6 +88,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on its own, owned by root, and `install-tarball.sh uninstall` removes
   them again.
 
+### Added
+
+- **Test the automatic backup.** A backup with a schedule has a **Run Now**
+  that starts its scheduled run through systemd at once, exactly as the
+  timer would, so a password command or SSH agent the timer cannot see
+  shows up now rather than at the next slot.
+
 ### Fixed
 
 - **Backups set to run when their drive is connected run once per
@@ -275,6 +282,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clean-up and check**, and opens the repository once for all of them: a
   backup started from the window in between used to make the clean-up fail
   as locked.
+- **Snapshots taken within the same second are listed in the order they
+  were taken**, where file history and the deleted-files list could pick
+  the wrong one as newest.
 - **An rclone left running by a crash is stopped** the next time the window
   starts.
 - **A backup whose status cannot be read is no longer stuck as "damaged".**
@@ -317,6 +327,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   formatting, error text, logging) moved out of the window's module, most
   modules are private to the crate, and the systemd unit module is now
   `timers`, to tell it apart from `scheduled`.
+- Debug and test builds optimize the key derivation, encryption and
+  compression crates, which took the library tests from about 16 minutes to
+  under one.
 - The REST server tests run against `rclone serve restic` and run in CI
   again; a coverage report is produced on every CI run.
 - The release is built with a fixed Rust toolchain, `./install.sh package`

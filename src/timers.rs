@@ -42,6 +42,17 @@ pub fn service_name(id: &str) -> String {
     format!("{PREFIX}{id}.service")
 }
 
+/// Start `id`'s scheduled run now, as its timer would: through systemd, so
+/// it sees what a timer's run sees (the manager's environment, no desktop
+/// session), which a backup from the window does not. Returns once the
+/// start is queued, not when the run ends.
+pub fn start_now(id: &str) -> Result<(), String> {
+    if !crate::profile::valid_id(id) {
+        return Err(format!("not a backup ID: {id:?}"));
+    }
+    systemctl(&["start", "--no-block", &service_name(id)])
+}
+
 pub fn timer_name(id: &str) -> String {
     format!("{PREFIX}{id}.timer")
 }
@@ -763,5 +774,14 @@ mod tests {
             1,
             "no leftover temporary file beside the real one"
         );
+    }
+
+    #[test]
+    fn starting_a_run_by_hand_needs_a_real_backup_id_and_unit() {
+        // Refused before systemctl is asked at all.
+        assert!(start_now("../x").unwrap_err().contains("not a backup ID"));
+        // A well-formed ID with no unit behind it fails rather than
+        // reporting a start (or, with no user manager, fails to connect).
+        assert!(start_now("zz-no-such-backup-for-tests").is_err());
     }
 }

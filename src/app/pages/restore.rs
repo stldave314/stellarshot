@@ -1719,6 +1719,7 @@ mod tests {
         SnapshotSummary {
             id: id.into(),
             time,
+            time_subsec_ns: 0,
             paths: vec!["/home/alex".into()],
             hostname: "host".into(),
             files_new: 0,

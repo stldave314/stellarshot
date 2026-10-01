@@ -159,6 +159,13 @@ impl App {
                     }
                 }
             }
+            DialogMessage::ScheduledRunStarted => {
+                self.dialogs.notify(Dialog::Info(
+                    fl!("run-as-scheduled-started-title"),
+                    fl!("run-as-scheduled-started-body"),
+                ));
+                Task::none()
+            }
             DialogMessage::Failed(context, error) => {
                 self.show_error(&context, &error);
                 Task::none()

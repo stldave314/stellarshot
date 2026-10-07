@@ -13,6 +13,10 @@ preview before anything gets written.
 - **Set it up once, with a live size estimate.** A four-step wizard shows
   exactly what you're backing up — what's included, what's excluded, and the
   total — before you commit to anything.
+- **See what's taking up space, and leave it out.** **Browse…** opens any
+  folder you're backing up as a tree with a size on every row, each one
+  marked included, excluded or partly included. Untick a folder and it's
+  out, and the estimate follows.
 - **Back up anywhere.** A folder, a USB drive, an SSH server, Google Drive, or
   any of rclone's other destinations, all side by side with their own
   schedules and settings.
@@ -32,6 +36,10 @@ preview before anything gets written.
 
 <p align="center">
   <img src="docs/screenshots/profile.png" alt="A backup and its snapshots, with Back Up Now" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/folder-tree.png" alt="Browsing a folder by size while setting up a backup, with each folder marked included, excluded or partly included" width="70%">
 </p>
 
 <table>
@@ -1097,7 +1105,8 @@ check, is in [VALIDATION.md](VALIDATION.md).
 
 The screenshots are made from the real application by
 `scripts/screenshots.sh`, with a demo home folder and demo backup so no
-personal data appears in them.
+personal data appears in them. The folder tree one also needs `Xvfb`: its
+buttons are pressed on a display of its own.
 
 ## Translations
 

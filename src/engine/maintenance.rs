@@ -213,21 +213,31 @@ fn prune_with<S: Open>(
 /// data that must actually be gone (files removed from snapshots), not
 /// just stop taking up much space. rustic's defaults leave a pack alone
 /// while under 5% of it is unused, so a small file inside a large pack
-/// would stay readable to anyone with the password; and they only mark a
-/// pack for deletion, deleting it a day later. Here every pack holding
-/// unused data is repacked and the old ones deleted at once.
+/// would stay readable to anyone with the password; here every pack
+/// holding unused data is repacked.
 ///
-/// Deleting at once is what rustic warns against while another process
-/// uses the repository: this computer's own lock rules that out here, but
-/// another computer backing up to the same place at that moment could be
-/// left with a snapshot missing data it expected to reuse.
-pub(super) fn erase_unused<S: Open>(repo: &Repository<S>) -> Result<PruneReport, EngineError> {
+/// With `delete_now`, the packs no longer needed are deleted at once rather
+/// than marked for rustic to delete a day later. That is only safe while
+/// nothing else writes to the repository: another computer's backup
+/// running at that moment could be counting on reusing that very data. So
+/// the caller passes it only when every snapshot in the repository is its
+/// own backup's (this computer's lock keeps out the rest of this
+/// computer); otherwise the packs are marked, and deleted by a clean-up a
+/// day or more later.
+pub(super) fn erase_unused<S: Open>(
+    repo: &Repository<S>,
+    delete_now: bool,
+) -> Result<PruneReport, EngineError> {
     let options = PruneOptions::default()
         .max_unused(LimitOption::Percentage(0))
         .max_repack(LimitOption::Unlimited)
-        .instant_delete(true);
+        .instant_delete(delete_now);
     let report = prune_with(repo, &options)?;
-    debug_log!(ENGINE, "erase unused: {} bytes", report.bytes);
+    debug_log!(
+        ENGINE,
+        "erase unused: {} bytes, deleted now: {delete_now}",
+        report.bytes
+    );
     Ok(report)
 }
 

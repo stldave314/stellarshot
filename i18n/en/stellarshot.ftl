@@ -729,3 +729,14 @@ remove-files-done-body = Removed from { $count ->
    *[other] { $count } snapshots
 }, and { $size } of data erased.
 remove-files-done-none = No snapshot of this backup held them, so nothing changed.
+remove-files-done-erased = No snapshot of this backup holds them any more, and { $size } of data no snapshot needs was erased.
+remove-files-done-erased-later = No snapshot of this backup holds them any more. { $size } of data no snapshot needs is marked for deletion.
+remove-files-done-marked = Removed from { $count ->
+    [one] one snapshot
+   *[other] { $count } snapshots
+}, and { $size } of data marked for deletion.
+remove-files-deferred = Another computer or backup uses the same place and could be backing up right now, so the data is only deleted by a clean-up a day or more from now. Press Clean Up Now on this backup's page then.
+remove-files-still-held = { $count ->
+    [one] One other snapshot still holds them
+   *[other] { $count } other snapshots still hold them
+}: another computer's or backup's, or ones not chosen here. Their data stays in the storage.

@@ -306,15 +306,14 @@ impl App {
                             continue;
                         }
                     };
-                    let scope = match snapshot {
-                        Some(snapshot) => engine::RemoveScope::Snapshot(snapshot),
-                        None => engine::RemoveScope::Profile {
-                            tag: engine::profile_tag(&profile.id),
-                            sources: profile.sources.clone(),
-                        },
+                    let request = engine::RemoveRequest {
+                        paths,
+                        snapshot,
+                        tag: engine::profile_tag(&profile.id),
+                        sources: profile.sources.clone(),
                     };
                     let job = Job {
-                        remove: Some(engine::RemoveRequest { paths, scope }),
+                        remove: Some(request),
                         ..Job::new(repository, secret.clone())
                     };
                     Task::run(child::run(Operation::RemovePaths, job), move |event| {
@@ -333,15 +332,7 @@ impl App {
                     }
                     self.dialogs.notify(Dialog::Info(
                         fl!("remove-files-done-title"),
-                        if report.rewritten == 0 {
-                            fl!("remove-files-done-none")
-                        } else {
-                            fl!(
-                                "remove-files-done-body",
-                                count = (report.rewritten as i64),
-                                size = format::bytes(report.erased)
-                            )
-                        },
+                        restore::removal_summary(&report),
                     ));
                     // The backup's own page lists the snapshots by their old
                     // IDs; it also records the removal, so its own copy of

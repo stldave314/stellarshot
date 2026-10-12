@@ -22,7 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the backup (or just the one open) and erase their data from the storage at
   once, for a password or a huge file that should never have been backed up.
   It can also leave them out of future backups. It cannot be undone, and says
-  so; another computer's snapshots are never touched.
+  so. Another computer's or backup's snapshots are never touched; storage
+  shared with one is erased only by a clean-up a day later, so its backups
+  stay safe; and the result says when other snapshots still hold the files.
 - **Look inside a snapshot from its row.** A folder button on each snapshot
   of a backup's page opens it on the restore page, with Compare already
   showing what it changed, so pinning or deleting it is no longer a guess.

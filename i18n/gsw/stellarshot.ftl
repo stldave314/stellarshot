@@ -729,3 +729,14 @@ remove-files-done-body = Us { $count ->
    *[other] { $count } Momentuufnahme
 } entfernt und { $size } Date glöscht.
 remove-files-done-none = Kei Momentuufnahm vo dere Sicherig het si gha, drum het sich nüt gänderet.
+remove-files-done-erased = Kei Momentuufnahm vo dere Sicherig het si no, und { $size } Date, wo kei Momentuufnahm meh bruucht, sind glöscht worde.
+remove-files-done-erased-later = Kei Momentuufnahm vo dere Sicherig het si no. { $size } Date, wo kei Momentuufnahm meh bruucht, sind zum Lösche vorgmerkt.
+remove-files-done-marked = Us { $count ->
+    [one] einere Momentuufnahm
+   *[other] { $count } Momentuufnahme
+} entfernt, und { $size } Date zum Lösche vorgmerkt.
+remove-files-deferred = En andere Computer oder en anderi Sicherig bruucht de glich Ort und chönnt grad sichere, drum löscht erscht es Ufruume i eim Tag oder spöter d Date. Drück denn uf de Siite vo dere Sicherig «Jetzt ufruume».
+remove-files-still-held = { $count ->
+    [one] Ei anderi Momentuufnahm het si no
+   *[other] { $count } anderi Momentuufnahme händ si no
+}: die vomene andere Computer oder enere andere Sicherig, oder da nöd gwählti. Iri Date bliibed im Speicher.

@@ -729,3 +729,14 @@ remove-files-done-body = Aus { $count ->
    *[other] { $count } Momentaufnahmen
 } entfernt und { $size } Daten gelöscht.
 remove-files-done-none = Keine Momentaufnahme dieser Sicherung enthielt sie, daher hat sich nichts geändert.
+remove-files-done-erased = Keine Momentaufnahme dieser Sicherung enthält sie mehr, und { $size } nicht mehr benötigte Daten wurden gelöscht.
+remove-files-done-erased-later = Keine Momentaufnahme dieser Sicherung enthält sie mehr. { $size } nicht mehr benötigte Daten sind zum Löschen vorgemerkt.
+remove-files-done-marked = Aus { $count ->
+    [one] einer Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} entfernt, und { $size } Daten zum Löschen vorgemerkt.
+remove-files-deferred = Ein anderer Computer oder eine andere Sicherung nutzt denselben Ort und könnte gerade sichern, daher löscht erst ein Aufräumen in einem Tag oder später die Daten. Drücke dann auf der Seite dieser Sicherung „Jetzt aufräumen“.
+remove-files-still-held = { $count ->
+    [one] Eine andere Momentaufnahme enthält sie noch
+   *[other] { $count } andere Momentaufnahmen enthalten sie noch
+}: die eines anderen Computers oder einer anderen Sicherung, oder hier nicht gewählte. Ihre Daten bleiben im Speicher.

@@ -1908,6 +1908,31 @@ fn group_diff(entries: &[DiffEntry]) -> Vec<(PathBuf, Vec<&DiffEntry>)> {
     groups.into_iter().collect()
 }
 
+/// What a finished removal tells the user: what changed, whether deleting
+/// the data had to wait, and whether other snapshots still hold the files,
+/// one paragraph each. Never says data is gone when it is not.
+pub fn removal_summary(report: &RemoveReport) -> String {
+    let count = report.rewritten as i64;
+    let size = format::bytes(report.erased);
+    let mut paragraphs = vec![match (report.rewritten, report.deferred) {
+        (0, _) if report.erased == 0 && report.still_held == 0 => fl!("remove-files-done-none"),
+        (0, false) => fl!("remove-files-done-erased", size = size),
+        (0, true) => fl!("remove-files-done-erased-later", size = size),
+        (_, false) => fl!("remove-files-done-body", count = count, size = size),
+        (_, true) => fl!("remove-files-done-marked", count = count, size = size),
+    }];
+    if report.deferred {
+        paragraphs.push(fl!("remove-files-deferred"));
+    }
+    if report.still_held > 0 {
+        paragraphs.push(fl!(
+            "remove-files-still-held",
+            count = (report.still_held as i64)
+        ));
+    }
+    paragraphs.join("\n\n")
+}
+
 /// Removing has no progress rustic reports, and cannot be stopped part
 /// way: say what is happening and that it is safe to wait.
 fn removing_view<'a>() -> Element<'a, Message> {
@@ -2020,6 +2045,7 @@ mod tests {
             removed: Some(RemoveReport {
                 rewritten,
                 erased: 10,
+                ..RemoveReport::default()
             }),
         }))
     }
@@ -2040,6 +2066,42 @@ mod tests {
         page.update(Message::StartRemove);
         assert!(page.escape().is_empty());
         assert!(page.is_writing());
+    }
+
+    #[test]
+    fn a_removal_never_claims_data_is_gone_when_it_is_not() {
+        let report = |rewritten, erased, deferred, still_held| RemoveReport {
+            rewritten,
+            erased,
+            deferred,
+            still_held,
+        };
+        let erased = removal_summary(&report(2, 10, false, 0));
+        assert_eq!(erased.split("\n\n").count(), 1, "{erased}");
+        // Shared storage: marked, and says when it goes.
+        let marked = removal_summary(&report(2, 10, true, 0));
+        assert_eq!(marked.split("\n\n").count(), 2, "{marked}");
+        assert_eq!(
+            marked.split("\n\n").nth(1),
+            Some(fl!("remove-files-deferred").as_str())
+        );
+        assert_ne!(marked, removal_summary(&report(2, 10, false, 0)));
+        // Other snapshots still hold the files: said, whatever else.
+        let held = removal_summary(&report(1, 10, false, 3));
+        assert!(
+            held.ends_with(&fl!("remove-files-still-held", count = 3_i64)),
+            "{held}"
+        );
+        // Nothing anywhere: nothing changed, and nothing more claimed.
+        assert_eq!(
+            removal_summary(&report(0, 0, false, 0)),
+            fl!("remove-files-done-none")
+        );
+        // A retry that only erased: not "nothing changed".
+        assert_ne!(
+            removal_summary(&report(0, 10, false, 0)),
+            fl!("remove-files-done-none")
+        );
     }
 
     #[test]

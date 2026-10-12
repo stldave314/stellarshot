@@ -18,23 +18,19 @@ use super::repo::Repo;
 use crate::debug::ENGINE;
 use crate::debug_log;
 
-/// Which snapshots to take the paths out of.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RemoveScope {
-    /// One snapshot, by ID or unique prefix.
-    Snapshot(String),
-    /// Every snapshot one backup made on this computer: the profile's own
-    /// tag and sources, as [`Repo::forget`] uses them. Another computer's
-    /// snapshots in the same repository are never touched.
-    Profile { tag: String, sources: Vec<PathBuf> },
-}
-
-/// Files and folders to take out of snapshots, as the snapshots record
-/// them: absolute paths.
+/// Files and folders to take out of one backup's snapshots, as the
+/// snapshots record them: absolute paths.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RemoveRequest {
     pub paths: Vec<PathBuf>,
-    pub scope: RemoveScope,
+    /// Only this snapshot (an ID or unique prefix); every one of the
+    /// backup's own if `None`.
+    pub snapshot: Option<String>,
+    /// The backup's own tag and sources, as [`Repo::forget`] uses them: what
+    /// its snapshots are, and so whether anything else uses the repository
+    /// too. Another computer's or backup's snapshots are never changed.
+    pub tag: String,
+    pub sources: Vec<PathBuf>,
 }
 
 /// What removing did.
@@ -45,18 +41,28 @@ pub struct RemoveReport {
     pub rewritten: u64,
     /// Bytes of data no snapshot needed any more, erased afterwards.
     pub erased: u64,
+    /// The repository is shared with another computer or backup, so the
+    /// unused data was only marked: rustic deletes it at a clean-up a day or
+    /// more later (see [`erase_unused`]).
+    pub deferred: bool,
+    /// Snapshots that still hold one of the paths and were not changed:
+    /// another computer's or backup's, or this backup's others when only
+    /// one snapshot was asked for. Their data stays in the repository.
+    pub still_held: u64,
 }
 
 impl Repo {
-    /// Take `request.paths` out of the snapshots `request.scope` names, then
-    /// erase every piece of data no snapshot needs any more (see
+    /// Take `request.paths` out of the backup's snapshots (or the one asked
+    /// for), then erase every piece of data no snapshot needs any more (see
     /// [`erase_unused`]), so what was removed is actually gone rather than
     /// only unlisted.
     ///
     /// Only snapshots that actually hold one of the paths are rewritten:
     /// rustic would otherwise save a new copy of any snapshot whose recorded
     /// totals it counts differently, changing IDs for nothing. Each one
-    /// rewritten keeps its name, notes, tags and pin. Consumes the
+    /// rewritten keeps its name, notes, tags and pin. The erase runs even
+    /// when none holds them any more, so trying again after a failure part
+    /// way (rewritten, but not yet erased) finishes the job. Consumes the
     /// repository, since rewriting needs its full index.
     ///
     /// Cannot be undone, and refused by an append-only repository.
@@ -69,37 +75,68 @@ impl Repo {
         if globs.is_empty() {
             return Ok(RemoveReport::default());
         }
-        let snapshots = match &request.scope {
-            RemoveScope::Snapshot(id) => self.inner.get_snapshots(&[id])?,
-            RemoveScope::Profile { tag, sources } => {
-                let host = hostname();
-                self.inner.get_matching_snapshots(|snapshot| {
-                    belongs_to_profile(snapshot, &host, tag, sources)
-                })?
-            }
+        let host = hostname();
+        let ours = |snapshot: &SnapshotFile| {
+            belongs_to_profile(snapshot, &host, &request.tag, &request.sources)
+        };
+        let all = self.inner.get_all_snapshots()?;
+        // Any snapshot that is not this backup's means something else writes
+        // here too, perhaps at this very moment: see `erase_unused`.
+        let shared = all.iter().any(|snapshot| !ours(snapshot));
+        // One snapshot, if asked for, but only ever one of this backup's own:
+        // the restore page lists every snapshot in the repository.
+        let wanted: Vec<_> = match &request.snapshot {
+            Some(id) => self
+                .inner
+                .get_snapshots(&[id])?
+                .into_iter()
+                .filter(|snapshot| ours(snapshot))
+                .map(|snapshot| snapshot.id)
+                .collect(),
+            None => all
+                .iter()
+                .filter(|snapshot| ours(snapshot))
+                .map(|snapshot| snapshot.id)
+                .collect(),
         };
         // Kept until the end: the rclone process the repository talks to.
         let _serve = self.serve;
         let repo = self.inner.to_indexed()?;
         let mut holding = Vec::new();
-        for snapshot in snapshots {
+        let mut still_held = 0;
+        for snapshot in all {
             if holds_any(&repo, &snapshot, &request.paths)? {
-                holding.push(snapshot);
+                if wanted.contains(&snapshot.id) {
+                    holding.push(snapshot);
+                } else {
+                    still_held += 1;
+                }
             }
         }
-        if holding.is_empty() {
-            debug_log!(ENGINE, "remove: no snapshot holds any of the paths");
-            return Ok(RemoveReport::default());
-        }
-        let tree_options =
-            RewriteTreesOptions::default().excludes(Excludes::default().globs(globs));
-        let options = RewriteOptions::default().forget(true);
-        let rewritten = repo
-            .rewrite_snapshots_and_trees(holding, &options, &tree_options)?
-            .len() as u64;
-        debug_log!(ENGINE, "remove: rewrote {rewritten} snapshots");
-        let erased = erase_unused(&repo)?.bytes;
-        Ok(RemoveReport { rewritten, erased })
+        let rewritten = if holding.is_empty() {
+            debug_log!(
+                ENGINE,
+                "remove: no snapshot asked for holds any of the paths"
+            );
+            0
+        } else {
+            let tree_options =
+                RewriteTreesOptions::default().excludes(Excludes::default().globs(globs));
+            let options = RewriteOptions::default().forget(true);
+            repo.rewrite_snapshots_and_trees(holding, &options, &tree_options)?
+                .len() as u64
+        };
+        debug_log!(
+            ENGINE,
+            "remove: rewrote {rewritten}, {still_held} others still hold them, shared: {shared}"
+        );
+        let erased = erase_unused(&repo, !shared)?.bytes;
+        Ok(RemoveReport {
+            rewritten,
+            erased,
+            deferred: shared,
+            still_held,
+        })
     }
 }
 

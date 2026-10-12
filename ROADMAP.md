@@ -281,8 +281,13 @@ A new backup engine behind one module, on the current rustic release.
       prune that repacks every pack holding unused data and deletes the old
       ones immediately: rustic's default prune would have left a small file
       inside a mostly-used pack, readable to anyone with the password, which
-      a test demonstrates. Other computers' snapshots are never touched, a
-      mounted snapshot blocks it, and an append-only repository refuses it.
+      a test demonstrates. When another computer or backup shares the
+      repository, the old packs are only marked and deleted by a clean-up a
+      day later instead, since its backup could be reusing that data at that
+      moment. Other computers' and backups' snapshots are never touched (and
+      the result counts the ones still holding the files), a retry after a
+      failure part way still finishes the erase, a mounted snapshot blocks
+      it, and an append-only repository refuses it.
       Proven against real repositories, including names made of pattern
       characters and a trailing space
 - [x] **Download straight from a snapshot**: a file (rustic's own `dump`), or

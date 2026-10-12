@@ -729,3 +729,14 @@ remove-files-done-body = Borttagna ur { $count ->
    *[other] { $count } ögonblicksbilder
 }, och { $size } data raderades.
 remove-files-done-none = Ingen ögonblicksbild av den här säkerhetskopian hade dem, så inget ändrades.
+remove-files-done-erased = Ingen ögonblicksbild av den här säkerhetskopian har dem längre, och { $size } data som ingen ögonblicksbild behöver raderades.
+remove-files-done-erased-later = Ingen ögonblicksbild av den här säkerhetskopian har dem längre. { $size } data som ingen ögonblicksbild behöver är markerade för radering.
+remove-files-done-marked = Borttagna ur { $count ->
+    [one] en ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+}, och { $size } data markerade för radering.
+remove-files-deferred = En annan dator eller säkerhetskopia använder samma plats och kan säkerhetskopiera just nu, så datan raderas först av en uppstädning om ett dygn eller mer. Tryck då på Städa nu på den här säkerhetskopians sida.
+remove-files-still-held = { $count ->
+    [one] En annan ögonblicksbild har dem fortfarande
+   *[other] { $count } andra ögonblicksbilder har dem fortfarande
+}: en annan dators eller säkerhetskopias, eller sådana som inte valdes här. Deras data finns kvar i lagringen.

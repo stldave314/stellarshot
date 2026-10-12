@@ -389,8 +389,15 @@ Before you start:
   downloaded and uploaded again.
 - **Storage that keeps its own copies** still has one: Google Drive's trash,
   or a provider's file versions or snapshots. Empty or expire those too.
-- **Not while another computer is backing up to the same place**: erasing at
-  once could take data that computer's backup is about to reuse.
+- **Storage shared with another computer or backup** is erased more
+  carefully: that one could be backing up at that very moment and about to
+  reuse data that looks unused, so the data is only marked, and deleted by a
+  clean-up a day or more later (**Clean Up Now**). The result says so.
+- **Snapshots that are not changed keep the files**: another computer's or
+  backup's, or this backup's others when you chose only one snapshot. Their
+  data stays in the storage, and the result says how many there are.
+- **If it fails part way**, run it again: it finishes erasing even when the
+  snapshots were already rewritten.
 - **Not while a snapshot is mounted** as a folder; the button stays disabled
   until it is unmounted.
 - An **append-only** backup refuses to change its snapshots, so **Remove…**

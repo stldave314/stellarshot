@@ -302,7 +302,20 @@ fn opening_an_rclone_repository_leaves_no_zombie_behind() {
         drop(engine::open(&location, &secret).unwrap());
     }
 
-    let zombies = zombie_children();
+    // Only a zombie that stays one is a leak. The other tests in this
+    // binary run alongside and stop rclone processes of their own, each
+    // a zombie for the moment between its kill and its reaping; seen in
+    // that moment, one used to fail this test now and then. A process
+    // that was never going to be reaped is still there after the wait.
+    let mut zombies = zombie_children();
+    for _ in 0..50 {
+        if zombies.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let now = zombie_children();
+        zombies.retain(|pid| now.contains(pid));
+    }
     assert!(
         zombies.is_empty(),
         "{} rclone process(es) were killed but never reaped: {zombies:?}",

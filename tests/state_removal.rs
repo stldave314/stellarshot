@@ -78,7 +78,8 @@ fn a_removed_backups_state_and_history_are_deleted() {
     assert!(find(state, &run_key).is_empty(), "run state deleted");
     assert!(find(state, &log_key).is_empty(), "history deleted");
     assert_eq!(run_state::load(&id), RunState::default());
-    assert!(event_log::load(&id).is_empty());
+    let history = event_log::load(&id);
+    assert!(history.is_empty(), "{history:?}");
     // Only that backup's.
     assert_eq!(run_state::load(&other).last_success, Some(1));
     assert_eq!(event_log::load(&other).len(), 1);

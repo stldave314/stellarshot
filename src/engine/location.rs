@@ -171,7 +171,7 @@ mod tests {
 
         let remaining = delete_repository(&repo).unwrap();
 
-        assert!(remaining.is_empty());
+        assert!(remaining.is_empty(), "{remaining:?}");
         assert!(!repo.exists());
     }
 

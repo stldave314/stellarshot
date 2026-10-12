@@ -319,7 +319,7 @@ mod tests {
         }
 
         assert_eq!(config.global_exclude_patterns, vec!["*.tmp".to_owned()]);
-        assert!(page.pattern_input.is_empty());
+        assert!(page.pattern_input.is_empty(), "{:?}", page.pattern_input);
 
         page.update(Message::RemovePattern(5), &mut config, Some(&handler));
         assert_eq!(
@@ -328,7 +328,11 @@ mod tests {
             "out of range is ignored"
         );
         page.update(Message::RemovePattern(0), &mut config, Some(&handler));
-        assert!(config.global_exclude_patterns.is_empty());
+        assert!(
+            config.global_exclude_patterns.is_empty(),
+            "{:?}",
+            config.global_exclude_patterns
+        );
     }
 
     #[test]

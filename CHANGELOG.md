@@ -350,15 +350,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the lint and advisory checks, and every shipped binary is verified to
   carry its dependency data.
 
-### Removed
-
-- The web interface and its REST API (added in 0.6.0) are no longer part of Stellarshot: the
-  `stellarshot-web` program, its Settings page and its documentation now
-  live in a project of their own. Stellarshot no longer installs it; a
-  systemd user unit an earlier version created for it can be removed with
-  `systemctl --user disable --now stellarshot-web.service` and deleting
-  `~/.config/systemd/user/stellarshot-web.service`.
-
 ## [0.8.2] - 2026-09-29
 
 ### Security

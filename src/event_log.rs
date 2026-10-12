@@ -500,13 +500,13 @@ mod tests {
     }
 
     /// Entries an earlier version recorded for a front end that no longer
-    /// exists in this program: a `Web` source, and a `web` context naming a
-    /// peer. Neither is a field or a variant any more, and neither may make
-    /// the entry — or the whole log it is in — unreadable, or nothing would
-    /// be allowed to write over it and that backup's history would freeze.
+    /// exists in this program: a source and a context naming a peer that
+    /// are neither a variant nor a field any more. Neither may make the
+    /// entry — or the whole log it is in — unreadable, or nothing would be
+    /// allowed to write over it and that backup's history would freeze.
     #[test]
     fn an_entry_from_a_source_this_version_does_not_know_still_loads() {
-        let stored = r#"(time:1700000000,kind:BackedUp,source:Web,web:Some((addr:"10.0.0.2:5555",method:Password)))"#;
+        let stored = r#"(time:1700000000,kind:BackedUp,source:Retired,peer:Some((addr:"10.0.0.2:5555",method:Password)))"#;
 
         let loaded: Event = ron::from_str(stored).unwrap();
 

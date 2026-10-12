@@ -691,7 +691,7 @@ block; `systemctl --user list-unit-files 'stellarshot*'` shows nothing.
 | `VALIDATION.md:163,598` | `src/app/settings.rs` is now `src/app/startup.rs`. |
 | `VALIDATION.md:12-19,762-766` | List the CI checks that exist now: package smoke tests (deb, rpm, lintian), tarball-as-root, the two packaged-binary scripts, SHA256SUMS and attestation, `cargo deny`, the MSRV job. |
 | `CONTRIBUTING.md:44-51` | `rustic-server` is only needed for `cargo test --test rest_server -- --ignored`; plain `cargo test` never uses it. |
-| `CHANGELOG.md` `[Unreleased]` | The 64 KiB cap is for the password command only; a hook keeps the last 16 KiB of stderr and rclone listings are capped at 1 MiB. Check whether the "web interface removed" section refers to anything in a released version; if not, delete it. |
+| `CHANGELOG.md` `[Unreleased]` | The 64 KiB cap is for the password command only; a hook keeps the last 16 KiB of stderr and rclone listings are capped at 1 MiB. |
 | `i18n/de/stellarshot.ftl` | `error-ambiguous`, `error-too-large-to-open`, `error-duplicate-name`, `error-too-busy` use "Sie"; rewrite with "du" ("Verwende ein längeres Präfix.", "Stelle es stattdessen in einem Ordner wieder her.", "Stelle sie einzeln oder in verschiedene Ordner wieder her.", "Versuche es in Kürze erneut."). |
 | `Cargo.toml:72`, `EXPLANATION.md:34` | `app::settings::set_logger` → `app::startup::set_logger`. |
 | `EXPLANATION.md:56` | `/tmp/stellarshot-backend.log` → `~/.local/state/stellarshot/backend.log`. |

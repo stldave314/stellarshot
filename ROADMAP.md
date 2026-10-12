@@ -4,7 +4,7 @@ What is done, what is next, and what is deliberately out of scope.
 
 **The goal** is a backup application the open-source world can choose over
 commercial ones: set up once, trusted, and understandable, from a single
-laptop up to a centrally watched fleet.
+laptop up to many machines.
 
 **Stellarshot complements rustic; it never changes it.** rustic is a separate
 project with its own goals. Everything here is built on the public
@@ -613,9 +613,6 @@ Questions to answer before anything is built.
   it
 - **rustic-server and rustic-scheduler**: what an append-only REST
   destination, and central scheduling of several machines, would give
-- **A central dashboard** for many machines, hosted or on-premises in a
-  container, and finding the machines on the network, each with its own
-  permissions
 - **Other desktops and systems**: GNOME, KDE, Windows, macOS, Android and
   iOS, under the same license where possible. libcosmic targets COSMIC first
 - **Tiered storage**: a snapshot lives in one repository, so "small files here,

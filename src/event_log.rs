@@ -72,6 +72,16 @@ pub enum EventKind {
     Unmounted {
         snapshot: String,
     },
+    /// A snapshot's name, notes or tags changed.
+    DetailsChanged {
+        snapshot: String,
+    },
+    /// Files were taken out of snapshots, and the data no snapshot needed
+    /// any more erased.
+    FilesRemoved {
+        snapshots: u64,
+        erased: u64,
+    },
 }
 
 /// Where an action that produced an event came from: the desktop window (or
@@ -337,6 +347,14 @@ pub fn describe(kind: &EventKind) -> String {
         EventKind::PasswordChanged => fl!("event-password-changed"),
         EventKind::Mounted { snapshot } => fl!("event-mounted", snapshot = short_id(snapshot)),
         EventKind::Unmounted { snapshot } => fl!("event-unmounted", snapshot = short_id(snapshot)),
+        EventKind::DetailsChanged { snapshot } => {
+            fl!("event-details-changed", snapshot = short_id(snapshot))
+        }
+        EventKind::FilesRemoved { snapshots, erased } => fl!(
+            "event-files-removed",
+            count = (*snapshots as i64),
+            size = format::bytes(*erased)
+        ),
     }
 }
 
@@ -480,7 +498,8 @@ mod tests {
                 "{kind:?} should mention the snapshot's short ID, not its full one"
             );
         }
-        assert!(!describe(&EventKind::PasswordChanged).is_empty());
+        let text = describe(&EventKind::PasswordChanged);
+        assert!(!text.is_empty(), "{text:?}");
         assert!(
             describe(&EventKind::Restored {
                 files: 3,

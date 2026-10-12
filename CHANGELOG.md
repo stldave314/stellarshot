@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Name, note and tag your snapshots.** "Manage Snapshots…" on a backup's
+  page lists every snapshot with a filter by name, tag or note; open one to
+  give it a name ("Before the upgrade"), notes and tags, see where and when
+  it was taken and what changed, pin it, browse it or delete it. They are
+  rustic's own label, description and tags, so the command-line tools show
+  them too.
+- **Take files out of your backups for good.** Tick files on the restore
+  page's Browse tab and press Remove… to take them out of every snapshot of
+  the backup (or just the one open) and erase their data from the storage at
+  once, for a password or a huge file that should never have been backed up.
+  It can also leave them out of future backups. It cannot be undone, and says
+  so; another computer's snapshots are never touched.
+- **Look inside a snapshot from its row.** A folder button on each snapshot
+  of a backup's page opens it on the restore page, with Compare already
+  showing what it changed, so pinning or deleting it is no longer a guess.
+- **Snapshot rows say what changed:** how many files were new and changed,
+  next to the data added. What a snapshot is, explained in a few lines
+  behind an info button beside "Recent snapshots", and in the README's new
+  "How snapshots work".
+- **Escape steps back** out of the restore page and the Snapshots page, as it
+  already closed dialogs.
+
+### Changed
+
+- **Retention groups snapshots by computer and folders only**, no longer
+  also by name as rustic does on its own: a named snapshot would otherwise
+  sit in a group of one and never be forgotten. Pinning is the way to keep
+  one. Nothing changes for existing backups, which had no names.
+
+### Fixed
+
+- **A tag on an old snapshot no longer hides it from its backup's "Keep".**
+  A snapshot from before per-backup tagging was only recognized as the
+  backup's own while it had no tags at all.
+- **An excluded file or folder whose name ends in a space is excluded.** The
+  pattern lost its trailing space and matched the name without it instead.
+
 ## [0.9.0] - 2026-09-30
 
 ### Security

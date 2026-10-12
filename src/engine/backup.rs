@@ -76,6 +76,8 @@ pub struct BackupRequest {
 /// the exclude is silently ignored and the folder is backed up anyway,
 /// which for the automatic "repository inside a source" exclude (see
 /// `Profile::backup_request`) means the repository backs up into itself.
+/// Spaces are escaped too: gitignore drops a pattern's trailing spaces, so
+/// a name ending in one would otherwise match the name without it.
 ///
 /// Fails on a path that is not valid UTF-8 rather than falling back to
 /// `Path::display`, whose replacement character would produce a glob that
@@ -90,7 +92,10 @@ pub(crate) fn literal_glob(path: &Path) -> Result<String, EngineError> {
     })?;
     let mut escaped = String::with_capacity(text.len());
     for ch in text.chars() {
-        if matches!(ch, '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '!') {
+        if matches!(
+            ch,
+            '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '!' | ' ' | '\t'
+        ) {
             escaped.push('\\');
         }
         escaped.push(ch);

@@ -36,12 +36,13 @@ unlock = Lås upp
 remember-password = Kom ihåg lösenordet
 remember-password-description = Sparas i din nyckelring. Schemalagda säkerhetskopieringar behöver det.
 recent-snapshots = Senaste ögonblicksbilderna
+snapshots-explained = Varje ögonblicksbild är en fullständig kopia av dina mappar som de var just då, och en återställning behöver bara den. Oförändrade filer sparas bara en gång, så varje ögonblicksbild lägger bara till det som ändrats. En fil du raderar finns kvar i tidigare ögonblicksbilder tills de tas bort.
+snapshots-explain = Vad är en ögonblicksbild?
 no-snapshots-yet = Inga ögonblicksbilder än. Tryck på Säkerhetskopiera nu för att ta den första.
-snapshot-row = { $id } · { $size } · { $added } nytt, deduplicerat
-show-all-snapshots = Visa alla { $count ->
-    [one] { $count } ögonblicksbild
-   *[other] { $count } ögonblicksbilder
-}
+snapshot-row = { $id } · { $size } · { $new ->
+    [one] { $new } ny fil
+   *[other] { $new } nya filer
+}, { $changed } ändrade · { $added } tillagt
 manage = Hantera
 edit-backup = Vad som säkerhetskopieras
 edit-backup-description = Ändra de inkluderade och exkluderade mapparna.
@@ -520,7 +521,7 @@ help-terms-title = Termer
 term-repository = Förråd
 term-repository-description = Var en säkerhetskopias krypterade, deduplicerade data finns: en mapp, en enhet, en server eller molnlagring. Varje säkerhetskopieprofil har sitt eget.
 term-snapshot = Ögonblicksbild
-term-snapshot-description = En bild av dina filer från en säkerhetskopiering, tagen vid en viss tidpunkt. Ett förråd innehåller många, och en återställning läser från en av dem.
+term-snapshot-description = En fullständig kopia av dina mappar som de var när en säkerhetskopiering kördes. Ögonblicksbilder delar på oförändrade filer i stället för att spara dem igen, men var och en är komplett för sig: en återställning behöver bara den du väljer.
 term-rclone = rclone
 term-rclone-description = Det separata program Stellarshot använder för att nå SSH-servrar, Google Drive och annan molnlagring. Det är inte en del av Stellarshot och har sin egen konfiguration.
 term-prune = Beskär
@@ -654,6 +655,7 @@ pin-snapshot-failed = Ögonblicksbildens fästning kunde inte ändras.
 pin-snapshot = Fäst, så att uppstädning aldrig tar bort den här ögonblicksbilden
 unpin-snapshot = Lossa, så att uppstädning kan ta bort den här ögonblicksbilden igen
 delete-snapshot-row = Radera den här ögonblicksbilden
+browse-snapshot = Se vad som finns i den här ögonblicksbilden
 snapshot-label = { $time } · { $id }
 hook-row = { $timing } · { $command }
 size-removed = −{ $size }
@@ -667,3 +669,63 @@ desktop-new-backup = Ny säkerhetskopia
 desktop-restore = Återställ filer
 applet-comment = Om en säkerhetskopiering pågår, och när var och en senast lyckades
 metainfo-summary = Säkerhetskopiera dina filer med krypterade ögonblicksbilder
+
+# Snapshots page, and removing files from snapshots
+manage-snapshots = Hantera ögonblicksbilder…
+snapshots-title = Ögonblicksbilder för { $name }
+snapshots-filter = Filtrera efter namn, etikett eller anteckning
+snapshots-no-match = Ingen ögonblicksbild matchar.
+snapshot-open = Öppna den här ögonblicksbilden
+snapshot-pinned = Fäst
+snapshot-tag-list = Etiketter: { $tags }
+snapshot-name = Namn
+snapshot-name-placeholder = Till exempel: Före uppgraderingen
+snapshot-notes = Anteckningar
+snapshot-notes-placeholder = Sådant som är värt att minnas om den här ögonblicksbilden
+snapshot-tags = Etiketter
+snapshot-tags-placeholder = Avgränsade med kommatecken
+revert = Återställ
+snapshot-details-failed = Ögonblicksbildens uppgifter kunde inte sparas.
+snapshot-about = Om den här ögonblicksbilden
+snapshot-taken = Tagen
+snapshot-id = ID
+snapshot-computer = Dator
+snapshot-folders = Mappar
+snapshot-files = Filer
+snapshot-files-value = { $new } nya, { $changed } ändrade, { $unchanged } oförändrade
+snapshot-not-recorded = Inte registrerat
+snapshot-size = Storlek
+snapshot-size-value = { $size }, varav { $added } nya data
+snapshot-actions = Åtgärder
+snapshot-browse = Bläddra bland filerna
+snapshot-browse-description = Se vad den innehåller och återställ från den. Markera filer där och tryck på Ta bort… för att ta bort dem ur dina säkerhetskopior.
+snapshot-browse-button = Bläddra…
+snapshot-pinned-description = Uppstädning tar aldrig bort en fäst ögonblicksbild, hur gammal den än blir.
+snapshot-delete-description = Dess filer finns kvar i alla andra ögonblicksbilder som har dem.
+event-details-changed = Ändrade namn, anteckningar eller etiketter för ögonblicksbilden { $snapshot }
+event-files-removed = Tog bort filer ur { $count ->
+    [one] en ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+} och raderade { $size }
+remove-files-button = Ta bort…
+remove-files-title = Ta bort { $count ->
+    [one] det här objektet
+   *[other] de här { $count } objekten
+} ur säkerhetskopian
+remove-files-from = Ta bort ur
+remove-files-everywhere = Varje ögonblicksbild av den här säkerhetskopian
+remove-files-everywhere-description = För ett lösenord eller något annat som aldrig borde ha säkerhetskopierats. Ögonblicksbilder som en annan dator har gjort på samma plats lämnas orörda.
+remove-files-only-this = Bara ögonblicksbilden från { $time }
+remove-files-exclude = Utelämna från kommande säkerhetskopior
+remove-files-exclude-description = Annars kopierar nästa säkerhetskopiering dem igen om de fortfarande finns på den här datorn.
+remove-files-warning = Det här går inte att ångra. Filerna raderas ur säkerhetskopians lagring, de döljs inte bara. Lagring som sparar raderade filer i en papperskorg eller som äldre versioner, som Google Drive gör, kan fortfarande ha en kopia där tills den töms.
+remove-files-confirm = Ta bort för gott
+remove-files-running = Tar bort filer ur säkerhetskopian…
+remove-files-running-body = Varje ögonblicksbild som har dem sparas igen utan dem, och sedan raderas deras data. Det går inte att avbryta halvvägs, och på molnlagring kan det ta en stund.
+remove-files-failed = Filerna kunde inte tas bort.
+remove-files-done-title = Filer borttagna
+remove-files-done-body = Borttagna ur { $count ->
+    [one] en ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+}, och { $size } data raderades.
+remove-files-done-none = Ingen ögonblicksbild av den här säkerhetskopian hade dem, så inget ändrades.

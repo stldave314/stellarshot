@@ -36,12 +36,13 @@ unlock = Unlock
 remember-password = Remember password
 remember-password-description = Stored in your keyring. Scheduled backups will need it.
 recent-snapshots = Recent snapshots
+snapshots-explained = Each snapshot is a complete copy of your folders as they were at that moment, and restoring needs only that one. Unchanged files are stored once, so each snapshot adds only what changed. A file you delete stays in earlier snapshots until they are removed.
+snapshots-explain = What is a snapshot?
 no-snapshots-yet = No snapshots yet. Press Back Up Now to take the first one.
-snapshot-row = { $id } · { $size } · { $added } new, deduplicated
-show-all-snapshots = Show all { $count ->
-    [one] { $count } snapshot
-   *[other] { $count } snapshots
-}
+snapshot-row = { $id } · { $size } · { $new ->
+    [one] { $new } new file
+   *[other] { $new } new files
+}, { $changed } changed · { $added } added
 manage = Manage
 edit-backup = What to back up
 edit-backup-description = Change the included and excluded folders.
@@ -168,6 +169,7 @@ pin-snapshot-failed = The snapshot's pin could not be changed.
 pin-snapshot = Pin, so cleaning up never removes this snapshot
 unpin-snapshot = Unpin, so cleaning up may remove this snapshot again
 delete-snapshot-row = Delete this snapshot
+browse-snapshot = See what is in this snapshot
 snapshot-failed = The snapshot could not be created.
 open-repo-failed = The repository could not be opened.
 error-wrong-password = The password is incorrect.
@@ -536,7 +538,7 @@ help-terms-title = Terms
 term-repository = Repository
 term-repository-description = Where a backup's encrypted, deduplicated data lives: a folder, a drive, a server or cloud storage. Each backup profile has its own.
 term-snapshot = Snapshot
-term-snapshot-description = One backup run's picture of your files, taken at a point in time. A repository holds many, and restoring reads from one of them.
+term-snapshot-description = A complete copy of your folders as they were when one backup ran. Snapshots share unchanged files rather than storing them again, yet each is whole on its own: restoring needs only the one you pick.
 term-rclone = rclone
 term-rclone-description = The separate program Stellarshot uses to reach SSH servers, Google Drive and other cloud storage. It is not part of Stellarshot and keeps its own configuration.
 term-prune = Prune
@@ -667,3 +669,63 @@ desktop-new-backup = New Backup
 desktop-restore = Restore Files
 applet-comment = Whether a backup is running, and when each last succeeded
 metainfo-summary = Back up your files with encrypted snapshots
+
+# Snapshots page, and removing files from snapshots
+manage-snapshots = Manage Snapshots…
+snapshots-title = Snapshots of { $name }
+snapshots-filter = Filter by name, tag or note
+snapshots-no-match = No snapshot matches.
+snapshot-open = Open this snapshot
+snapshot-pinned = Pinned
+snapshot-tag-list = Tags: { $tags }
+snapshot-name = Name
+snapshot-name-placeholder = For example, Before the upgrade
+snapshot-notes = Notes
+snapshot-notes-placeholder = Anything worth remembering about this snapshot
+snapshot-tags = Tags
+snapshot-tags-placeholder = Separated by commas
+revert = Revert
+snapshot-details-failed = The snapshot's details could not be saved.
+snapshot-about = About this snapshot
+snapshot-taken = Taken
+snapshot-id = ID
+snapshot-computer = Computer
+snapshot-folders = Folders
+snapshot-files = Files
+snapshot-files-value = { $new } new, { $changed } changed, { $unchanged } unchanged
+snapshot-not-recorded = Not recorded
+snapshot-size = Size
+snapshot-size-value = { $size }, of which { $added } was new data
+snapshot-actions = Actions
+snapshot-browse = Browse its files
+snapshot-browse-description = See what it holds and restore from it. To take files out of your backups, tick them there and press Remove…
+snapshot-browse-button = Browse…
+snapshot-pinned-description = Cleaning up never removes a pinned snapshot, however old it gets.
+snapshot-delete-description = Its files stay in every other snapshot that has them.
+event-details-changed = Changed the name, notes or tags of snapshot { $snapshot }
+event-files-removed = Removed files from { $count ->
+    [one] one snapshot
+   *[other] { $count } snapshots
+} and erased { $size }
+remove-files-button = Remove…
+remove-files-title = Remove { $count ->
+    [one] this item
+   *[other] these { $count } items
+} from the backup
+remove-files-from = Remove from
+remove-files-everywhere = Every snapshot of this backup
+remove-files-everywhere-description = For a password or anything else that should never have been backed up. Snapshots another computer made in the same place are not touched.
+remove-files-only-this = Only the snapshot from { $time }
+remove-files-exclude = Leave out of future backups
+remove-files-exclude-description = Otherwise the next backup copies them again if they are still on this computer.
+remove-files-warning = This cannot be undone. The files are erased from the backup's storage, not just hidden. Storage that keeps deleted files in a trash or as old versions, as Google Drive does, may still hold a copy there until it is emptied.
+remove-files-confirm = Remove for Good
+remove-files-running = Removing files from the backup…
+remove-files-running-body = Each snapshot holding them is saved again without them, then their data is erased. This cannot be stopped part way, and on cloud storage it can take a while.
+remove-files-failed = The files could not be removed.
+remove-files-done-title = Files removed
+remove-files-done-body = Removed from { $count ->
+    [one] one snapshot
+   *[other] { $count } snapshots
+}, and { $size } of data erased.
+remove-files-done-none = No snapshot of this backup held them, so nothing changed.

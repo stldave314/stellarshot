@@ -3,6 +3,8 @@
 //! One backup profile: is it safe, back it up now, its snapshots, and
 //! keeping it healthy.
 
+mod snapshots;
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -18,7 +20,7 @@ use crate::constants::PROFILE_RECENT_ROWS as RECENT;
 use crate::constants::{NOTICE_ICON_SIZE, PAGE_MAX_WIDTH};
 use crate::engine::{
     EngineError, ErrorKind, Phase, ProgressEvent, PruneReport, Secret, SizeEstimate,
-    SnapshotSummary, Statistics,
+    SnapshotDetails, SnapshotSummary, Statistics,
 };
 use crate::event_log::EventKind;
 use crate::fl;
@@ -51,6 +53,7 @@ pub enum Work {
 enum ModifyContext {
     Delete(Vec<String>),
     Pin(String, bool),
+    Details(String),
 }
 
 /// A write running in a child process. Only one runs at a time.
@@ -114,7 +117,11 @@ pub struct ProfileState {
     unlock_focused: bool,
     snapshots: Option<Vec<SnapshotSummary>>,
     work: Option<Running>,
-    show_all: bool,
+    /// The Snapshots page, while it is showing in place of this one.
+    manage: Option<snapshots::Manage>,
+    /// The explanation of what a snapshot is, shown under "Recent
+    /// snapshots" once its info button is pressed.
+    explain_snapshots: bool,
     /// When this backup's timer will next run, from systemd. `None` until
     /// asked, or if the backup is not scheduled.
     next_run: Option<i64>,
@@ -167,8 +174,14 @@ pub enum Message {
     SnapshotsDeleted(ChildEvent),
     TogglePinned(String, bool),
     Pinned(ChildEvent),
-    ShowAll,
+    DetailsSaved(ChildEvent),
+    /// Something on the Snapshots page.
+    Manage(snapshots::Message),
+    /// Show or hide what a snapshot is, under "Recent snapshots".
+    ExplainSnapshots,
     Restore,
+    /// Open the restore page at this snapshot rather than the newest.
+    BrowseSnapshot(String),
     Edit,
     Remove,
     DeleteAll,
@@ -180,6 +193,9 @@ pub enum Message {
     Estimate(SizeEstimateEvent),
     /// The history, and whether it is there but cannot be read.
     HistoryLoaded(Vec<crate::event_log::Event>, bool),
+    /// The snapshots were changed from another page: reload them, and
+    /// record what happened, if anything is to be.
+    ChangedElsewhere(Option<EventKind>),
 }
 
 /// What the page needs the application to do.
@@ -206,6 +222,8 @@ pub enum Effect {
         label: String,
     },
     SetPinned(Secret, String, bool),
+    /// Give a snapshot a new name, notes and tags.
+    SetDetails(Secret, String, SnapshotDetails),
     ShowError(String, EngineError),
     /// A backup finished at this Unix time.
     RecordSuccess(i64),
@@ -221,7 +239,9 @@ pub enum Effect {
         forgotten: u64,
         freed: u64,
     },
-    OpenRestore(Secret),
+    /// Open the restore page: at this snapshot if one is given, otherwise
+    /// the newest.
+    OpenRestore(Secret, Option<String>),
     Edit,
     EditSchedule,
     EditHooks,
@@ -259,7 +279,8 @@ impl Default for ProfileState {
             unlock_focused: false,
             snapshots: None,
             work: None,
-            show_all: false,
+            manage: None,
+            explain_snapshots: false,
             next_run: None,
             statistics: None,
             calculating_statistics: false,
@@ -336,6 +357,15 @@ impl ProfileState {
 
     fn has_snapshots(&self) -> bool {
         self.snapshots.as_ref().is_some_and(|s| !s.is_empty())
+    }
+
+    fn open_restore(&self, snapshot: Option<String>) -> Vec<Effect> {
+        match &self.secret {
+            Some(secret) if self.has_snapshots() && self.work.is_none() => {
+                vec![Effect::OpenRestore(secret.clone(), snapshot)]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Mirror any `LogEvent` in `effects` into the page's own copy of the
@@ -452,6 +482,7 @@ impl ProfileState {
             }
             Message::SnapshotsLoaded(Ok(snapshots)) => {
                 self.snapshots = Some(snapshots);
+                self.forget_missing();
                 Vec::new()
             }
             Message::SnapshotsLoaded(Err(err)) => {
@@ -593,6 +624,15 @@ impl ProfileState {
                     .work
                     .as_ref()
                     .and_then(|running| running.context.clone());
+                if let (
+                    Some(ModifyContext::Pin(old, _)),
+                    ChildEvent::Event(Event::Done {
+                        pinned: Some(new), ..
+                    }),
+                ) = (&context, &event)
+                {
+                    self.follow(old, new);
+                }
                 let effects = self.on_work(event, move |outcome| {
                     let mut effects = match outcome {
                         Ok(_) => match context {
@@ -609,16 +649,53 @@ impl ProfileState {
                 self.track_history(&effects);
                 effects
             }
-            Message::ShowAll => {
-                self.show_all = true;
+            Message::DetailsSaved(event) => {
+                let secret = self.secret.clone();
+                let context = self
+                    .work
+                    .as_ref()
+                    .and_then(|running| running.context.clone());
+                if let (
+                    Some(ModifyContext::Details(old)),
+                    ChildEvent::Event(Event::Done {
+                        detailed: Some(new),
+                        ..
+                    }),
+                ) = (&context, &event)
+                {
+                    self.follow(old, new);
+                }
+                let effects = self.on_work(event, move |outcome| {
+                    let mut effects = match outcome {
+                        Ok(_) => match context {
+                            Some(ModifyContext::Details(snapshot)) => {
+                                vec![Effect::LogEvent(EventKind::DetailsChanged { snapshot })]
+                            }
+                            _ => Vec::new(),
+                        },
+                        Err(error) => {
+                            vec![Effect::ShowError(fl!("snapshot-details-failed"), error)]
+                        }
+                    };
+                    effects.extend(secret.map(Effect::Fetch));
+                    effects
+                });
+                self.track_history(&effects);
+                effects
+            }
+            Message::Manage(message) => self.on_manage(message),
+            Message::ExplainSnapshots => {
+                self.explain_snapshots = !self.explain_snapshots;
                 Vec::new()
             }
-            Message::Restore => match &self.secret {
-                Some(secret) if self.has_snapshots() && self.work.is_none() => {
-                    vec![Effect::OpenRestore(secret.clone())]
-                }
-                _ => Vec::new(),
-            },
+            Message::ChangedElsewhere(logged) => {
+                let mut effects: Vec<Effect> = logged.map(Effect::LogEvent).into_iter().collect();
+                self.track_history(&effects);
+                effects.extend(self.fetch());
+                effects
+            }
+            Message::Restore => self.open_restore(None),
+            Message::BrowseSnapshot(id) => self.open_restore(Some(id)),
             Message::Edit => vec![Effect::Edit],
             Message::Remove => vec![Effect::Remove],
             Message::DeleteAll => vec![Effect::DeleteAll],
@@ -745,6 +822,15 @@ impl ProfileState {
         run: &RunState,
         now: i64,
     ) -> Element<'a, Message> {
+        if let Some(manage) = &self.manage {
+            return widget::scrollable(
+                self.manage_view(manage, profile)
+                    .apply(widget::container)
+                    .max_width(PAGE_MAX_WIDTH),
+            )
+            .height(Length::Fill)
+            .into();
+        }
         let spacing = theme::active().cosmic().spacing;
         let mut page = widget::column::with_capacity(6)
             .spacing(spacing.space_m)
@@ -1005,12 +1091,31 @@ impl ProfileState {
         if snapshots.is_empty() {
             return widget::text::body(fl!("no-snapshots-yet")).into();
         }
-        let shown = if self.show_all {
-            snapshots.len()
-        } else {
-            RECENT.min(snapshots.len())
-        };
-        let mut section = widget::settings::section().title(fl!("recent-snapshots"));
+        let shown = RECENT.min(snapshots.len());
+        // The title, with an info button that shows what a snapshot is
+        // beneath it, outside the list itself.
+        let explain = widget::button::icon(widget::icon::from_name("dialog-information-symbolic"))
+            .padding(spacing.space_xxs)
+            .selected(self.explain_snapshots)
+            .tooltip(fl!("snapshots-explain"))
+            .name(fl!("snapshots-explain"))
+            .on_press(Message::ExplainSnapshots);
+        let header = widget::column::with_capacity(2)
+            .spacing(spacing.space_xxs)
+            .push(
+                widget::row::with_capacity(2)
+                    .spacing(spacing.space_xxs)
+                    .align_y(Alignment::Center)
+                    .push(widget::text::heading(fl!("recent-snapshots")))
+                    .push(explain),
+            )
+            .push_maybe(
+                self.explain_snapshots
+                    .then(|| widget::text::caption(fl!("snapshots-explained"))),
+            );
+        let mut section = widget::settings::section().header(header);
+        // Browsing needs the repository to itself, as the Restore button does.
+        let can_browse = self.can_work();
         for snapshot in &snapshots[..shown] {
             let pin_label = if snapshot.pinned {
                 fl!("unpin-snapshot")
@@ -1035,33 +1140,31 @@ impl ProfileState {
                 .tooltip(fl!("delete-snapshot-row"))
                 .name(fl!("delete-snapshot-row"))
                 .on_press_maybe(can_modify.then(|| Message::DeleteSnapshot(id.clone())));
+            let browse = widget::button::icon(widget::icon::from_name("folder-open-symbolic"))
+                .padding(spacing.space_xxs)
+                .tooltip(fl!("browse-snapshot"))
+                .name(fl!("browse-snapshot"))
+                .on_press_maybe(can_browse.then(|| Message::BrowseSnapshot(id.clone())));
             section = section.add(
-                widget::settings::item::builder(format::local_time(snapshot.time))
-                    .description(fl!(
-                        "snapshot-row",
-                        id = snapshot.short_id().to_string(),
-                        size = format::bytes(snapshot.total_bytes),
-                        added = format::bytes(snapshot.data_added)
-                    ))
+                widget::settings::item::builder(snapshots::title(snapshot))
+                    .description(snapshots::row_description(snapshot, false))
                     .control(
-                        widget::row::with_capacity(2)
+                        widget::row::with_capacity(3)
                             .spacing(spacing.space_xxs)
+                            .push(browse)
                             .push(pin)
                             .push(delete),
                     ),
             );
         }
-        let mut column = widget::column::with_capacity(2)
+        widget::column::with_capacity(2)
             .spacing(spacing.space_xs)
-            .push(section);
-        if shown < snapshots.len() {
-            let count = snapshots.len() as i64;
-            column = column.push(
-                widget::button::text(fl!("show-all-snapshots", count = count))
-                    .on_press(Message::ShowAll),
-            );
-        }
-        column.into()
+            .push(section)
+            .push(
+                widget::button::standard(fl!("manage-snapshots"))
+                    .on_press(Message::Manage(snapshots::Message::Open)),
+            )
+            .into()
     }
 }
 
@@ -1274,6 +1377,7 @@ mod tests {
             data_added: 5,
             total_bytes: 5,
             pinned: false,
+            details: SnapshotDetails::default(),
         }
     }
 
@@ -1498,13 +1602,15 @@ mod tests {
 
         let effects = state.update(
             Message::Backup(ChildEvent::Event(Event::Done {
-                report: Some(BackupReport {
+                report: Some(Box::new(BackupReport {
                     snapshot: summary(99),
-                }),
+                })),
                 restored: None,
                 forgotten: None,
                 pruned: None,
                 pinned: None,
+                detailed: None,
+                removed: None,
             })),
             &profile(),
         );
@@ -1578,6 +1684,40 @@ mod tests {
     }
 
     #[test]
+    fn what_a_snapshot_is_shows_and_hides_on_its_info_button() {
+        let mut state = ProfileState::new();
+        assert!(!state.explain_snapshots, "hidden until asked for");
+        state.update(Message::ExplainSnapshots, &profile());
+        assert!(state.explain_snapshots);
+        state.update(Message::ExplainSnapshots, &profile());
+        assert!(!state.explain_snapshots);
+    }
+
+    #[test]
+    fn browsing_a_snapshot_opens_the_restore_page_at_it() {
+        let mut state = unlocked();
+
+        let effects = state.update(Message::BrowseSnapshot("abc123".into()), &profile());
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::OpenRestore(_, Some(id))] if id == "abc123"
+        ));
+    }
+
+    #[test]
+    fn a_snapshot_is_not_browsed_while_a_backup_runs() {
+        let mut state = unlocked();
+        state.back_up(&profile());
+
+        assert!(
+            state
+                .update(Message::BrowseSnapshot("abc123".into()), &profile())
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn deleting_a_snapshot_asks_for_confirmation_before_touching_anything() {
         let mut state = unlocked();
 
@@ -1621,6 +1761,8 @@ mod tests {
             forgotten: None,
             pruned: None,
             pinned: None,
+            detailed: None,
+            removed: None,
         })
     }
 
@@ -1693,7 +1835,7 @@ mod tests {
             &profile(),
         );
 
-        assert!(matches!(effects.as_slice(), [Effect::OpenRestore(_)]));
+        assert!(matches!(effects.as_slice(), [Effect::OpenRestore(_, None)]));
         assert!(!state.restore_when_unlocked, "only the first unlock");
     }
 }

@@ -318,15 +318,97 @@ backup would take.
 </details>
 
 <details>
+<summary><a id="how-snapshots-work"></a><strong>How snapshots work</strong></summary>
+
+Each backup run takes a **snapshot**: a complete copy of your folders as they
+were at that moment.
+
+- **Each one is whole.** Restoring needs only the snapshot you pick, never a
+  chain of earlier ones.
+- **Unchanged files are stored once.** Snapshots share them, so each new one
+  adds only what changed. A snapshot's row shows how many files were new and
+  changed, and how much data it added.
+- **Snapshots never change.** A file you delete or edit on disk stays as it
+  was in every earlier snapshot. It is gone for good only once all the
+  snapshots holding it have been removed, by **Keep** or by you, and space has
+  been freed.
+
+A backup's page lists its most recent snapshots; the info button beside the
+heading recalls what a snapshot is. Each row has three buttons:
+
+| Button | What it does |
+| --- | --- |
+| Folder | Opens that snapshot on the restore page, to look through it before deciding anything. **Compare** starts on what it changed since the one before |
+| Pin | Keeps it however old it gets, until unpinned: the last snapshot before an upgrade, say |
+| Bin | Deletes it, after asking. Worth it for one that caught something by mistake, which shows as a large amount added. Its space is freed at the next clean-up |
+
+**Manage Snapshots…** opens every snapshot of the backup, with a filter that
+finds them by name, tag or note. Open one to see when it was taken, on which
+computer, of which folders, and what changed in it, and to give it:
+
+- **A name**, shown in place of its date wherever it is listed ("Before the
+  upgrade").
+- **Notes**, as long as you like.
+- **Tags**, separated by commas, to find related snapshots together.
+
+Names, notes and tags are only labels: they never change whether **Keep**
+removes a snapshot. Pin it for that. They are stored in the snapshot itself
+(rustic's `label`, `description` and `tags`), so the `rustic` command-line
+tool shows them too. Changing any of them, or the pin, saves the snapshot
+again under a new ID; its files are untouched.
+
+</details>
+
+<details>
+<summary><a id="taking-files-out"></a><strong>Taking files out of your backups</strong></summary>
+
+For something that should never have been backed up, such as a file with a
+password in it, or a huge download. Open the restore page (**Restore…**, or
+**Browse…** on a snapshot), tick the files and folders on the **Browse** tab
+and press **Remove…**. Then choose:
+
+- **Remove from:** *Every snapshot of this backup* (the default), or *Only the
+  snapshot* you ticked them in. Snapshots another computer made in the same
+  place are never touched, the same as for **Keep**.
+- **Leave out of future backups** (on by default): adds them to the backup's
+  excluded folders and files, since otherwise the next backup copies them
+  straight back if they are still on disk.
+
+**Remove for Good** then saves every snapshot that held them again without
+them, and erases their data from the storage at once. A normal clean-up
+leaves data in place while little of the file it is packed in is unused, and
+waits a day before deleting anything; removing does neither, so what was
+removed is actually gone, not only unlisted. Each snapshot keeps its name,
+notes, tags and pin, and gets a new ID. The result says how many snapshots
+held the files and how much data was erased, and is recorded in History.
+
+Before you start:
+
+- **It cannot be undone**, and cannot be stopped part way. On cloud storage it
+  can take a while, since everything packed alongside the removed data is
+  downloaded and uploaded again.
+- **Storage that keeps its own copies** still has one: Google Drive's trash,
+  or a provider's file versions or snapshots. Empty or expire those too.
+- **Not while another computer is backing up to the same place**: erasing at
+  once could take data that computer's backup is about to reuse.
+- **Not while a snapshot is mounted** as a folder; the button stays disabled
+  until it is unmounted.
+- An **append-only** backup refuses to change its snapshots, so **Remove…**
+  is not offered there.
+
+</details>
+
+<details>
 <summary><strong>Getting files back</strong></summary>
 
 On a backup's page, press **Restore…** (or choose **Restore Files** from the
 launcher's right-click menu, which opens the selected backup's restore page as
-soon as it is unlocked).
+soon as it is unlocked). The folder button on a snapshot's row opens the same
+page at that snapshot.
 
 | Tab | What it is for |
 | --- | --- |
-| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly, with **Open Folder** and **Unmount** while it is live; one left behind by a crash is unmounted the next time Stellarshot starts. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
+| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. Ticked items can also be taken out of the backup altogether with **Remove…** (see [Taking files out of your backups](#taking-files-out)). **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly, with **Open Folder** and **Unmount** while it is live; one left behind by a crash is unmounted the next time Stellarshot starts. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
 | **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
 | **Compare** | Choose two snapshots to list what was added, removed and changed between them, grouped by folder behind a count and expanded on request (a folder with only one change is shown directly). Ticking a changed or removed item restores it as it was in the snapshot on the left |
 | **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match shows every snapshot it was found in; clicking one jumps straight to Browse at that snapshot and folder |
@@ -493,12 +575,14 @@ Two limits keep the rules from reaching further than they should:
 - **Each set of folders on its own.** Snapshots are grouped by the folders
   they back up. Changing the folders starts a new group with its own 7 days,
   4 weeks and 12 months, and the old group keeps its snapshots under the same
-  rules.
+  rules. A snapshot's name and tags play no part: rustic on its own also
+  groups by name, which would put a named snapshot in a group of one and keep
+  it forever.
 
 The rules are rustic's own `keep-daily 7`, `keep-weekly 4` and
-`keep-monthly 12`, so `rustic forget --keep-daily 7 --keep-weekly 4
---keep-monthly 12 --dry-run` shows exactly what the next clean-up would
-forget. `src/engine/maintenance.rs` has tests for each rule above.
+`keep-monthly 12`, so `rustic forget --group-by host,paths --keep-daily 7
+--keep-weekly 4 --keep-monthly 12 --dry-run` shows exactly what the next
+clean-up would forget. `src/engine/maintenance.rs` has tests for each rule above.
 
 </details>
 
@@ -534,8 +618,8 @@ systemd straight away, so you can find this out without waiting for the
 timer; the result shows on the page, in History and, if it fails, as a
 notification.
 
-Individual snapshots are deleted with the bin icon on their row; the pin icon
-next to it keeps one however old it gets, until unpinned.
+Individual snapshots are opened, pinned, named and deleted from their row and
+from **Manage Snapshots…** (see [How snapshots work](#how-snapshots-work)).
 
 </details>
 
@@ -552,6 +636,7 @@ next to it keeps one however old it gets, until unpinned.
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel) |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit for real, rather than minimizing to the panel. Asks first if a backup is running — it keeps going in its own process either way, but nothing is left watching it |
 | <kbd>F1</kbd> | Help |
+| <kbd>Esc</kbd> | Close the dialog or sheet in front; otherwise step back out of the restore page or the Snapshots page. Never while a restore or a removal is running |
 
 </details>
 

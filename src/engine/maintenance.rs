@@ -5,9 +5,10 @@
 
 use std::path::PathBuf;
 
+use rustic_core::repofile::SnapshotFile;
 use rustic_core::{
-    CheckOptions, ForgetGroups, Grouped, KeepOptions, PathList, PruneOptions,
-    SnapshotGroupCriterion, StringList,
+    CheckOptions, ForgetGroups, Grouped, KeepOptions, LimitOption, Open, PathList, PruneOptions,
+    Repository, SnapshotGroupCriterion, StringList,
 };
 use serde::{Deserialize, Serialize};
 
@@ -130,7 +131,16 @@ pub fn hostname() -> String {
 /// two or more profiles share (the wizard's "open existing" mode allows
 /// it): see [`Repo::forget`]'s own doc comment.
 pub fn profile_tag(id: &str) -> String {
-    format!("stellarshot-profile:{id}")
+    format!("{PROFILE_TAG_PREFIX}{id}")
+}
+
+/// What every [`profile_tag`] starts with.
+const PROFILE_TAG_PREFIX: &str = "stellarshot-profile:";
+
+/// Whether `tag` is one Stellarshot puts on snapshots for itself, rather
+/// than one a person gave it.
+pub(crate) fn is_internal_tag(tag: &str) -> bool {
+    tag.starts_with(PROFILE_TAG_PREFIX)
 }
 
 /// Whether `paths`, a snapshot's own recorded sources, are exactly the
@@ -154,6 +164,73 @@ fn matches_untagged_sources(paths: &StringList, sources: &[PathBuf]) -> bool {
     *paths == candidate
 }
 
+/// Whether `snapshot` is one of this profile's own: taken on `host`, and
+/// either tagged with the profile's `tag` or, for one made before
+/// per-profile tagging (no profile's tag at all), recording exactly the
+/// profile's `sources`. What [`Repo::forget`] and removing files from every
+/// snapshot both act on, so neither ever touches another computer's or
+/// another profile's snapshots in a shared repository.
+///
+/// Tags a person gave the snapshot do not count either way: tagging an old
+/// snapshot must not quietly take it out of its own backup's "Keep".
+pub(super) fn belongs_to_profile(
+    snapshot: &SnapshotFile,
+    host: &str,
+    tag: &str,
+    sources: &[PathBuf],
+) -> bool {
+    snapshot.hostname == host
+        && (snapshot.tags.contains(tag)
+            || (!snapshot.tags.iter().any(|tag| is_internal_tag(tag))
+                && matches_untagged_sources(&snapshot.paths, sources)))
+}
+
+/// How retention groups snapshots: by host and folders, so that changing
+/// what a backup covers starts a new history instead of counting against
+/// the old one. Not by label, as rustic's own default does: the label is
+/// a snapshot's name here, and naming one must not quietly put it in a
+/// group of its own, where it would always be the newest and so never be
+/// forgotten. Pinning is the one way to keep a snapshot.
+fn retention_groups() -> SnapshotGroupCriterion {
+    SnapshotGroupCriterion::new().hostname(true).paths(true)
+}
+
+/// Prune `repo` with `options`, reporting how much unused data it found.
+fn prune_with<S: Open>(
+    repo: &Repository<S>,
+    options: &PruneOptions,
+) -> Result<PruneReport, EngineError> {
+    let plan = repo.prune_plan(options)?;
+    // Unused data in packs that go entirely, plus the unused part of
+    // packs that are rewritten without it.
+    let sizes = plan.stats.size_sum();
+    let bytes = sizes.remove + sizes.repackrm;
+    repo.prune(options, plan)?;
+    Ok(PruneReport { bytes })
+}
+
+/// Prune so that no unused data is left anywhere in the repository, for
+/// data that must actually be gone (files removed from snapshots), not
+/// just stop taking up much space. rustic's defaults leave a pack alone
+/// while under 5% of it is unused, so a small file inside a large pack
+/// would stay readable to anyone with the password; and they only mark a
+/// pack for deletion, deleting it a day later. Here every pack holding
+/// unused data is repacked and the old ones deleted at once.
+///
+/// Deleting at once is what rustic warns against while another process
+/// uses the repository: this computer's own lock rules that out here, but
+/// another computer backing up to the same place at that moment could be
+/// left with a snapshot missing data it expected to reuse.
+pub(super) fn erase_unused<S: Open>(repo: &Repository<S>) -> Result<PruneReport, EngineError> {
+    let options = PruneOptions::default()
+        .max_unused(LimitOption::Percentage(0))
+        .max_repack(LimitOption::Unlimited)
+        .instant_delete(true);
+    let report = prune_with(repo, &options)?;
+    debug_log!(ENGINE, "erase unused: {} bytes", report.bytes);
+    Ok(report)
+}
+
 impl Repo {
     /// Verify the repository's structure: that every snapshot, tree and index
     /// entry is present and consistent. Pack contents are not re-read.
@@ -174,9 +251,7 @@ impl Repo {
     /// allows it) has its own tag and its own retention policy; its
     /// snapshots, tagged or not, are never touched by this one's rules.
     ///
-    /// Snapshots are grouped by host, label and folders, as restic does, so
-    /// that changing what a backup covers starts a new history instead of
-    /// counting against the old one.
+    /// Snapshots are grouped by host and folders: see [`retention_groups`].
     pub fn forget(
         &self,
         rules: &KeepRules,
@@ -185,12 +260,9 @@ impl Repo {
         sources: &[PathBuf],
     ) -> Result<ForgetReport, EngineError> {
         rules.validate()?;
-        let snapshots = self.inner.get_matching_snapshots(|snapshot| {
-            snapshot.hostname == host
-                && (snapshot.tags.contains(tag)
-                    || (snapshot.tags.to_string().is_empty()
-                        && matches_untagged_sources(&snapshot.paths, sources)))
-        })?;
+        let snapshots = self
+            .inner
+            .get_matching_snapshots(|snapshot| belongs_to_profile(snapshot, host, tag, sources))?;
         let total = snapshots.len() as u64;
         if rules.is_empty() {
             return Ok(ForgetReport {
@@ -198,7 +270,7 @@ impl Repo {
                 kept: total,
             });
         }
-        let grouped = Grouped::from_items(snapshots, SnapshotGroupCriterion::default());
+        let grouped = Grouped::from_items(snapshots, retention_groups());
         let ids = ForgetGroups::from_grouped_snapshots_with_retention(
             grouped,
             &rules.options(),
@@ -216,15 +288,9 @@ impl Repo {
 
     /// Remove the data no snapshot needs any more.
     pub fn prune(&self) -> Result<PruneReport, EngineError> {
-        let options = PruneOptions::default();
-        let plan = self.inner.prune_plan(&options)?;
-        // Unused data in packs that go entirely, plus the unused part of
-        // packs that are rewritten without it.
-        let sizes = plan.stats.size_sum();
-        let bytes = sizes.remove + sizes.repackrm;
-        self.inner.prune(&options, plan)?;
-        debug_log!(ENGINE, "prune: {bytes} bytes unused");
-        Ok(PruneReport { bytes })
+        let report = prune_with(&self.inner, &PruneOptions::default())?;
+        debug_log!(ENGINE, "prune: {} bytes unused", report.bytes);
+        Ok(report)
     }
 }
 
@@ -403,5 +469,13 @@ mod tests {
             .find(|s| s.snapshot.time == at(399, 9))
             .unwrap();
         assert!(!first.keep);
+    }
+
+    #[test]
+    fn the_readmes_group_by_matches_how_retention_groups() {
+        // README, "How Smart decides what to keep": `rustic forget
+        // --group-by host,paths …` must group as `forget` here does.
+        let documented: SnapshotGroupCriterion = "host,paths".parse().unwrap();
+        assert_eq!(documented.to_string(), retention_groups().to_string());
     }
 }

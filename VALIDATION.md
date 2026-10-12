@@ -794,6 +794,30 @@ Checked by hand rather than by a test: the notification waiter
 on a private D-Bus — it exits as soon as its own notification closes, keeps
 waiting through another one's, and refuses malformed arguments.
 
+### Added since 0.9.0: snapshot details and taking files out
+
+Against real repositories in temporary folders (`src/engine/tests.rs`) unless
+another file is named.
+
+| Test | What it proves |
+| --- | --- |
+| `details_are_saved_and_the_backups_own_tag_survives` | A name, notes and tags are saved and listed back, typed tags tidied (trimmed, de-duplicated, sorted), the old snapshot replaced; the backup's own `stellarshot-profile:` tag is still on it afterwards, read straight from rustic, and clearing everything leaves only that tag |
+| `unchanged_details_rewrite_nothing` / `a_reserved_tag_typed_in_is_never_saved` | Saving what is already there keeps the ID; a typed tag that looks like the backup's own is dropped |
+| `naming_a_snapshot_does_not_change_what_keep_forgets` | A named oldest snapshot is forgotten like any other. **Proven able to fail:** with retention's grouping switched back to rustic's default (host, label, paths) it keeps the named one, 1 removed and 3 kept instead of 2 and 2. It first failed for a second reason, which it caught: a user tag made a snapshot older than per-backup tagging stop counting as the backup's own (`belongs_to_profile` treated *any* tag as "tagged") |
+| `the_readmes_group_by_matches_how_retention_groups` (`src/engine/maintenance.rs`) | The README's `rustic forget --group-by host,paths` groups as Stellarshot's own clean-up does |
+| `removing_a_file_takes_it_out_of_every_snapshot_holding_it_and_nothing_else` | Of three snapshots, the two holding the file are rewritten and the one without it keeps its ID; the file is gone from all, every other file is in all, and what is left restores byte for byte |
+| `removed_data_is_erased_from_the_repository_not_just_unlisted` | The pack file that held the removed file's data no longer exists afterwards |
+| `a_normal_clean_up_would_have_left_the_removed_data_behind` | Why the above needs its own prune: after the same rewrite, an ordinary clean-up keeps that pack (the small file is under 5% of it), so the data would still be in the repository. Also proves the fixture really puts the small file in a mostly-used pack |
+| `removing_from_one_snapshot_leaves_the_others_as_they_were` / `removing_a_folder_takes_everything_under_it` | Only the chosen snapshot changes; a folder goes with everything under it and its neighbors stay |
+| `a_name_full_of_pattern_characters_takes_only_itself` | Removing `a*b`, `[x]`, `c d ` (trailing space), `!e`, `f\g` and `{h,i}` takes exactly those, while `aXb`, `x`, `c d`, `e` and `h` all stay. rustic's patterns are whitelists unless they start with `!`, and gitignore drops a trailing space, which made `c d ` match `c d` until spaces were escaped (backup exclusions share the same escaping and are fixed with it) |
+| `a_path_no_snapshot_holds_changes_nothing` / `another_backups_snapshots_are_never_touched` / `an_append_only_repository_refuses_to_remove_files` | Nothing to remove changes no ID; a second backup's snapshots in the same repository keep the file; an append-only repository refuses and the snapshot is unchanged |
+| `a_rewritten_snapshot_keeps_its_name_notes_tags_and_pin` | Removing keeps every one of them, and the backup's own tag; rustic's `rewrite` marker tag is not added |
+| `every_pattern_excludes_and_is_anchored`, `pattern_characters_in_a_name_are_matched_literally`, `the_root_a_relative_path_and_dot_dot_are_refused` (`src/engine/remove.rs`) | Every pattern starts `!/`; `/`, a relative path and `..` are refused rather than turned into a pattern |
+| The Snapshots page (`src/app/pages/profile/snapshots.rs`) | Saving sends the tidied details and an unchanged snapshot is not saved; a saved snapshot stays open under its new ID and the change is logged; one gone from the list is closed; Revert; Escape steps back one level at a time; the filter matches name, notes and tags in any case |
+| The restore page's Remove (`src/app/pages/restore.rs`) | Offered only for a selection on Browse; defaults to every snapshot and to leaving the files out from now on; "only this snapshot" names it; Cancel removes nothing; a finished removal reports, excludes and reloads from scratch, and a failed one says so and still reloads; Escape closes the sheet first and never leaves a page that is writing |
+| `opening_an_rclone_repository_leaves_no_zombie_behind` (`tests/rclone.rs`), reworked | Only a zombie that stays one fails it: it used to fail now and then on another test's rclone caught between its kill and its reaping. **Proven able to fail:** with a child deliberately never reaped, it fails and names it; without, the rclone suite passed eight runs in a row |
+| `opens_at_the_snapshot_asked_for_comparing_what_it_changed` and its neighbors (`src/app/pages/restore.rs`) | A snapshot's Browse button opens the restore page at it, with Compare set to it against the one before; a snapshot that has gone opens the newest instead |
+
 ### Packages (`./install.sh package`, CI)
 
 CI builds the `.deb`, `.rpm` and tarball on every push, installs each in a
@@ -808,6 +832,8 @@ Things a test cannot reach yet, and how they were confirmed.
 | --- | --- | --- |
 | The `.deb` contains the binary, desktop entry, both icons, metainfo and README, with `Recommends: rclone` and the no-reply maintainer address | `dpkg-deb --info` and `--contents` on the built package | M0 |
 | The shipped binary has no debug log path | `dpkg-deb -x`, then `strings usr/bin/stellarshot` | M0 |
+| `release-build` strips developer logging, proven both ways | With the source switch turned on: the release build with `release-build` holds no `developer-debug.log` string, and a build without the feature holds one; the switch then put back | 0.10.0 |
+| The screenshots match 0.10.0 | `scripts/screenshots.sh profile restore profile-light`, every image inspected: the rows with their file counts and three buttons, the info button beside "Recent snapshots", and Remove… beside Restore… | 0.10.0 |
 | The window starts in a COSMIC Wayland session and exits cleanly | Launched for six seconds; no output on stderr, no process left behind | M1 |
 | Settings migrate on a real account | First launch copied `~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1/repositories` to the new ID | M1 |
 | The main screen, wizard and profile page render, the estimate fills in, and a remembered password unlocks the page | `scripts/screenshots.sh`, then every image inspected | M2 |
@@ -826,6 +852,7 @@ Things a test cannot reach yet, and how they were confirmed.
 | The screenshots match 0.9.0 | `scripts/screenshots.sh`, every image inspected: the restore page's new tab bar, the wizard hint at its new width | 0.9.0 |
 | The wizard's folder tree renders, and its rows answer to clicks | `scripts/screenshots.sh folder-tree`, on a display of its own from Xvfb, then the image inspected: Browse opened the tree, Projects and site expanded, and unticking node_modules marked it Excluded, both folders above it Partly included, and took its 700 kB out of their sizes and the estimate | 0.9.x |
 | The new on-connect units are valid | `systemd-analyze --user verify` on generated units, and real transient units with a stand-in device: one run per connection | 0.9.0 |
+| The accessibility tree, with a screen reader's view of it | An AT-SPI probe (python `Atspi`) on a private D-Bus session with its own accessibility bus, the app under Xvfb with screen-reader mode on, driving it through accessible actions and tracing focus with Tab. The app registers on the bus, but under X11 its tree is only the window's frame, with nothing inside it, so the widget names cannot be read back this way. Repeated on the real COSMIC Wayland session with screen-reader mode on: the same two nodes, and COSMIC's own libcosmic apps export as little (two to twelve nodes; COSMIC Files and Edit not registered), against 216 for a Qt app running alongside. Turning screen-reader mode on makes COSMIC start Orca, which speaks; the setting was reset to its default straight after, and the session diffed unchanged. **Caution:** a private session bus alone does not isolate this; the first attempt replaced the real session's accessibility bus socket and wrote its accessibility settings, both repaired. The probe now gives the session its own runtime, config and display, and in-memory GSettings, and the real session was diffed before and after | 0.9.x |
 | Déjà Dup's schedule defaults | Read from the installed Flatpak's `org.gnome.DejaDup.gschema.xml`: `periodic` false, `periodic-period` 7, `delete-after` 0 (forever) | M5 |
 
 ### Not yet verified end to end
@@ -856,6 +883,18 @@ Things a test cannot reach yet, and how they were confirmed.
   may call `notify::failure` again — see `tests/scheduled.rs`'s doc comment.
 - **Run Now and Reset Status on a real backup** (0.9.0). Both are unit and
   store tested; neither has been pressed in the real window yet.
+- **Taking files out of a cloud or SSH backup.** Proven against local
+  repositories only. Through rclone the same rewrite and prune run, but the
+  repacking downloads and uploads the packs involved, and how long that takes
+  on a real Google Drive has not been seen.
+- **The Snapshots page and Remove… pressed in the real window.** The state
+  behind both is unit tested and the engine underneath against real
+  repositories; the pages themselves have only been rendered.
+- **Using Stellarshot with a screen reader.** Not possible yet, and not for
+  this app to fix: at this libcosmic revision no libcosmic app, COSMIC's own
+  included, exports its widgets to AT-SPI (see the accessibility row above).
+  Its toggles, text fields, radio buttons and tabs also implement no
+  accessibility node of their own.
 - **A timer firing on its own at its calendar time.** The timer's schedule and
   its service were each confirmed, and systemd starts one from the other.
 - **Restoring with numeric or no ownership actually changing a file's owner**

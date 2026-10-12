@@ -296,6 +296,64 @@ impl App {
                     ));
                     logged
                 }
+                restore::Effect::Remove { paths, snapshot } => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        Err(err) => {
+                            tasks.push(Task::done(to_page(restore::Message::Removed(
+                                child::ChildEvent::Ended(err),
+                            ))));
+                            continue;
+                        }
+                    };
+                    let scope = match snapshot {
+                        Some(snapshot) => engine::RemoveScope::Snapshot(snapshot),
+                        None => engine::RemoveScope::Profile {
+                            tag: engine::profile_tag(&profile.id),
+                            sources: profile.sources.clone(),
+                        },
+                    };
+                    let job = Job {
+                        remove: Some(engine::RemoveRequest { paths, scope }),
+                        ..Job::new(repository, secret.clone())
+                    };
+                    Task::run(child::run(Operation::RemovePaths, job), move |event| {
+                        to_page(restore::Message::Removed(event))
+                    })
+                }
+                restore::Effect::Removed { report, exclude } => {
+                    if !exclude.is_empty() {
+                        let mut updated = profile.clone();
+                        for path in exclude {
+                            if !updated.excludes.contains(&path) {
+                                updated.excludes.push(path);
+                            }
+                        }
+                        self.upsert_profile(updated);
+                    }
+                    self.dialogs.notify(Dialog::Info(
+                        fl!("remove-files-done-title"),
+                        if report.rewritten == 0 {
+                            fl!("remove-files-done-none")
+                        } else {
+                            fl!(
+                                "remove-files-done-body",
+                                count = (report.rewritten as i64),
+                                size = format::bytes(report.erased)
+                            )
+                        },
+                    ));
+                    // The backup's own page lists the snapshots by their old
+                    // IDs; it also records the removal, so its own copy of
+                    // the history shows it at once.
+                    self.refresh_profile(
+                        &profile.id,
+                        Some(event_log::EventKind::FilesRemoved {
+                            snapshots: report.rewritten,
+                            erased: report.erased,
+                        }),
+                    )
+                }
                 restore::Effect::Close => {
                     self.restore = None;
                     remove_old_open_copies()

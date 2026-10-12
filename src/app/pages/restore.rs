@@ -24,8 +24,8 @@ use crate::constants::{LIST_ICON_SIZE, RESTORE_MAX_WIDTH};
 use crate::engine::mount::Mount;
 use crate::engine::{
     Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, GlobalMatch,
-    MissingEntry, Ownership, ProgressEvent, RestorePreview, RestoreRequest, SnapshotSummary,
-    Target, TreeEntry,
+    MissingEntry, Ownership, ProgressEvent, RemoveReport, RestorePreview, RestoreRequest,
+    SnapshotSummary, Target, TreeEntry,
 };
 use crate::fl;
 use crate::runner::Event;
@@ -121,6 +121,19 @@ impl Sheet {
     }
 }
 
+/// The remove sheet: files ticked on the Browse tab, to take out of the
+/// backup's history for good.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveSheet {
+    paths: Vec<PathBuf>,
+    /// The snapshot they were ticked in.
+    snapshot: String,
+    /// Take them out of every snapshot of this backup, not only `snapshot`.
+    everywhere: bool,
+    /// Also leave them out of every backup from now on.
+    exclude: bool,
+}
+
 /// A restore running in a child process.
 #[derive(Debug)]
 struct Running {
@@ -170,6 +183,9 @@ pub struct RestorePage {
     snapshots: Vec<SnapshotSummary>,
     tab: Tab,
     tabs: TabModel,
+    /// The snapshot to open at once the list has loaded, rather than the
+    /// newest: the one whose Browse button on the backup's page was pressed.
+    start: Option<String>,
     // Browse
     snapshot: Option<usize>,
     dir: PathBuf,
@@ -212,6 +228,11 @@ pub struct RestorePage {
     labels: Vec<String>,
     // Mounting
     mounted: Option<MountHandle>,
+    // Removing files from snapshots
+    remove_sheet: Option<RemoveSheet>,
+    /// Files are being removed: the paths, and whether they are to be
+    /// left out of future backups once that succeeds.
+    removing: Option<(Vec<PathBuf>, bool)>,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +294,13 @@ pub enum Message {
     Mounted(Result<MountHandle, EngineError>),
     OpenMountedFolder,
     Unmount,
+    /// Open the remove sheet for the Browse tab's selection.
+    RemoveSelection,
+    RemoveEverywhere(bool),
+    RemoveExclude(bool),
+    CancelRemove,
+    StartRemove,
+    Removed(ChildEvent),
     Close,
 }
 
@@ -328,6 +356,18 @@ pub enum Effect {
     OpenMounted(PathBuf),
     /// Drop a mount (which unmounts it) off the UI thread.
     Unmount(MountHandle),
+    /// Take `paths` out of `snapshot`, or out of every snapshot of this
+    /// backup if `None`, and erase their data.
+    Remove {
+        paths: Vec<PathBuf>,
+        snapshot: Option<String>,
+    },
+    /// Files were removed: record it, say so, and (if `exclude` is not
+    /// empty) leave those paths out of future backups.
+    Removed {
+        report: RemoveReport,
+        exclude: Vec<PathBuf>,
+    },
     Close,
 }
 
@@ -338,13 +378,15 @@ impl RestorePage {
     }
 
     /// `root` is where browsing starts: the profile's first folder.
-    pub fn new(profile_id: String, root: PathBuf) -> (Self, Vec<Effect>) {
+    /// `start` is the snapshot to open at; the newest if `None`.
+    pub fn new(profile_id: String, root: PathBuf, start: Option<String>) -> (Self, Vec<Effect>) {
         let page = Self {
             profile_id,
             browser: None,
             snapshots: Vec::new(),
             tab: Tab::Browse,
             tabs: TabModel::new(),
+            start,
             snapshot: None,
             dir: root.clone(),
             root: root.clone(),
@@ -372,6 +414,8 @@ impl RestorePage {
             global_searching: None,
             labels: Vec::new(),
             mounted: None,
+            remove_sheet: None,
+            removing: None,
         };
         (page, vec![Effect::Load])
     }
@@ -380,8 +424,47 @@ impl RestorePage {
         self.browser.clone()
     }
 
-    pub fn is_restoring(&self) -> bool {
-        self.running.is_some()
+    /// A restore, or a removal, is writing: the page must stay open.
+    pub fn is_writing(&self) -> bool {
+        self.running.is_some() || self.removing.is_some()
+    }
+
+    /// Escape: close the sheet that is open, or else the page. Nothing
+    /// while a restore or removal is writing.
+    pub fn escape(&mut self) -> Vec<Effect> {
+        if self.is_writing() {
+            Vec::new()
+        } else if self.remove_sheet.is_some() {
+            self.update(Message::CancelRemove)
+        } else if self.sheet.is_some() {
+            self.update(Message::CancelSheet)
+        } else {
+            self.update(Message::Close)
+        }
+    }
+
+    /// Whether the Browse tab's selection may be removed from the backup:
+    /// not while a snapshot is mounted, since the mount reads data the
+    /// removal rewrites and erases.
+    fn can_remove(&self) -> bool {
+        self.tab == Tab::Browse && !self.selection.is_empty() && self.mounted.is_none()
+    }
+
+    /// Select the snapshot asked for when the page opened (the newest if
+    /// none was, or it has since gone), with Compare set to what that
+    /// snapshot changed: the one before it against it.
+    fn open_start(&mut self) {
+        if self.snapshots.is_empty() {
+            return;
+        }
+        let index = self
+            .start
+            .take()
+            .and_then(|id| self.snapshots.iter().position(|s| s.id == id))
+            .unwrap_or(0);
+        self.snapshot = Some(index);
+        self.from = (index + 1 < self.snapshots.len()).then_some(index + 1);
+        self.to = Some(index);
     }
 
     fn snapshot_id(&self) -> Option<String> {
@@ -504,12 +587,7 @@ impl RestorePage {
                     })
                     .collect();
                 self.browser = Some(browser);
-                if self.snapshots.is_empty() {
-                    return Vec::new();
-                }
-                self.snapshot = Some(0);
-                self.from = (self.snapshots.len() > 1).then_some(1);
-                self.to = Some(0);
+                self.open_start();
                 self.list()
             }
             Message::Loaded(Err(err)) => vec![
@@ -891,6 +969,51 @@ impl RestorePage {
                 .take()
                 .map(|handle| vec![Effect::Unmount(handle)])
                 .unwrap_or_default(),
+            Message::RemoveSelection => {
+                if !self.can_remove() {
+                    return Vec::new();
+                }
+                let Some(snapshot) = self.snapshot_id() else {
+                    return Vec::new();
+                };
+                self.remove_sheet = Some(RemoveSheet {
+                    paths: self.selection.iter().cloned().collect(),
+                    snapshot,
+                    everywhere: true,
+                    exclude: true,
+                });
+                Vec::new()
+            }
+            Message::RemoveEverywhere(everywhere) => {
+                if let Some(sheet) = self.remove_sheet.as_mut() {
+                    sheet.everywhere = everywhere;
+                }
+                Vec::new()
+            }
+            Message::RemoveExclude(exclude) => {
+                if let Some(sheet) = self.remove_sheet.as_mut() {
+                    sheet.exclude = exclude;
+                }
+                Vec::new()
+            }
+            Message::CancelRemove => {
+                self.remove_sheet = None;
+                Vec::new()
+            }
+            Message::StartRemove => {
+                let Some(sheet) = self.remove_sheet.take() else {
+                    return Vec::new();
+                };
+                if self.is_writing() || self.mounted.is_some() {
+                    return Vec::new();
+                }
+                self.removing = Some((sheet.paths.clone(), sheet.exclude));
+                vec![Effect::Remove {
+                    paths: sheet.paths,
+                    snapshot: (!sheet.everywhere).then_some(sheet.snapshot),
+                }]
+            }
+            Message::Removed(event) => self.on_removed(event),
             Message::Close => {
                 let mut effects: Vec<Effect> = self
                     .mounted
@@ -901,6 +1024,48 @@ impl RestorePage {
                 effects
             }
         }
+    }
+
+    /// Every snapshot that held the files now has a new ID, and the data
+    /// this page's browser was reading may be gone: start over from a fresh
+    /// list, whatever the outcome, since a failure part way may still have
+    /// changed something.
+    fn on_removed(&mut self, event: ChildEvent) -> Vec<Effect> {
+        let (outcome, exclude) = match event {
+            ChildEvent::Started(_) | ChildEvent::Event(Event::Progress { .. }) => {
+                return Vec::new();
+            }
+            ChildEvent::Event(Event::Done { removed, .. }) => {
+                let Some((paths, exclude)) = self.removing.take() else {
+                    return Vec::new();
+                };
+                let exclude = if exclude { paths } else { Vec::new() };
+                (Ok(removed.unwrap_or_default()), exclude)
+            }
+            ChildEvent::Event(Event::Error { error }) | ChildEvent::Ended(error) => {
+                if self.removing.take().is_none() {
+                    return Vec::new();
+                }
+                (Err(error), Vec::new())
+            }
+        };
+        self.selection.clear();
+        self.results = None;
+        self.expanded = None;
+        self.versions = None;
+        self.entries = None;
+        self.missing = None;
+        self.diff = None;
+        self.global_results = None;
+        self.browser = None;
+        self.snapshots.clear();
+        self.snapshot = None;
+        let mut effects = match outcome {
+            Ok(report) => vec![Effect::Removed { report, exclude }],
+            Err(error) => vec![Effect::ShowError(fl!("remove-files-failed"), error)],
+        };
+        effects.push(Effect::Load);
+        effects
     }
 
     fn on_restore(&mut self, event: ChildEvent) -> Vec<Effect> {
@@ -943,7 +1108,9 @@ impl RestorePage {
         }
     }
 
-    pub fn view<'a>(&'a self, profile_name: &'a str) -> Element<'a, Message> {
+    /// `append_only`: the repository refuses to change a snapshot, so
+    /// nothing can be removed from one.
+    pub fn view<'a>(&'a self, profile_name: &'a str, append_only: bool) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
         let header = widget::row::with_capacity(3)
             .spacing(spacing.space_s)
@@ -952,7 +1119,7 @@ impl RestorePage {
                 widget::button::icon(widget::icon::from_name("go-previous-symbolic"))
                     .tooltip(fl!("back"))
                     .name(fl!("back"))
-                    .on_press_maybe((!self.is_restoring()).then_some(Message::Close)),
+                    .on_press_maybe((!self.is_writing()).then_some(Message::Close)),
             )
             .push(widget::text::title3(fl!(
                 "restore-title",
@@ -961,6 +1128,10 @@ impl RestorePage {
 
         let body: Element<'a, Message> = if let Some(running) = &self.running {
             progress(running)
+        } else if self.removing.is_some() {
+            removing_view()
+        } else if let Some(sheet) = &self.remove_sheet {
+            self.remove_sheet_view(sheet)
         } else if let Some(sheet) = &self.sheet {
             self.sheet_view(sheet)
         } else if self.browser.is_none() {
@@ -985,7 +1156,13 @@ impl RestorePage {
             // own footer.
             if self.tab != Tab::Search {
                 let count = self.selection_count();
-                let footer = widget::row::with_capacity(3)
+                // Only the Browse tab's selection belongs to one snapshot
+                // the way removing needs; it is offered nowhere else.
+                let remove = (self.tab == Tab::Browse && !append_only).then(|| {
+                    widget::button::destructive(fl!("remove-files-button"))
+                        .on_press_maybe(self.can_remove().then_some(Message::RemoveSelection))
+                });
+                let footer = widget::row::with_capacity(4)
                     .spacing(spacing.space_s)
                     .align_y(Alignment::Center)
                     .push(widget::text::body(fl!(
@@ -993,6 +1170,7 @@ impl RestorePage {
                         count = (count as i64)
                     )))
                     .push(widget::space::horizontal())
+                    .push_maybe(remove)
                     .push(
                         widget::button::suggested(fl!("restore-button"))
                             .on_press_maybe((count > 0).then_some(Message::RestoreSelection)),
@@ -1441,6 +1619,60 @@ impl RestorePage {
             .into()
     }
 
+    fn remove_sheet_view<'a>(&'a self, sheet: &'a RemoveSheet) -> Element<'a, Message> {
+        let spacing = theme::active().cosmic().spacing;
+        let when = self
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == sheet.snapshot)
+            .map(|snapshot| format::local_time(snapshot.time))
+            .unwrap_or_default();
+        let mut paths =
+            widget::column::with_capacity(sheet.paths.len()).spacing(spacing.space_xxxs);
+        for path in sheet.paths.iter().take(RESULT_LIMIT) {
+            paths = paths.push(widget::text::body(format::path(path)));
+        }
+        let scope =
+            widget::settings::section()
+                .title(fl!("remove-files-from"))
+                .add(
+                    widget::settings::item::builder(fl!("remove-files-everywhere"))
+                        .description(fl!("remove-files-everywhere-description"))
+                        .radio(true, Some(sheet.everywhere), Message::RemoveEverywhere),
+                )
+                .add(
+                    widget::settings::item::builder(fl!("remove-files-only-this", time = when))
+                        .radio(false, Some(sheet.everywhere), Message::RemoveEverywhere),
+                );
+        let future = widget::settings::section().add(
+            widget::settings::item::builder(fl!("remove-files-exclude"))
+                .description(fl!("remove-files-exclude-description"))
+                .toggler(sheet.exclude, Message::RemoveExclude),
+        );
+        let count = sheet.paths.len() as i64;
+        widget::column::with_capacity(6)
+            .spacing(spacing.space_m)
+            .push(widget::text::title4(fl!(
+                "remove-files-title",
+                count = count
+            )))
+            .push(widget::scrollable(paths).height(Length::Shrink))
+            .push(scope)
+            .push(future)
+            .push(widget::text::body(fl!("remove-files-warning")))
+            .push(
+                widget::row::with_capacity(3)
+                    .spacing(spacing.space_s)
+                    .push(widget::space::horizontal())
+                    .push(widget::button::standard(fl!("cancel")).on_press(Message::CancelRemove))
+                    .push(
+                        widget::button::destructive(fl!("remove-files-confirm"))
+                            .on_press(Message::StartRemove),
+                    ),
+            )
+            .into()
+    }
+
     fn sheet_view<'a>(&'a self, sheet: &'a Sheet) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
         let count: usize = sheet.requests.iter().map(|r| r.paths.len()).sum();
@@ -1676,6 +1908,21 @@ fn group_diff(entries: &[DiffEntry]) -> Vec<(PathBuf, Vec<&DiffEntry>)> {
     groups.into_iter().collect()
 }
 
+/// Removing has no progress rustic reports, and cannot be stopped part
+/// way: say what is happening and that it is safe to wait.
+fn removing_view<'a>() -> Element<'a, Message> {
+    let spacing = theme::active().cosmic().spacing;
+    widget::column::with_capacity(2)
+        .spacing(spacing.space_xs)
+        .push(widget::text::title4(fl!("remove-files-running")))
+        .push(widget::text::body(fl!("remove-files-running-body")))
+        .apply(widget::container)
+        .padding(spacing.space_m)
+        .class(theme::Container::Card)
+        .width(Length::Fill)
+        .into()
+}
+
 fn progress(running: &Running) -> Element<'_, Message> {
     let spacing = theme::active().cosmic().spacing;
     let cancel = widget::button::standard(fl!("cancel"))
@@ -1711,16 +1958,198 @@ mod tests {
             data_added: 0,
             total_bytes: 0,
             pinned: false,
+            details: crate::engine::SnapshotDetails::default(),
         }
     }
 
     fn page_with_snapshots() -> RestorePage {
-        let (mut page, _) = RestorePage::new("p".into(), "/home/alex".into());
+        let (mut page, _) = RestorePage::new("p".into(), "/home/alex".into(), None);
         page.snapshots = vec![summary("bbbbbbbb", 20), summary("aaaaaaaa", 10)];
         page.snapshot = Some(0);
         page.from = Some(1);
         page.to = Some(0);
         page
+    }
+
+    /// A page opened at `start`, over snapshots `c` (newest), `b` and `a`.
+    fn page_opened_at(start: Option<&str>) -> RestorePage {
+        let (mut page, _) =
+            RestorePage::new("p".into(), "/home/alex".into(), start.map(Into::into));
+        page.snapshots = vec![
+            summary("cccccccc", 30),
+            summary("bbbbbbbb", 20),
+            summary("aaaaaaaa", 10),
+        ];
+        page.open_start();
+        page
+    }
+
+    #[test]
+    fn opens_at_the_snapshot_asked_for_comparing_what_it_changed() {
+        let page = page_opened_at(Some("bbbbbbbb"));
+        assert_eq!(page.snapshot, Some(1));
+        assert_eq!((page.from, page.to), (Some(2), Some(1)));
+        assert!(page.start.is_none(), "only the first load");
+    }
+
+    #[test]
+    fn opens_at_the_newest_when_none_or_a_gone_snapshot_is_asked_for() {
+        for start in [None, Some("gone0000")] {
+            let page = page_opened_at(start);
+            assert_eq!(page.snapshot, Some(0), "{start:?}");
+            assert_eq!((page.from, page.to), (Some(1), Some(0)), "{start:?}");
+        }
+    }
+
+    fn ticked(paths: &[&str]) -> RestorePage {
+        let mut page = page_with_snapshots();
+        for path in paths {
+            page.selection.insert(PathBuf::from(path));
+        }
+        page
+    }
+
+    fn done_removing(rewritten: u64) -> Message {
+        Message::Removed(ChildEvent::Event(Event::Done {
+            report: None,
+            restored: None,
+            forgotten: None,
+            pruned: None,
+            pinned: None,
+            detailed: None,
+            removed: Some(RemoveReport {
+                rewritten,
+                erased: 10,
+            }),
+        }))
+    }
+
+    #[test]
+    fn escape_closes_the_sheet_first_then_the_page() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        assert!(page.escape().is_empty());
+        assert!(page.remove_sheet.is_none());
+        assert!(matches!(page.escape().as_slice(), [Effect::Close]));
+    }
+
+    #[test]
+    fn escape_never_leaves_a_page_that_is_writing() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        page.update(Message::StartRemove);
+        assert!(page.escape().is_empty());
+        assert!(page.is_writing());
+    }
+
+    #[test]
+    fn nothing_ticked_offers_nothing_to_remove() {
+        let mut page = page_with_snapshots();
+        assert!(page.update(Message::RemoveSelection).is_empty());
+        assert!(page.remove_sheet.is_none());
+    }
+
+    #[test]
+    fn removing_is_offered_on_the_browse_tab_only() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.show_tab(Tab::Deleted);
+        page.update(Message::RemoveSelection);
+        assert!(page.remove_sheet.is_none());
+    }
+
+    #[test]
+    fn removing_defaults_to_every_snapshot_and_leaving_it_out_from_now_on() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+
+        let effects = page.update(Message::StartRemove);
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Remove { paths, snapshot: None }] if paths == &[PathBuf::from("/home/alex/secret.txt")]
+        ));
+        assert!(page.is_writing(), "the page must stay open while it runs");
+    }
+
+    #[test]
+    fn removing_from_only_this_snapshot_names_it() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        page.update(Message::RemoveEverywhere(false));
+
+        let effects = page.update(Message::StartRemove);
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Remove { snapshot: Some(id), .. }] if id == "bbbbbbbb"
+        ));
+    }
+
+    #[test]
+    fn canceling_the_sheet_removes_nothing() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        page.update(Message::CancelRemove);
+        assert!(page.update(Message::StartRemove).is_empty());
+        assert!(!page.is_writing());
+    }
+
+    #[test]
+    fn a_finished_removal_reports_excludes_and_reloads_from_scratch() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        page.update(Message::StartRemove);
+
+        let effects = page.update(done_removing(2));
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Removed { report, exclude }, Effect::Load]
+                if report.rewritten == 2 && exclude == &[PathBuf::from("/home/alex/secret.txt")]
+        ));
+        assert!(!page.is_writing());
+        assert!(page.selection.is_empty());
+        assert!(page.snapshots.is_empty(), "every old ID is stale");
+    }
+
+    #[test]
+    fn a_removal_not_left_out_of_future_backups_excludes_nothing() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        page.update(Message::RemoveExclude(false));
+        page.update(Message::StartRemove);
+
+        let effects = page.update(done_removing(1));
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Removed { exclude, .. }, Effect::Load] if exclude.is_empty()
+        ));
+    }
+
+    #[test]
+    fn a_failed_removal_says_so_and_still_reloads() {
+        let mut page = ticked(&["/home/alex/secret.txt"]);
+        page.update(Message::RemoveSelection);
+        page.update(Message::StartRemove);
+
+        let effects = page.update(Message::Removed(ChildEvent::Ended(EngineError::new(
+            crate::engine::ErrorKind::Internal,
+            "append-only",
+        ))));
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::ShowError(..), Effect::Load]
+        ));
+        assert!(!page.is_writing());
+    }
+
+    #[test]
+    fn the_oldest_snapshot_has_nothing_before_it_to_compare() {
+        let page = page_opened_at(Some("aaaaaaaa"));
+        assert_eq!(page.snapshot, Some(2));
+        assert_eq!((page.from, page.to), (None, Some(2)));
     }
 
     fn missing(path: &str, snapshot: &str) -> MissingEntry {
@@ -1764,7 +2193,7 @@ mod tests {
         page.update(Message::Previewed(asked, Ok(RestorePreview::default())));
         let effects = page.update(Message::StartRestore);
         assert!(matches!(effects.as_slice(), [Effect::Restore(_)]));
-        assert!(page.is_restoring());
+        assert!(page.is_writing());
     }
 
     #[test]
@@ -1901,11 +2330,13 @@ mod tests {
                 forgotten: None,
                 pruned: None,
                 pinned: None,
+                detailed: None,
+                removed: None,
             }))
         };
         let second = page.update(done());
         assert!(matches!(second.as_slice(), [Effect::Restore(r)] if r.snapshot == "bbbbbbbb"));
-        assert!(page.is_restoring());
+        assert!(page.is_writing());
 
         let finished = page.update(done());
         assert!(
@@ -1920,7 +2351,7 @@ mod tests {
             ),
             "both parts' counts are reported, not just the last one's"
         );
-        assert!(!page.is_restoring());
+        assert!(!page.is_writing());
     }
 
     /// What the window feeds back when a restore cannot even start (its
@@ -1941,7 +2372,7 @@ mod tests {
             "",
         ))));
 
-        assert!(!page.is_restoring());
+        assert!(!page.is_writing());
         assert!(matches!(effects.as_slice(), [Effect::ShowError(..)]));
     }
 
@@ -1968,7 +2399,7 @@ mod tests {
             "",
         ))));
 
-        assert!(!page.is_restoring());
+        assert!(!page.is_writing());
         assert!(matches!(effects.as_slice(), [Effect::ShowError(..)]));
     }
 

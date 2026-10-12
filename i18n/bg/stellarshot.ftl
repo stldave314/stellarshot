@@ -707,6 +707,10 @@ event-files-removed = Премахнати са файлове от { $count ->
     [one] едно моментно състояние
    *[other] { $count } моментни състояния
 } и са изтрити { $size }
+event-files-removed-marked = Премахнати са файлове от { $count ->
+    [one] едно моментно състояние
+   *[other] { $count } моментни състояния
+} и { $size } са отбелязани за изтриване при по-късно почистване
 remove-files-button = Премахване…
 remove-files-title = Премахване на { $count ->
     [one] този елемент

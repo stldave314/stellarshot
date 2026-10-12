@@ -813,6 +813,7 @@ another file is named.
 | `a_path_no_snapshot_holds_changes_nothing` / `another_backups_snapshots_are_never_touched` / `an_append_only_repository_refuses_to_remove_files` | Nothing to remove changes no ID; a second backup's snapshots in the same repository keep the file, and the result counts them as still holding it; an append-only repository refuses and the snapshot is unchanged |
 | `in_a_shared_repository_the_data_is_marked_not_deleted_at_once` | With another backup's snapshots in the same repository, the pack that held the removed file is still there afterwards (marked for rustic's delayed deletion), and the result says so; beside `removed_data_is_erased…`, where the same pack is gone, it shows deletion at once happens only for a repository nothing else uses |
 | `trying_again_after_a_failure_part_way_finishes_the_erase` | Snapshots rewritten without the erase that should follow (as when the storage drops in between): a second removal rewrites nothing and still deletes the pack. **Proven able to fail:** with the old early return when nothing was rewritten, it fails on `erased > 0` |
+| `a_deferred_erase_is_never_described_as_erased` / `a_removal_recorded_without_the_deferred_flag_loads_as_erased` (`src/event_log.rs`) | History says "marked for a later clean-up" for a shared repository's removal, never "erased"; an entry saved before the flag existed still loads |
 | `only_this_snapshot_never_rewrites_another_backups` | "Only this snapshot" naming another backup's snapshot, which the restore page lists too, rewrites nothing |
 | `a_removal_never_claims_data_is_gone_when_it_is_not` (`src/app/pages/restore.rs`) | The result says "marked" rather than "erased" for shared storage, with when it goes; always says when other snapshots still hold the files; and tells a retry that only erased apart from nothing having changed |
 | `a_rewritten_snapshot_keeps_its_name_notes_tags_and_pin` | Removing keeps every one of them, and the backup's own tag; rustic's `rewrite` marker tag is not added |
@@ -887,6 +888,11 @@ Things a test cannot reach yet, and how they were confirmed.
   may call `notify::failure` again — see `tests/scheduled.rs`'s doc comment.
 - **Run Now and Reset Status on a real backup** (0.9.0). Both are unit and
   store tested; neither has been pressed in the real window yet.
+- **Another computer starting to share the repository during a removal.**
+  Whether the repository is shared is checked at the start and again just
+  before deleting; no test can time another writer into the gap between
+  them. Another computer's first backup still in progress has no snapshot
+  yet and cannot be seen at all (documented in the README).
 - **Taking files out of a cloud or SSH backup.** Proven against local
   repositories only. Through rclone the same rewrite and prune run, but the
   repacking downloads and uploads the packs involved, and how long that takes

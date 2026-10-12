@@ -606,6 +606,7 @@ mod tests {
             PageMessage::ChangedElsewhere(Some(EventKind::FilesRemoved {
                 snapshots: 2,
                 erased: 9,
+                deferred: false,
             })),
             &profile(),
         );

@@ -707,6 +707,10 @@ event-files-removed = Removed files from { $count ->
     [one] one snapshot
    *[other] { $count } snapshots
 } and erased { $size }
+event-files-removed-marked = Removed files from { $count ->
+    [one] one snapshot
+   *[other] { $count } snapshots
+} and marked { $size } for a later clean-up to delete
 remove-files-button = Remove…
 remove-files-title = Remove { $count ->
     [one] this item

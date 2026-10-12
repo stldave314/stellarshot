@@ -392,7 +392,12 @@ Before you start:
 - **Storage shared with another computer or backup** is erased more
   carefully: that one could be backing up at that very moment and about to
   reuse data that looks unused, so the data is only marked, and deleted by a
-  clean-up a day or more later (**Clean Up Now**). The result says so.
+  clean-up a day or more later (**Clean Up Now**). The result, and History,
+  say so. It is checked twice, at the start and again just before deleting.
+  One case cannot be seen at all: another computer's *first* backup to the
+  same place, still running, has saved no snapshot yet, and rustic leaves no
+  lock to look for. Do not remove files while another computer is making its
+  first backup to the same place.
 - **Snapshots that are not changed keep the files**: another computer's or
   backup's, or this backup's others when you chose only one snapshot. Their
   data stays in the storage, and the result says how many there are.

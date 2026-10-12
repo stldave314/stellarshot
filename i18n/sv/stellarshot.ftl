@@ -707,6 +707,10 @@ event-files-removed = Tog bort filer ur { $count ->
     [one] en ögonblicksbild
    *[other] { $count } ögonblicksbilder
 } och raderade { $size }
+event-files-removed-marked = Tog bort filer ur { $count ->
+    [one] en ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+} och markerade { $size } för radering vid en senare uppstädning
 remove-files-button = Ta bort…
 remove-files-title = Ta bort { $count ->
     [one] det här objektet

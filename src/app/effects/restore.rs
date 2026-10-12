@@ -342,6 +342,7 @@ impl App {
                         Some(event_log::EventKind::FilesRemoved {
                             snapshots: report.rewritten,
                             erased: report.erased,
+                            deferred: report.deferred,
                         }),
                     )
                 }

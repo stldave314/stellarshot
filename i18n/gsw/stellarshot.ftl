@@ -707,6 +707,10 @@ event-files-removed = Dateie us { $count ->
     [one] einere Momentuufnahm
    *[other] { $count } Momentuufnahme
 } entfernt und { $size } glöscht
+event-files-removed-marked = Dateie us { $count ->
+    [one] einere Momentuufnahm
+   *[other] { $count } Momentuufnahme
+} entfernt und { $size } zum Lösche bimene spötere Ufruume vorgmerkt
 remove-files-button = Entferne…
 remove-files-title = { $count ->
     [one] De Iitrag

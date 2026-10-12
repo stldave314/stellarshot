@@ -707,6 +707,10 @@ event-files-removed = Dateien aus { $count ->
     [one] einer Momentaufnahme
    *[other] { $count } Momentaufnahmen
 } entfernt und { $size } gelöscht
+event-files-removed-marked = Dateien aus { $count ->
+    [one] einer Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} entfernt und { $size } zum Löschen bei einem späteren Aufräumen vorgemerkt
 remove-files-button = Entfernen…
 remove-files-title = { $count ->
     [one] Diesen Eintrag

@@ -126,6 +126,16 @@ impl Repo {
             repo.rewrite_snapshots_and_trees(holding, &options, &tree_options)?
                 .len() as u64
         };
+        // Looked at again right before deleting, as late as possible: a
+        // snapshot another computer saved while this ran means it writes
+        // here too. What no check can see is another computer's very first
+        // backup still running, since a snapshot is written last and rustic
+        // has no lock to look for; the README says so.
+        let shared = shared
+            || repo
+                .get_all_snapshots()?
+                .iter()
+                .any(|snapshot| !ours(snapshot));
         debug_log!(
             ENGINE,
             "remove: rewrote {rewritten}, {still_held} others still hold them, shared: {shared}"

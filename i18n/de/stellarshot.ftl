@@ -36,12 +36,13 @@ unlock = Entsperren
 remember-password = Passwort merken
 remember-password-description = Wird in deinem Schlüsselbund gespeichert. Geplante Sicherungen brauchen es.
 recent-snapshots = Letzte Momentaufnahmen
+snapshots-explained = Jede Momentaufnahme ist eine vollständige Kopie deiner Ordner, wie sie in diesem Moment waren, und eine Wiederherstellung braucht nur diese eine. Unveränderte Dateien werden nur einmal gespeichert, daher fügt jede Momentaufnahme nur hinzu, was sich geändert hat. Eine gelöschte Datei bleibt in früheren Momentaufnahmen, bis diese entfernt werden.
+snapshots-explain = Was ist eine Momentaufnahme?
 no-snapshots-yet = Noch keine Momentaufnahmen. Drücke „Jetzt sichern“ für die erste.
-snapshot-row = { $id } · { $size } · { $added } neu, dedupliziert
-show-all-snapshots = Alle { $count ->
-    [one] { $count } Momentaufnahme
-   *[other] { $count } Momentaufnahmen
-} anzeigen
+snapshot-row = { $id } · { $size } · { $new ->
+    [one] { $new } neue Datei
+   *[other] { $new } neue Dateien
+}, { $changed } geändert · { $added } hinzugefügt
 manage = Verwalten
 edit-backup = Was gesichert wird
 edit-backup-description = Ein- und ausgeschlossene Ordner ändern.
@@ -520,7 +521,7 @@ help-terms-title = Begriffe
 term-repository = Repository
 term-repository-description = Wo die verschlüsselten, deduplizierten Daten einer Sicherung liegen: ein Ordner, ein Laufwerk, ein Server oder ein Cloud-Speicher. Jedes Sicherungsprofil hat sein eigenes.
 term-snapshot = Momentaufnahme
-term-snapshot-description = Das Abbild deiner Dateien von einer Sicherung, zu einem bestimmten Zeitpunkt. Ein Repository enthält viele davon, und eine Wiederherstellung liest aus einer von ihnen.
+term-snapshot-description = Eine vollständige Kopie deiner Ordner, wie sie bei einer Sicherung waren. Momentaufnahmen teilen sich unveränderte Dateien, statt sie erneut zu speichern, und doch ist jede für sich vollständig: Eine Wiederherstellung braucht nur die gewählte.
 term-rclone = rclone
 term-rclone-description = Das eigenständige Programm, mit dem Stellarshot SSH-Server, Google Drive und andere Cloud-Speicher erreicht. Es ist nicht Teil von Stellarshot und hat seine eigene Konfiguration.
 term-prune = Bereinigen
@@ -654,6 +655,7 @@ pin-snapshot-failed = Die Pinnung der Momentaufnahme konnte nicht geändert werd
 pin-snapshot = Anheften, damit das Aufräumen diese Momentaufnahme nie entfernt
 unpin-snapshot = Loslösen, damit das Aufräumen diese Momentaufnahme wieder entfernen kann
 delete-snapshot-row = Diese Momentaufnahme löschen
+browse-snapshot = Ansehen, was in dieser Momentaufnahme ist
 snapshot-label = { $time } · { $id }
 hook-row = { $timing } · { $command }
 size-removed = −{ $size }
@@ -667,3 +669,78 @@ desktop-new-backup = Neue Sicherung
 desktop-restore = Dateien wiederherstellen
 applet-comment = Ob gerade eine Sicherung läuft und wann jede zuletzt gelungen ist
 metainfo-summary = Sichere deine Dateien mit verschlüsselten Momentaufnahmen
+
+# Snapshots page, and removing files from snapshots
+manage-snapshots = Momentaufnahmen verwalten…
+snapshots-title = Momentaufnahmen von { $name }
+snapshots-filter = Nach Name, Schlagwort oder Notiz filtern
+snapshots-no-match = Keine Momentaufnahme passt.
+snapshot-open = Diese Momentaufnahme öffnen
+snapshot-pinned = Angeheftet
+snapshot-tag-list = Schlagwörter: { $tags }
+snapshot-name = Name
+snapshot-name-placeholder = Zum Beispiel: Vor dem Upgrade
+snapshot-notes = Notizen
+snapshot-notes-placeholder = Was du dir zu dieser Momentaufnahme merken willst
+snapshot-tags = Schlagwörter
+snapshot-tags-placeholder = Durch Kommas getrennt
+revert = Zurücksetzen
+snapshot-details-failed = Die Angaben zur Momentaufnahme konnten nicht gespeichert werden.
+snapshot-about = Über diese Momentaufnahme
+snapshot-taken = Erstellt
+snapshot-id = ID
+snapshot-computer = Computer
+snapshot-folders = Ordner
+snapshot-files = Dateien
+snapshot-files-value = { $new } neu, { $changed } geändert, { $unchanged } unverändert
+snapshot-not-recorded = Nicht erfasst
+snapshot-size = Größe
+snapshot-size-value = { $size }, davon { $added } neue Daten
+snapshot-actions = Aktionen
+snapshot-browse = Dateien durchsehen
+snapshot-browse-description = Sieh nach, was sie enthält, und stelle daraus wieder her. Um Dateien aus deinen Sicherungen zu nehmen, markiere sie dort und drücke „Entfernen…“
+snapshot-browse-button = Durchsehen…
+snapshot-pinned-description = Beim Aufräumen wird eine angeheftete Momentaufnahme nie entfernt, egal wie alt sie wird.
+snapshot-delete-description = Ihre Dateien bleiben in jeder anderen Momentaufnahme erhalten, die sie enthält.
+event-details-changed = Name, Notizen oder Schlagwörter der Momentaufnahme { $snapshot } geändert
+event-files-removed = Dateien aus { $count ->
+    [one] einer Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} entfernt und { $size } gelöscht
+event-files-removed-marked = Dateien aus { $count ->
+    [one] einer Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} entfernt und { $size } zum Löschen bei einem späteren Aufräumen vorgemerkt
+remove-files-button = Entfernen…
+remove-files-title = { $count ->
+    [one] Diesen Eintrag
+   *[other] Diese { $count } Einträge
+} aus der Sicherung entfernen
+remove-files-from = Entfernen aus
+remove-files-everywhere = Jeder Momentaufnahme dieser Sicherung
+remove-files-everywhere-description = Für ein Passwort oder alles andere, was nie hätte gesichert werden sollen. Momentaufnahmen, die ein anderer Computer am selben Ort gemacht hat, bleiben unberührt.
+remove-files-only-this = Nur der Momentaufnahme vom { $time }
+remove-files-exclude = Künftig nicht mehr sichern
+remove-files-exclude-description = Sonst kopiert die nächste Sicherung sie erneut, wenn sie noch auf diesem Computer sind.
+remove-files-warning = Das lässt sich nicht rückgängig machen. Die Dateien werden aus dem Speicher der Sicherung gelöscht, nicht nur ausgeblendet. Ein Speicher, der gelöschte Dateien in einem Papierkorb oder als ältere Versionen aufbewahrt, wie Google Drive, kann dort noch eine Kopie haben, bis er geleert wird.
+remove-files-confirm = Endgültig entfernen
+remove-files-running = Dateien werden aus der Sicherung entfernt…
+remove-files-running-body = Jede Momentaufnahme, die sie enthält, wird ohne sie neu gespeichert, danach werden ihre Daten gelöscht. Das lässt sich nicht mittendrin abbrechen und kann bei Cloud-Speicher eine Weile dauern.
+remove-files-failed = Die Dateien konnten nicht entfernt werden.
+remove-files-done-title = Dateien entfernt
+remove-files-done-body = Aus { $count ->
+    [one] einer Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} entfernt und { $size } Daten gelöscht.
+remove-files-done-none = Keine Momentaufnahme dieser Sicherung enthielt sie, daher hat sich nichts geändert.
+remove-files-done-erased = Keine Momentaufnahme dieser Sicherung enthält sie mehr, und { $size } nicht mehr benötigte Daten wurden gelöscht.
+remove-files-done-erased-later = Keine Momentaufnahme dieser Sicherung enthält sie mehr. { $size } nicht mehr benötigte Daten sind zum Löschen vorgemerkt.
+remove-files-done-marked = Aus { $count ->
+    [one] einer Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+} entfernt, und { $size } Daten zum Löschen vorgemerkt.
+remove-files-deferred = Ein anderer Computer oder eine andere Sicherung nutzt denselben Ort und könnte gerade sichern, daher löscht erst ein Aufräumen in einem Tag oder später die Daten. Drücke dann auf der Seite dieser Sicherung „Jetzt aufräumen“.
+remove-files-still-held = { $count ->
+    [one] Eine andere Momentaufnahme enthält sie noch
+   *[other] { $count } andere Momentaufnahmen enthalten sie noch
+}: die eines anderen Computers oder einer anderen Sicherung, oder hier nicht gewählte. Ihre Daten bleiben im Speicher.

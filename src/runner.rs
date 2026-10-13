@@ -23,8 +23,8 @@ use crate::constants::JOB_MAX_BYTES;
 use crate::debug::ENGINE;
 use crate::engine::{
     self, BackupReport, BackupRequest, EngineError, ErrorKind, ForgetReport, KeepRules, Location,
-    ProgressEvent, ProgressSink, PruneReport, RestorePreview, RestoreRequest, Secret,
-    SnapshotSummary, lock,
+    ProgressEvent, ProgressSink, PruneReport, RemoveReport, RemoveRequest, RestorePreview,
+    RestoreRequest, Secret, SnapshotDetails, SnapshotSummary, lock,
 };
 use crate::hooks::{self, HookResult};
 use crate::profile::Hook;
@@ -39,6 +39,12 @@ pub enum Operation {
     DeleteSnapshots,
     /// Pin or unpin a snapshot: see [`crate::engine::Repo::set_pinned`].
     SetPinned,
+    /// Name a snapshot, and set its notes and tags: see
+    /// [`crate::engine::Repo::set_details`].
+    SetDetails,
+    /// Take files out of snapshots and erase their data: see
+    /// [`crate::engine::Repo::remove_paths`].
+    RemovePaths,
     /// Forget snapshots under the retention rules, then prune if asked.
     Maintain,
     /// Add a key for the new password, then remove the one the repository
@@ -50,12 +56,14 @@ impl Operation {
     /// Every variant, once — [`Self::from_arg`] searches it rather than
     /// repeating the list a second time, which a new variant could add to
     /// one list and forget in the other.
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 9] = [
         Self::Backup,
         Self::Restore,
         Self::Check,
         Self::DeleteSnapshots,
         Self::SetPinned,
+        Self::SetDetails,
+        Self::RemovePaths,
         Self::Maintain,
         Self::ChangePassword,
     ];
@@ -67,6 +75,8 @@ impl Operation {
             Self::Check => "check",
             Self::DeleteSnapshots => "delete-snapshots",
             Self::SetPinned => "set-pinned",
+            Self::SetDetails => "set-details",
+            Self::RemovePaths => "remove-paths",
             Self::Maintain => "maintain",
             Self::ChangePassword => "change-password",
         }
@@ -98,12 +108,19 @@ pub struct Job {
     /// For `restore`.
     #[serde(default)]
     pub destination: Option<PathBuf>,
-    /// For `delete-snapshots`, and the one snapshot for `set-pinned`.
+    /// For `delete-snapshots`, and the one snapshot for `set-pinned` and
+    /// `set-details`.
     #[serde(default)]
     pub ids: Vec<String>,
     /// For `set-pinned`: the new pinned state.
     #[serde(default)]
     pub pinned: Option<bool>,
+    /// For `set-details`: the snapshot's new name, notes and tags.
+    #[serde(default)]
+    pub details: Option<SnapshotDetails>,
+    /// For `remove-paths`: what to take out, and of which snapshots.
+    #[serde(default)]
+    pub remove: Option<RemoveRequest>,
     /// For `maintain`: the retention rules to forget by, if any.
     #[serde(default)]
     pub keep: Option<KeepRules>,
@@ -138,6 +155,8 @@ impl Job {
             destination: None,
             ids: Vec::new(),
             pinned: None,
+            details: None,
+            remove: None,
             keep: None,
             prune: false,
             profile_tag: String::new(),
@@ -155,7 +174,9 @@ pub enum Event {
         progress: ProgressEvent,
     },
     Done {
-        report: Option<BackupReport>,
+        // Boxed, as `pinned` below: a `SnapshotSummary` inside, unboxed,
+        // makes this variant far larger than the others.
+        report: Option<Box<BackupReport>>,
         #[serde(default)]
         restored: Option<RestorePreview>,
         #[serde(default)]
@@ -168,6 +189,12 @@ pub enum Event {
         // large-enum-variant threshold.
         #[serde(default)]
         pinned: Option<Box<SnapshotSummary>>,
+        /// For `set-details`: the snapshot under its new ID. Boxed for the
+        /// same reason as `pinned`.
+        #[serde(default)]
+        detailed: Option<Box<SnapshotSummary>>,
+        #[serde(default)]
+        removed: Option<RemoveReport>,
     },
     Error {
         error: EngineError,
@@ -350,6 +377,8 @@ pub struct Outcome {
     pub forgotten: Option<ForgetReport>,
     pub pruned: Option<PruneReport>,
     pub pinned: Option<SnapshotSummary>,
+    pub detailed: Option<SnapshotSummary>,
+    pub removed: Option<RemoveReport>,
 }
 
 /// Run `operation` for `job`, holding the repository's write lock throughout.
@@ -483,6 +512,23 @@ impl Session {
                     ..Outcome::default()
                 })
             }
+            Operation::SetDetails => {
+                let id = job.ids.first().ok_or_else(|| missing("snapshot ID"))?;
+                let details = job.details.ok_or_else(|| missing("snapshot details"))?;
+                repo.set_details(id, &details).map(|summary| Outcome {
+                    detailed: Some(summary),
+                    ..Outcome::default()
+                })
+            }
+            Operation::RemovePaths => {
+                // Consumes the repository, as a restore does: a later
+                // operation in this session opens it again.
+                let request = job.remove.ok_or_else(|| missing("paths to remove"))?;
+                return repo.remove_paths(&request).map(|removed| Outcome {
+                    removed: Some(removed),
+                    ..Outcome::default()
+                });
+            }
             Operation::Maintain => {
                 let forgotten = job
                     .keep
@@ -541,7 +587,7 @@ pub fn main(args: &[String]) -> ExitCode {
 
     let Some(operation) = args.first().and_then(|arg| Operation::from_arg(arg)) else {
         eprintln!(
-            "usage: stellarshot --run <backup|restore|check|delete-snapshots|set-pinned|maintain|change-password> < job.json"
+            "usage: stellarshot --run <backup|restore|check|delete-snapshots|set-pinned|set-details|remove-paths|maintain|change-password> < job.json"
         );
         return ExitCode::from(2);
     };
@@ -576,11 +622,13 @@ pub fn main(args: &[String]) -> ExitCode {
     match result {
         Ok(outcome) => {
             output.emit(&Event::Done {
-                report: outcome.report,
+                report: outcome.report.map(Box::new),
                 restored: outcome.restored,
                 forgotten: outcome.forgotten,
                 pruned: outcome.pruned,
                 pinned: outcome.pinned.map(Box::new),
+                detailed: outcome.detailed.map(Box::new),
+                removed: outcome.removed,
             });
             ExitCode::SUCCESS
         }

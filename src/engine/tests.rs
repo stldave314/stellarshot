@@ -1320,7 +1320,8 @@ fn a_snapshot_compared_with_itself_has_no_changes() {
     awkward_tree(&fixture.source);
     let id = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
 
-    assert!(browser(&fixture).diff(&id, &id).unwrap().is_empty());
+    let changes = browser(&fixture).diff(&id, &id).unwrap();
+    assert!(changes.is_empty(), "{changes:?}");
 }
 
 #[test]
@@ -2873,4 +2874,519 @@ fn reading_a_big_file_through_a_mount_does_not_load_it_whole() {
         grown < SIZE / 2,
         "reading 16 MiB of a 1 GiB file grew the process by {grown} bytes"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Names, notes and tags; taking files out of snapshots.
+// ---------------------------------------------------------------------------
+
+/// Every tag the snapshot carries, internal ones included, straight from
+/// rustic rather than through `SnapshotSummary`, which hides them.
+fn raw_tags(fixture: &Fixture, snapshot: &str) -> Vec<String> {
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .inner
+        .get_snapshots(&[snapshot])
+        .unwrap()
+        .remove(0)
+        .tags
+        .iter()
+        .cloned()
+        .collect()
+}
+
+/// Whether `snapshot` has `path` in it.
+fn holds(fixture: &Fixture, snapshot: &str, path: &Path) -> bool {
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let file = repo.inner.get_snapshots(&[snapshot]).unwrap().remove(0);
+    let indexed = repo.inner.to_indexed().unwrap();
+    match browse::node_at(&indexed, &file, path) {
+        Ok(_) => true,
+        Err(err) if err.kind == ErrorKind::NotFound => false,
+        Err(err) => panic!("reading {} failed: {err:?}", path.display()),
+    }
+}
+
+/// The pack file holding the first piece of `path`'s data in `snapshot`.
+fn pack_holding(fixture: &Fixture, snapshot: &str, path: &Path) -> PathBuf {
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let file = repo.inner.get_snapshots(&[snapshot]).unwrap().remove(0);
+    let indexed = repo.inner.to_indexed().unwrap();
+    let node = browse::node_at(&indexed, &file, path).unwrap();
+    let blob = node.content.as_ref().unwrap()[0];
+    let pack = indexed
+        .get_index_entry(&blob)
+        .unwrap()
+        .pack
+        .to_hex()
+        .to_string();
+    // The fixture's repository sits next to its source folder.
+    let repo = fixture.source.parent().unwrap().join("repo");
+    repo.join("data").join(&pack[..2]).join(&pack)
+}
+
+fn tagged(path: &Path, profile: &str) -> BackupRequest {
+    BackupRequest {
+        profile_tag: profile_tag(profile),
+        ..sources(path)
+    }
+}
+
+/// A source with a small, unique "secret" next to a large ordinary file,
+/// so both share a pack and the secret is far under 5% of it.
+fn source_with_secret(fixture: &Fixture) -> (PathBuf, PathBuf, PathBuf) {
+    fs::create_dir_all(fixture.source.join("folder")).unwrap();
+    fs::write(fixture.source.join("secret.txt"), pseudo_random(200, 7)).unwrap();
+    fs::write(fixture.source.join("big.bin"), pseudo_random(3 << 20, 8)).unwrap();
+    fs::write(fixture.source.join("folder/kept.txt"), b"kept").unwrap();
+    let source = fs::canonicalize(&fixture.source).unwrap();
+    (
+        source.join("secret.txt"),
+        source.join("big.bin"),
+        source.join("folder/kept.txt"),
+    )
+}
+
+/// Remove `paths` from backup `profile`'s snapshots, or only `snapshot`.
+fn remove_from(
+    fixture: &Fixture,
+    paths: &[&Path],
+    profile: &str,
+    snapshot: Option<&str>,
+) -> RemoveReport {
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .remove_paths(&RemoveRequest {
+            paths: paths.iter().map(|path| path.to_path_buf()).collect(),
+            snapshot: snapshot.map(ToOwned::to_owned),
+            tag: profile_tag(profile),
+            sources: vec![fixture.source.clone()],
+        })
+        .unwrap()
+}
+
+/// Remove `paths` from every snapshot of backup `profile`.
+fn remove(fixture: &Fixture, paths: &[&Path], profile: &str) -> RemoveReport {
+    remove_from(fixture, paths, profile, None)
+}
+
+#[test]
+fn details_are_saved_and_the_backups_own_tag_survives() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let taken = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    let details = SnapshotDetails::from_input(
+        " Before the upgrade ",
+        "Kernel 7.2, new GPU driver.",
+        "upgrade, keep ,upgrade,",
+    );
+
+    let changed = open(&fixture.repo, &secret())
+        .unwrap()
+        .set_details(&taken, &details)
+        .unwrap();
+
+    assert_ne!(changed.id, taken, "a changed snapshot gets a new ID");
+    assert_eq!(changed.details.name, "Before the upgrade");
+    assert_eq!(changed.details.notes, "Kernel 7.2, new GPU driver.");
+    assert_eq!(changed.details.tags, ["keep", "upgrade"]);
+    let listed = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert_eq!(listed.len(), 1, "the old snapshot is gone");
+    assert_eq!(listed[0].details, changed.details);
+    assert!(
+        raw_tags(&fixture, &changed.id).contains(&profile_tag("p")),
+        "the backup's own tag must survive, or Keep would no longer see the snapshot"
+    );
+
+    let cleared = open(&fixture.repo, &secret())
+        .unwrap()
+        .set_details(&changed.id, &SnapshotDetails::default())
+        .unwrap();
+    assert_eq!(cleared.details, SnapshotDetails::default());
+    assert_eq!(raw_tags(&fixture, &cleared.id), [profile_tag("p")]);
+}
+
+#[test]
+fn unchanged_details_rewrite_nothing() {
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    let taken = back_up(&fixture, &sources(&fixture.source)).snapshot.id;
+
+    let same = open(&fixture.repo, &secret())
+        .unwrap()
+        .set_details(&taken, &SnapshotDetails::default())
+        .unwrap();
+
+    assert_eq!(same.id, taken);
+}
+
+#[test]
+fn a_reserved_tag_typed_in_is_never_saved() {
+    let details = SnapshotDetails::from_input("", "", &format!("mine, {}", profile_tag("other")));
+    assert_eq!(details.tags, ["mine"]);
+}
+
+#[test]
+fn naming_a_snapshot_does_not_change_what_keep_forgets() {
+    let fixture = fixture();
+    let taken = daily_history(&fixture);
+    // rustic's own default groups by label too: a named snapshot would be
+    // the only one in its group, always its newest, and never forgotten.
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .set_details(
+            &taken[0],
+            &SnapshotDetails::from_input("Oldest", "", "named"),
+        )
+        .unwrap();
+    let rules = KeepRules {
+        daily: Some(2),
+        ..KeepRules::default()
+    };
+
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &rules,
+            &hostname(),
+            "",
+            std::slice::from_ref(&fixture.source),
+        )
+        .unwrap();
+
+    assert_eq!((report.removed, report.kept), (2, 2));
+    let left = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert!(
+        left.iter().all(|s| s.details.name.is_empty()),
+        "the named oldest snapshot is forgotten like any other"
+    );
+}
+
+#[test]
+fn removing_a_file_takes_it_out_of_every_snapshot_holding_it_and_nothing_else() {
+    let fixture = fixture();
+    let (secret_file, big, kept) = source_with_secret(&fixture);
+    let first = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    fs::write(&kept, b"kept, edited").unwrap();
+    let second = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    fs::remove_file(&secret_file).unwrap();
+    let without = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+
+    let report = remove(&fixture, &[&secret_file], "p");
+
+    assert_eq!(report.rewritten, 2, "only the two snapshots holding it");
+    let ids = snapshot_ids(&fixture);
+    assert_eq!(ids.len(), 3);
+    assert!(!ids.contains(&first) && !ids.contains(&second));
+    assert!(
+        ids.contains(&without),
+        "a snapshot without the file keeps its ID"
+    );
+    for id in &ids {
+        assert!(!holds(&fixture, id, &secret_file), "{id} still has it");
+        assert!(holds(&fixture, id, &big), "{id} lost an unrelated file");
+        assert!(holds(&fixture, id, &kept), "{id} lost an unrelated file");
+    }
+
+    // What is left restores byte for byte.
+    let newest_rewritten = open(&fixture.repo, &secret())
+        .unwrap()
+        .snapshots()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id != without)
+        .unwrap()
+        .id;
+    open(&fixture.repo, &secret())
+        .unwrap()
+        .restore_all(&newest_rewritten, &fixture.work, Arc::new(NoProgress))
+        .unwrap();
+    assert_eq!(
+        fs::read(restored(&fixture.work, &big)).unwrap(),
+        pseudo_random(3 << 20, 8)
+    );
+    assert_eq!(
+        fs::read(restored(&fixture.work, &kept)).unwrap(),
+        b"kept, edited"
+    );
+    assert!(!restored(&fixture.work, &secret_file).exists());
+}
+
+#[test]
+fn removed_data_is_erased_from_the_repository_not_just_unlisted() {
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let taken = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    let pack = pack_holding(&fixture, &taken, &secret_file);
+    assert!(pack.exists(), "fixture: {} should exist", pack.display());
+
+    let report = remove(&fixture, &[&secret_file], "p");
+
+    assert_eq!(report.rewritten, 1);
+    assert!(report.erased > 0);
+    assert!(
+        !pack.exists(),
+        "the pack that held the removed file must be deleted, not kept or marked"
+    );
+}
+
+#[test]
+fn a_normal_clean_up_would_have_left_the_removed_data_behind() {
+    // What `removed_data_is_erased…` above guards against: with rustic's
+    // default prune, the secret's pack is over 95% still in use, so it is
+    // neither repacked nor deleted, and the secret stays readable.
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let taken = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    let pack = pack_holding(&fixture, &taken, &secret_file);
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let file = repo.inner.get_snapshots(&[taken.as_str()]).unwrap();
+    let indexed = repo.inner.to_indexed().unwrap();
+    let excludes =
+        rustic_core::Excludes::default().globs(vec![remove::exclude_glob(&secret_file).unwrap()]);
+    indexed
+        .rewrite_snapshots_and_trees(
+            file,
+            &rustic_core::RewriteOptions::default().forget(true),
+            &rustic_core::RewriteTreesOptions::default().excludes(excludes),
+        )
+        .unwrap();
+    drop(indexed);
+
+    open(&fixture.repo, &secret()).unwrap().prune().unwrap();
+
+    assert!(pack.exists(), "a default prune keeps the mostly-used pack");
+}
+
+#[test]
+fn removing_from_one_snapshot_leaves_the_others_as_they_were() {
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let first = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    fs::write(fixture.source.join("folder/new.txt"), b"new").unwrap();
+    let second = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+
+    let report = remove_from(&fixture, &[&secret_file], "p", Some(&second));
+
+    assert_eq!(report.rewritten, 1);
+    let ids = snapshot_ids(&fixture);
+    assert!(ids.contains(&first));
+    assert!(holds(&fixture, &first, &secret_file));
+    let rewritten = ids.iter().find(|id| **id != first).unwrap();
+    assert!(!holds(&fixture, rewritten, &secret_file));
+}
+
+#[test]
+fn removing_a_folder_takes_everything_under_it() {
+    let fixture = fixture();
+    let (secret_file, big, kept) = source_with_secret(&fixture);
+    fs::create_dir_all(fixture.source.join("folder/deeper")).unwrap();
+    fs::write(fixture.source.join("folder/deeper/x"), b"x").unwrap();
+    back_up(&fixture, &tagged(&fixture.source, "p"));
+    let folder = kept.parent().unwrap();
+
+    remove(&fixture, &[folder], "p");
+
+    let id = snapshot_ids(&fixture).remove(0);
+    assert!(!holds(&fixture, &id, folder));
+    assert!(!holds(&fixture, &id, &folder.join("deeper/x")));
+    assert!(holds(&fixture, &id, &big));
+    assert!(holds(&fixture, &id, &secret_file));
+}
+
+#[test]
+fn a_name_full_of_pattern_characters_takes_only_itself() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    let names = [
+        "a*b", "aXb", "[x]", "x", "c d ", "c d", "!e", "e", "f\\g", "{h,i}", "h",
+    ];
+    for name in names {
+        fs::write(fixture.source.join(name), name).unwrap();
+    }
+    back_up(&fixture, &tagged(&fixture.source, "p"));
+    let source = fs::canonicalize(&fixture.source).unwrap();
+    let removed = ["a*b", "[x]", "c d ", "!e", "f\\g", "{h,i}"];
+    let paths: Vec<PathBuf> = removed.iter().map(|name| source.join(name)).collect();
+    let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+
+    let report = remove(&fixture, &paths, "p");
+
+    assert_eq!(report.rewritten, 1);
+    let id = snapshot_ids(&fixture).remove(0);
+    for name in names {
+        assert_eq!(
+            holds(&fixture, &id, &source.join(name)),
+            !removed.contains(&name),
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn a_path_no_snapshot_holds_changes_nothing() {
+    let fixture = fixture();
+    source_with_secret(&fixture);
+    let taken = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+
+    let report = remove(&fixture, &[&fixture.source.join("never-there")], "p");
+
+    assert_eq!(report, RemoveReport::default());
+    assert_eq!(snapshot_ids(&fixture), [taken]);
+}
+
+#[test]
+fn another_backups_snapshots_are_never_touched() {
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let mine = back_up(&fixture, &tagged(&fixture.source, "mine"))
+        .snapshot
+        .id;
+    let theirs = back_up(&fixture, &tagged(&fixture.source, "theirs"))
+        .snapshot
+        .id;
+
+    let report = remove(&fixture, &[&secret_file], "mine");
+
+    assert_eq!(report.rewritten, 1);
+    assert_eq!(report.still_held, 1, "theirs still has it, and says so");
+    assert!(
+        report.deferred,
+        "a shared repository is never deleted from at once"
+    );
+    let ids = snapshot_ids(&fixture);
+    assert!(!ids.contains(&mine));
+    assert!(ids.contains(&theirs));
+    assert!(holds(&fixture, &theirs, &secret_file));
+}
+
+#[test]
+fn in_a_shared_repository_the_data_is_marked_not_deleted_at_once() {
+    // Another backup writing to the same place could be about to reuse
+    // data that is unused now; only rustic's own delay keeps that safe.
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let mine = back_up(&fixture, &tagged(&fixture.source, "mine"))
+        .snapshot
+        .id;
+    let pack = pack_holding(&fixture, &mine, &secret_file);
+    let elsewhere = fixture.work.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    fs::write(elsewhere.join("other.txt"), b"theirs").unwrap();
+    back_up(&fixture, &tagged(&elsewhere, "theirs"));
+
+    let report = remove(&fixture, &[&secret_file], "mine");
+
+    assert_eq!((report.rewritten, report.still_held), (1, 0));
+    assert!(report.deferred);
+    assert!(
+        pack.exists(),
+        "marked for a later clean-up, not deleted now"
+    );
+}
+
+#[test]
+fn trying_again_after_a_failure_part_way_finishes_the_erase() {
+    // A removal whose snapshots were rewritten but whose erase never ran
+    // (the storage went away in between, say): the second try finds no
+    // snapshot holding the file and must still erase its data.
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let taken = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    let pack = pack_holding(&fixture, &taken, &secret_file);
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let file = repo.inner.get_snapshots(&[taken.as_str()]).unwrap();
+    let indexed = repo.inner.to_indexed().unwrap();
+    let excludes =
+        rustic_core::Excludes::default().globs(vec![remove::exclude_glob(&secret_file).unwrap()]);
+    indexed
+        .rewrite_snapshots_and_trees(
+            file,
+            &rustic_core::RewriteOptions::default().forget(true),
+            &rustic_core::RewriteTreesOptions::default().excludes(excludes),
+        )
+        .unwrap();
+    drop(indexed);
+    assert!(pack.exists(), "fixture: rewritten, not yet erased");
+
+    let report = remove(&fixture, &[&secret_file], "p");
+
+    assert_eq!(report.rewritten, 0);
+    assert!(report.erased > 0);
+    assert!(!pack.exists(), "the second try erased what the first left");
+}
+
+#[test]
+fn only_this_snapshot_never_rewrites_another_backups() {
+    // The restore page lists every snapshot in the repository, so "only
+    // this snapshot" can name one this backup did not make.
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    back_up(&fixture, &tagged(&fixture.source, "mine"));
+    let theirs = back_up(&fixture, &tagged(&fixture.source, "theirs"))
+        .snapshot
+        .id;
+
+    let report = remove_from(&fixture, &[&secret_file], "mine", Some(&theirs));
+
+    assert_eq!(report.rewritten, 0);
+    assert!(snapshot_ids(&fixture).contains(&theirs));
+    assert!(holds(&fixture, &theirs, &secret_file));
+}
+
+#[test]
+fn a_rewritten_snapshot_keeps_its_name_notes_tags_and_pin() {
+    let fixture = fixture();
+    let (secret_file, ..) = source_with_secret(&fixture);
+    let taken = back_up(&fixture, &tagged(&fixture.source, "p")).snapshot.id;
+    let repo = open(&fixture.repo, &secret()).unwrap();
+    let named = repo
+        .set_details(&taken, &SnapshotDetails::from_input("Named", "Notes", "t"))
+        .unwrap();
+    let pinned = repo.set_pinned(&named.id, true).unwrap();
+    drop(repo);
+
+    remove(&fixture, &[&secret_file], "p");
+
+    let after = open(&fixture.repo, &secret()).unwrap().snapshots().unwrap();
+    assert_eq!(after.len(), 1);
+    assert_ne!(after[0].id, pinned.id);
+    assert!(after[0].pinned);
+    assert_eq!(after[0].details, pinned.details);
+    assert!(raw_tags(&fixture, &after[0].id).contains(&profile_tag("p")));
+    assert!(
+        !raw_tags(&fixture, &after[0].id).contains(&"rewrite".to_owned()),
+        "rustic's marker tag is only added when the original is kept"
+    );
+}
+
+#[test]
+fn an_append_only_repository_refuses_to_remove_files() {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("file.txt"), b"content").unwrap();
+    let location = Location::local(dir.path().join("repo"));
+    init_with(&location, &secret(), true, None).unwrap();
+    let taken = open(&location, &secret())
+        .unwrap()
+        .backup(&sources(&source), Arc::new(NoProgress))
+        .unwrap()
+        .snapshot
+        .id;
+
+    let err = open(&location, &secret())
+        .unwrap()
+        .remove_paths(&RemoveRequest {
+            paths: vec![fs::canonicalize(&source).unwrap().join("file.txt")],
+            snapshot: Some(taken.clone()),
+            tag: String::new(),
+            sources: vec![source.clone()],
+        })
+        .unwrap_err();
+
+    assert_eq!(err.kind, ErrorKind::Internal, "{err:?}");
+    let left = open(&location, &secret()).unwrap().snapshots().unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, taken);
 }

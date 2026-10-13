@@ -416,7 +416,7 @@ mod tests {
         .unwrap();
 
         assert!(crate::engine::location::is_repository(&repo));
-        assert!(finished.snapshots.is_empty());
+        assert!(finished.snapshots.is_empty(), "{:?}", finished.snapshots);
     }
 
     #[test]

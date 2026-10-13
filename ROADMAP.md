@@ -4,7 +4,7 @@ What is done, what is next, and what is deliberately out of scope.
 
 **The goal** is a backup application the open-source world can choose over
 commercial ones: set up once, trusted, and understandable, from a single
-laptop up to a centrally watched fleet.
+laptop up to many machines.
 
 **Stellarshot complements rustic; it never changes it.** rustic is a separate
 project with its own goals. Everything here is built on the public
@@ -260,17 +260,36 @@ A new backup engine behind one module, on the current rustic release.
       snapshot's metadata; proven with a test that pins the oldest of several
       snapshots and confirms retention keeps it anyway. Giving a snapshot its
       own expiry date (`delete_after`) instead is not yet exposed
-- [ ] **Names and notes on snapshots**: tags, a label and a description,
-      shown in the list, searchable, and able to protect a snapshot from
-      retention (`keep_tags`). Not started; pinning above uses the same
-      underlying rustic mechanism (`SnapshotModification`), so this is mostly
-      UI work now
-- [ ] **Remove something from history**: take an accidentally backed-up
-      secret or huge file out of every snapshot (`rewrite_snapshots`), then
-      prune to free the space, with a clear warning that this cannot be
-      undone. Not started on purpose: this destroys data if it goes wrong,
-      and deserved more time than was left in this pass rather than a rushed
-      first version
+- [x] **Names and notes on snapshots**: a name (rustic's `label`), notes
+      (`description`) and tags, on a Snapshots page of their own ("Manage
+      Snapshots…" on the backup's page) that lists every snapshot with a
+      filter by name, tag or note, and opens one to edit them, pin it, browse
+      it or delete it. Each row on the backup's page now says what changed
+      (new and changed files, data added) and opens its snapshot on the
+      restore page, with Compare set to what it changed. Tags are added and
+      removed around the backup's own `stellarshot-profile:` tag, never
+      replacing it. Names and tags deliberately do not protect a snapshot
+      from retention (`keep_tags` is not used; pinning is the one way), and
+      retention no longer groups by label as rustic's default does, which
+      would have kept every named snapshot forever as the only one in its
+      group
+- [x] **Remove something from history**: tick files on the restore page's
+      Browse tab and press Remove… to take them out of every snapshot of the
+      backup, or only the one open (rustic's `rewrite_snapshots_and_trees`,
+      with only the snapshots that hold them rewritten), optionally leaving
+      them out of future backups too. The data is then erased at once with a
+      prune that repacks every pack holding unused data and deletes the old
+      ones immediately: rustic's default prune would have left a small file
+      inside a mostly-used pack, readable to anyone with the password, which
+      a test demonstrates. When another computer or backup shares the
+      repository, the old packs are only marked and deleted by a clean-up a
+      day later instead, since its backup could be reusing that data at that
+      moment. Other computers' and backups' snapshots are never touched (and
+      the result counts the ones still holding the files), a retry after a
+      failure part way still finishes the erase, a mounted snapshot blocks
+      it, and an append-only repository refuses it.
+      Proven against real repositories, including names made of pattern
+      characters and a trailing space
 - [x] **Download straight from a snapshot**: a file (rustic's own `dump`), or
       a folder as a `.tar.gz` Stellarshot builds itself by walking the
       snapshot's tree (`tar` + `flate2`, chosen over a `.zip` to keep Unix
@@ -547,19 +566,31 @@ A new backup engine behind one module, on the current rustic release.
       each string was translated as it was added, kept consistent with the
       vocabulary already established in that file, but that is not the same
       guarantee
-- [ ] **Accessibility pass.** One real, verified gap found and fixed:
-      seven icon-only buttons (pin, delete a snapshot, remove a folder or
-      exclude pattern, back, up a folder) had a visual `.tooltip()` but no
-      `.name()`, traced through libcosmic's and Iced's own source
-      (`widget/button/icon.rs`, `widget/button/widget.rs`) to confirm a
-      tooltip is never exposed to accessibility tools on its own — only
-      `.name()` reaches the AccessKit node a screen reader sees. All seven
-      now set both. Attempted to confirm this live against a running
-      instance's AT-SPI tree; the attempt itself failed on this machine (the
-      accessibility bus could not be reached with the environment a demo
-      instance needs), not yet retried. Not attempted: color contrast,
-      keyboard tab order through the wizard's own multi-step flow, and a
-      real screen reader read-through
+- [ ] **Accessibility pass.** Done in the app itself:
+      - Every icon-only button sets `.name()`, not only a tooltip (a tooltip
+        never reaches the AccessKit node a screen reader sees): seven were
+        missing it and were fixed earlier, and an audit of every
+        `button::icon` in the source now finds none without one, including
+        the Snapshots page's.
+      - Escape steps back out of the restore page (closing an open sheet
+        first) and the Snapshots page, as it already closed dialogs; never
+        while a restore or removal is running.
+      - Colors all come from the COSMIC theme, none set by the app, so
+        contrast follows the theme chosen, high contrast included.
+
+      Still open, and mostly not this app's to fix: at the libcosmic revision
+      used, its toggler, text inputs (plain, password and search), radio
+      buttons and segmented control (the restore page's tabs) implement no
+      accessibility node at all, so no label set here can reach a screen
+      reader; that belongs in libcosmic, per the rule at the top of this
+      page. Checked live, on X11 under Xvfb and on the real COSMIC Wayland
+      session with screen-reader mode on: Stellarshot exports only its
+      application and an empty window frame to AT-SPI, no widget inside, and
+      so do COSMIC's own libcosmic apps at the same time (the launcher, app
+      library and an applet two or three nodes each, notifications twelve;
+      COSMIC Files and Edit not registered at all), against 216 for a Qt app.
+      Screen readers cannot use libcosmic apps yet; the names set here are
+      ready for when the toolkit exports its widget tree
 - [x] **Screenshots**, regenerated for this release (`scripts/screenshots.sh`):
       first launch, the wizard, an unlocked backup, the restore page, and
       the profile page in the light theme. Not literally every screen —
@@ -613,9 +644,6 @@ Questions to answer before anything is built.
   it
 - **rustic-server and rustic-scheduler**: what an append-only REST
   destination, and central scheduling of several machines, would give
-- **A central dashboard** for many machines, hosted or on-premises in a
-  container, and finding the machines on the network, each with its own
-  permissions
 - **Other desktops and systems**: GNOME, KDE, Windows, macOS, Android and
   iOS, under the same license where possible. libcosmic targets COSMIC first
 - **Tiered storage**: a snapshot lives in one repository, so "small files here,

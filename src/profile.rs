@@ -919,7 +919,8 @@ mod tests {
             vec![PathBuf::from("/home/dave")],
         );
 
-        assert!(profile.backup_request(&[]).excludes.is_empty());
+        let excludes = profile.backup_request(&[]).excludes;
+        assert!(excludes.is_empty(), "{excludes:?}");
     }
 
     #[test]
@@ -948,7 +949,8 @@ mod tests {
             vec![PathBuf::from("/home/dave")],
         );
 
-        assert!(profile.backup_request(&[]).excludes.is_empty());
+        let excludes = profile.backup_request(&[]).excludes;
+        assert!(excludes.is_empty(), "{excludes:?}");
     }
 
     #[test]
@@ -1032,13 +1034,14 @@ mod tests {
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0].name, "dave");
         assert_eq!(profiles[1].destination, local("/media/usb/backup"));
-        assert!(profiles[0].sources.is_empty());
+        assert!(profiles[0].sources.is_empty(), "{:?}", profiles[0].sources);
         assert_ne!(profiles[0].id, profiles[1].id);
     }
 
     #[test]
     fn unreadable_v1_settings_become_no_profiles() {
-        assert!(profiles_from_v1("not ron").is_empty());
+        let loaded = profiles_from_v1("not ron");
+        assert!(loaded.is_empty(), "{loaded:?}");
     }
 
     #[test]
@@ -1055,7 +1058,7 @@ mod tests {
         let profile: Profile = ron::from_str(saved).unwrap();
         assert!(profile.one_file_system);
         assert_eq!(profile.schedule, Schedule::Manual);
-        assert!(profile.hooks.is_empty());
+        assert!(profile.hooks.is_empty(), "{:?}", profile.hooks);
         assert_eq!(profile.compression, Compression::Default);
     }
 

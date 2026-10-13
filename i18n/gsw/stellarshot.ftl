@@ -36,12 +36,13 @@ unlock = Entsperre
 remember-password = Passwort merke
 remember-password-description = Wird i dim Schlüsselbund gspeicheret. Planti Sicherige bruuched s.
 recent-snapshots = Letschti Momentuufnahme
+snapshots-explained = Jedi Momentuufnahm isch e vollständigi Kopie vo dine Ordner, wie si i dem Moment gsi sind, und e Widerherstellig bruucht nume die eint. Unveränderti Datene werde nume eimal gspeicheret, drum chunnt mit jedere Momentuufnahm nume dezue, was sich gänderet hät. E glöschti Datei blibt i früenere Momentuufnahme, bis die entfernt werde.
+snapshots-explain = Was isch e Momentuufnahm?
 no-snapshots-yet = No kei Momentuufnahme. Druck „Jetzt sichere“ für di erscht.
-snapshot-row = { $id } · { $size } · { $added } neu, dedupliziert
-show-all-snapshots = All { $count ->
-    [one] { $count } Momentuufnahme
-   *[other] { $count } Momentuufnahme
-} zeige
+snapshot-row = { $id } · { $size } · { $new ->
+    [one] { $new } neui Datei
+   *[other] { $new } neui Dateie
+}, { $changed } gänderet · { $added } dezuecho
 manage = Verwalte
 edit-backup = Was gsicheret wird
 edit-backup-description = Ii- und usgschlosseni Ordner ändere.
@@ -520,7 +521,7 @@ help-terms-title = Begriff
 term-repository = Repository
 term-repository-description = Wo d verschlüsselte, deduplizierte Date vo re Sicherig sind: en Ordner, e Platte, en Server oder Cloud-Speicher. Jedes Sicherigsprofil hät sis eiget.
 term-snapshot = Momentuufnahm
-term-snapshot-description = S Abbild vo dine Datene vo re Sicherig, zu emne bstimmte Zitpunkt. Es Repository hät vieli dervo, und e Widerherstellig lieset us eire vo ene.
+term-snapshot-description = E vollständigi Kopie vo dine Ordner, wie si bi ere Sicherig gsi sind. Momentuufnahme teiled sich unveränderti Datene, statt si nomal z speichere, und glich isch jedi für sich vollständig: E Widerherstellig bruucht nume die gwählti.
 term-rclone = rclone
 term-rclone-description = S eigeständige Programm, wo Stellarshot nutzt für SSH-Server, Google Drive und anderi Cloud-Speicher z erreiche. Es isch nöd Teil vo Stellarshot und hät si eigeti Konfiguration.
 term-prune = Bereinige
@@ -654,6 +655,7 @@ pin-snapshot-failed = D Aaghänkig vo de Momentuufnahm hät nöd chöne gändere
 pin-snapshot = Aahefte, dass s Ufruume die Momentuufnahm nie entfernt
 unpin-snapshot = Lösmache, dass s Ufruume die Momentuufnahm wieder chan entferne
 delete-snapshot-row = Die Momentuufnahm lösche
+browse-snapshot = Aaluege, was i dere Momentuufnahm isch
 snapshot-label = { $time } · { $id }
 hook-row = { $timing } · { $command }
 size-removed = −{ $size }
@@ -667,3 +669,78 @@ desktop-new-backup = Neui Sicherig
 desktop-restore = Dateie widerherstelle
 applet-comment = Öb grad e Sicherig lauft und wänn jedi s letscht Mal klappt hät
 metainfo-summary = Sicher dini Dateie mit verschlüsslete Momentuufnahme
+
+# Snapshots page, and removing files from snapshots
+manage-snapshots = Momentuufnahme verwalte…
+snapshots-title = Momentuufnahme vo { $name }
+snapshots-filter = Nach Name, Schlagwort oder Notiz filtere
+snapshots-no-match = Kei Momentuufnahm passt.
+snapshot-open = Die Momentuufnahm öffne
+snapshot-pinned = Aagheftet
+snapshot-tag-list = Schlagwörter: { $tags }
+snapshot-name = Name
+snapshot-name-placeholder = Zum Bispiel: Vor em Upgrade
+snapshot-notes = Notize
+snapshot-notes-placeholder = Was du dir zu dere Momentuufnahm merke wotsch
+snapshot-tags = Schlagwörter
+snapshot-tags-placeholder = Mit Komma trennt
+revert = Zruggsetze
+snapshot-details-failed = D Aagabe zur Momentuufnahm händ nöd chöne gspeicheret werde.
+snapshot-about = Über die Momentuufnahm
+snapshot-taken = Gmacht
+snapshot-id = ID
+snapshot-computer = Computer
+snapshot-folders = Ordner
+snapshot-files = Dateie
+snapshot-files-value = { $new } neu, { $changed } gänderet, { $unchanged } unveränderet
+snapshot-not-recorded = Nöd erfasst
+snapshot-size = Grössi
+snapshot-size-value = { $size }, dervo { $added } neui Date
+snapshot-actions = Aktione
+snapshot-browse = Dateie durelüege
+snapshot-browse-description = Lueg, was si enthaltet, und stell drus wider her. Zum Dateie us dine Sicherige z näh, markier si dört und drück «Entferne…»
+snapshot-browse-button = Durelüege…
+snapshot-pinned-description = S Ufruume entfernt e aagheftete Momentuufnahm nie, egal wie alt si wird.
+snapshot-delete-description = Iri Dateie bliibed i jedere andere Momentuufnahm erhalte, wo si het.
+event-details-changed = Name, Notize oder Schlagwörter vo de Momentuufnahm { $snapshot } gänderet
+event-files-removed = Dateie us { $count ->
+    [one] einere Momentuufnahm
+   *[other] { $count } Momentuufnahme
+} entfernt und { $size } glöscht
+event-files-removed-marked = Dateie us { $count ->
+    [one] einere Momentuufnahm
+   *[other] { $count } Momentuufnahme
+} entfernt und { $size } zum Lösche bimene spötere Ufruume vorgmerkt
+remove-files-button = Entferne…
+remove-files-title = { $count ->
+    [one] De Iitrag
+   *[other] Die { $count } Iiträg
+} us de Sicherig entferne
+remove-files-from = Entferne us
+remove-files-everywhere = Jedere Momentuufnahm vo dere Sicherig
+remove-files-everywhere-description = Für es Passwort oder alles anderi, wo nie hett söle gsicheret werde. Momentuufnahme, wo en andere Computer am gliche Ort gmacht het, bliibed unberüert.
+remove-files-only-this = Nume de Momentuufnahm vom { $time }
+remove-files-exclude = Künftig nüm sichere
+remove-files-exclude-description = Susch kopiert di nächst Sicherig si wider, wenn si no uf dem Computer sind.
+remove-files-warning = Das cha mer nöd rückgängig mache. D Dateie werde us em Speicher vo de Sicherig glöscht, nöd nume uusbländet. En Speicher, wo glöschti Dateie imene Papierchorb oder als älteri Versione ufbewahrt, wie Google Drive, cha det no e Kopie ha, bis er glärt wird.
+remove-files-confirm = Endgültig entferne
+remove-files-running = Dateie werde us de Sicherig entfernt…
+remove-files-running-body = Jedi Momentuufnahm, wo si het, wird ohni si neu gspeicheret, denn werde iri Date glöscht. Das cha mer nöd mitten drin abbräche, und bi Cloud-Speicher cha das e Wiili gah.
+remove-files-failed = D Dateie händ nöd chöne entfernt werde.
+remove-files-done-title = Dateie entfernt
+remove-files-done-body = Us { $count ->
+    [one] einere Momentuufnahm
+   *[other] { $count } Momentuufnahme
+} entfernt und { $size } Date glöscht.
+remove-files-done-none = Kei Momentuufnahm vo dere Sicherig het si gha, drum het sich nüt gänderet.
+remove-files-done-erased = Kei Momentuufnahm vo dere Sicherig het si no, und { $size } Date, wo kei Momentuufnahm meh bruucht, sind glöscht worde.
+remove-files-done-erased-later = Kei Momentuufnahm vo dere Sicherig het si no. { $size } Date, wo kei Momentuufnahm meh bruucht, sind zum Lösche vorgmerkt.
+remove-files-done-marked = Us { $count ->
+    [one] einere Momentuufnahm
+   *[other] { $count } Momentuufnahme
+} entfernt, und { $size } Date zum Lösche vorgmerkt.
+remove-files-deferred = En andere Computer oder en anderi Sicherig bruucht de glich Ort und chönnt grad sichere, drum löscht erscht es Ufruume i eim Tag oder spöter d Date. Drück denn uf de Siite vo dere Sicherig «Jetzt ufruume».
+remove-files-still-held = { $count ->
+    [one] Ei anderi Momentuufnahm het si no
+   *[other] { $count } anderi Momentuufnahme händ si no
+}: die vomene andere Computer oder enere andere Sicherig, oder da nöd gwählti. Iri Date bliibed im Speicher.

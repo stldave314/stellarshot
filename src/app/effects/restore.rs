@@ -296,6 +296,56 @@ impl App {
                     ));
                     logged
                 }
+                restore::Effect::Remove { paths, snapshot } => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        Err(err) => {
+                            tasks.push(Task::done(to_page(restore::Message::Removed(
+                                child::ChildEvent::Ended(err),
+                            ))));
+                            continue;
+                        }
+                    };
+                    let request = engine::RemoveRequest {
+                        paths,
+                        snapshot,
+                        tag: engine::profile_tag(&profile.id),
+                        sources: profile.sources.clone(),
+                    };
+                    let job = Job {
+                        remove: Some(request),
+                        ..Job::new(repository, secret.clone())
+                    };
+                    Task::run(child::run(Operation::RemovePaths, job), move |event| {
+                        to_page(restore::Message::Removed(event))
+                    })
+                }
+                restore::Effect::Removed { report, exclude } => {
+                    if !exclude.is_empty() {
+                        let mut updated = profile.clone();
+                        for path in exclude {
+                            if !updated.excludes.contains(&path) {
+                                updated.excludes.push(path);
+                            }
+                        }
+                        self.upsert_profile(updated);
+                    }
+                    self.dialogs.notify(Dialog::Info(
+                        fl!("remove-files-done-title"),
+                        restore::removal_summary(&report),
+                    ));
+                    // The backup's own page lists the snapshots by their old
+                    // IDs; it also records the removal, so its own copy of
+                    // the history shows it at once.
+                    self.refresh_profile(
+                        &profile.id,
+                        Some(event_log::EventKind::FilesRemoved {
+                            snapshots: report.rewritten,
+                            erased: report.erased,
+                            deferred: report.deferred,
+                        }),
+                    )
+                }
                 restore::Effect::Close => {
                     self.restore = None;
                     remove_old_open_copies()

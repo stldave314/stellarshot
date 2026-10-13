@@ -20,6 +20,7 @@ mod maintenance;
 pub(crate) mod mount;
 pub(crate) mod progress;
 pub mod rclone;
+mod remove;
 mod repo;
 mod restore;
 mod serve;
@@ -38,12 +39,13 @@ pub use estimate::{ExclusionBreakdown, SizeEstimate, estimate, exclusion_breakdo
 pub use keys::KeySummary;
 pub use maintenance::{ForgetReport, KeepRules, PruneReport, hostname, profile_tag};
 pub use progress::{NoProgress, Phase, ProgressEvent, ProgressSink};
+pub use remove::{RemoveReport, RemoveRequest};
 pub use repo::{
     Location, Probe, Repo, Secret, delete_repository, init, init_with, open, probe, redact_url,
     scrub_url_credentials,
 };
 pub use restore::{ConflictPolicy, Ownership, RestorePreview, RestoreRequest, Target};
-pub use snapshots::{SnapshotSummary, short_id};
+pub use snapshots::{SnapshotDetails, SnapshotSummary, short_id};
 pub use statistics::Statistics;
 
 #[cfg(test)]

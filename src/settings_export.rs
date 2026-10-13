@@ -498,7 +498,7 @@ mod tests {
                 rejected: 1
             }
         );
-        assert!(merged.profiles.is_empty());
+        assert!(merged.profiles.is_empty(), "{:?}", merged.profiles);
     }
 
     #[test]
@@ -520,7 +520,7 @@ mod tests {
         let merged = merge(&[], &export);
 
         assert_eq!(merged.counts.rejected, 1);
-        assert!(merged.profiles.is_empty());
+        assert!(merged.profiles.is_empty(), "{:?}", merged.profiles);
         assert!(
             merged.history.is_empty(),
             "a refused profile's history is not handed on to be stored"

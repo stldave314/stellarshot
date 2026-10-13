@@ -72,6 +72,19 @@ pub enum EventKind {
     Unmounted {
         snapshot: String,
     },
+    /// A snapshot's name, notes or tags changed.
+    DetailsChanged {
+        snapshot: String,
+    },
+    /// Files were taken out of snapshots, and the data no snapshot needed
+    /// any more erased, or only marked for a later clean-up to delete
+    /// (`deferred`: the storage is shared with another computer or backup).
+    FilesRemoved {
+        snapshots: u64,
+        erased: u64,
+        #[serde(default)]
+        deferred: bool,
+    },
 }
 
 /// Where an action that produced an event came from: the desktop window (or
@@ -337,6 +350,27 @@ pub fn describe(kind: &EventKind) -> String {
         EventKind::PasswordChanged => fl!("event-password-changed"),
         EventKind::Mounted { snapshot } => fl!("event-mounted", snapshot = short_id(snapshot)),
         EventKind::Unmounted { snapshot } => fl!("event-unmounted", snapshot = short_id(snapshot)),
+        EventKind::DetailsChanged { snapshot } => {
+            fl!("event-details-changed", snapshot = short_id(snapshot))
+        }
+        EventKind::FilesRemoved {
+            snapshots,
+            erased,
+            deferred: false,
+        } => fl!(
+            "event-files-removed",
+            count = (*snapshots as i64),
+            size = format::bytes(*erased)
+        ),
+        EventKind::FilesRemoved {
+            snapshots,
+            erased,
+            deferred: true,
+        } => fl!(
+            "event-files-removed-marked",
+            count = (*snapshots as i64),
+            size = format::bytes(*erased)
+        ),
     }
 }
 
@@ -480,7 +514,8 @@ mod tests {
                 "{kind:?} should mention the snapshot's short ID, not its full one"
             );
         }
-        assert!(!describe(&EventKind::PasswordChanged).is_empty());
+        let text = describe(&EventKind::PasswordChanged);
+        assert!(!text.is_empty(), "{text:?}");
         assert!(
             describe(&EventKind::Restored {
                 files: 3,
@@ -500,18 +535,50 @@ mod tests {
     }
 
     /// Entries an earlier version recorded for a front end that no longer
-    /// exists in this program: a `Web` source, and a `web` context naming a
-    /// peer. Neither is a field or a variant any more, and neither may make
-    /// the entry — or the whole log it is in — unreadable, or nothing would
-    /// be allowed to write over it and that backup's history would freeze.
+    /// exists in this program: a source and a context naming a peer that
+    /// are neither a variant nor a field any more. Neither may make the
+    /// entry — or the whole log it is in — unreadable, or nothing would be
+    /// allowed to write over it and that backup's history would freeze.
     #[test]
     fn an_entry_from_a_source_this_version_does_not_know_still_loads() {
-        let stored = r#"(time:1700000000,kind:BackedUp,source:Web,web:Some((addr:"10.0.0.2:5555",method:Password)))"#;
+        let stored = r#"(time:1700000000,kind:BackedUp,source:Retired,peer:Some((addr:"10.0.0.2:5555",method:Password)))"#;
 
         let loaded: Event = ron::from_str(stored).unwrap();
 
         assert_eq!(loaded.source, Source::Other);
         assert_eq!(loaded.kind, EventKind::BackedUp);
+    }
+
+    #[test]
+    fn a_deferred_erase_is_never_described_as_erased() {
+        let kind = |deferred| EventKind::FilesRemoved {
+            snapshots: 2,
+            erased: 2048,
+            deferred,
+        };
+        let size = format::bytes(2048);
+        assert_eq!(
+            describe(&kind(false)),
+            fl!("event-files-removed", count = 2_i64, size = size.clone())
+        );
+        assert_eq!(
+            describe(&kind(true)),
+            fl!("event-files-removed-marked", count = 2_i64, size = size)
+        );
+    }
+
+    #[test]
+    fn a_removal_recorded_without_the_deferred_flag_loads_as_erased() {
+        let stored = r"(time:1700000000,kind:FilesRemoved(snapshots:1,erased:5))";
+        let loaded: Event = ron::from_str(stored).unwrap();
+        assert_eq!(
+            loaded.kind,
+            EventKind::FilesRemoved {
+                snapshots: 1,
+                erased: 5,
+                deferred: false,
+            }
+        );
     }
 
     #[test]

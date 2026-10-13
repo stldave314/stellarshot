@@ -21,10 +21,24 @@ use stellarshot::event_log::{self, EventKind, Source};
 use stellarshot::run_state::{self, RunState};
 
 /// Every file under `dir` named `name`, however deep.
+///
+/// The tests here run side by side in one state folder, and every save
+/// goes through a temporary directory next to the file that is removed
+/// straight after (atomicwrites). One listed a moment ago can be gone by
+/// the time it is read, which is no error: it never holds a finished file.
 fn find(dir: &Path, name: &str) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for entry in std::fs::read_dir(dir).unwrap() {
-        let path = entry.unwrap().path();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return found,
+        Err(err) => panic!("reading {}: {err}", dir.display()),
+    };
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) => entry.path(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => panic!("reading {}: {err}", dir.display()),
+        };
         if path.is_dir() {
             found.extend(find(&path, name));
         } else if path.file_name().is_some_and(|file| file == name) {
@@ -78,7 +92,8 @@ fn a_removed_backups_state_and_history_are_deleted() {
     assert!(find(state, &run_key).is_empty(), "run state deleted");
     assert!(find(state, &log_key).is_empty(), "history deleted");
     assert_eq!(run_state::load(&id), RunState::default());
-    assert!(event_log::load(&id).is_empty());
+    let history = event_log::load(&id);
+    assert!(history.is_empty(), "{history:?}");
     // Only that backup's.
     assert_eq!(run_state::load(&other).last_success, Some(1));
     assert_eq!(event_log::load(&other).len(), 1);

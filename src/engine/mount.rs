@@ -568,6 +568,7 @@ mod tests {
             ours(&mounts, 1000),
             vec![PathBuf::from("/home/alex/Old snapshot")]
         );
-        assert!(ours(&mounts, 0).is_empty());
+        let candidates = ours(&mounts, 0);
+        assert!(candidates.is_empty(), "{candidates:?}");
     }
 }

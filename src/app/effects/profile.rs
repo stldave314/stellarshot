@@ -156,6 +156,31 @@ impl App {
                         ))
                     })
                 }
+                profile::Effect::SetDetails(secret, snapshot_id, details) => {
+                    let repository = match profile.location() {
+                        Ok(location) => location,
+                        Err(err) => {
+                            tasks.push(self.end_before_start(
+                                &id,
+                                &profile,
+                                profile::Message::DetailsSaved,
+                                err,
+                            ));
+                            continue;
+                        }
+                    };
+                    let job = Job {
+                        ids: vec![snapshot_id],
+                        details: Some(details),
+                        ..Job::new(repository, secret)
+                    };
+                    Task::run(child::run(Operation::SetDetails, job), move |event| {
+                        app(Message::Profile(
+                            id.clone(),
+                            profile::Message::DetailsSaved(event),
+                        ))
+                    })
+                }
                 profile::Effect::ShowError(context, error) => {
                     self.show_error(&context, &error);
                     Task::none()
@@ -169,14 +194,14 @@ impl App {
                 // A restore page already open (perhaps restoring right now)
                 // is shown as it is, never replaced: its running restore
                 // would lose the page that reports and records it.
-                profile::Effect::OpenRestore(_) if self.restore.is_some() => Task::none(),
-                profile::Effect::OpenRestore(secret) => {
+                profile::Effect::OpenRestore(..) if self.restore.is_some() => Task::none(),
+                profile::Effect::OpenRestore(secret, snapshot) => {
                     let root = profile
                         .sources
                         .first()
                         .cloned()
                         .unwrap_or_else(|| PathBuf::from("/"));
-                    let (page, effects) = RestorePage::new(profile.id.clone(), root);
+                    let (page, effects) = RestorePage::new(profile.id.clone(), root, snapshot);
                     self.restore_session += 1;
                     self.restore = Some((page, secret));
                     self.run_restore_effects(effects)
@@ -410,6 +435,25 @@ impl App {
             tasks.push(task);
         }
         Task::batch(tasks)
+    }
+
+    /// Something outside the backup's own page changed its snapshots (files
+    /// removed from them on the restore page): reload the list, recording
+    /// `logged` in its history.
+    pub(in crate::app) fn refresh_profile(
+        &mut self,
+        id: &str,
+        logged: Option<event_log::EventKind>,
+    ) -> Task<Message> {
+        let Some(profile) = self.config.profile(id).cloned() else {
+            return Task::none();
+        };
+        let effects = self
+            .pages
+            .entry(id.to_owned())
+            .or_default()
+            .update(profile::Message::ChangedElsewhere(logged), &profile);
+        self.run_profile_effects(id, effects)
     }
 
     /// A job could not even start because its location failed (an unplugged

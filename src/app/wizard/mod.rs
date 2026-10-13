@@ -2269,13 +2269,17 @@ mod tests {
         assert_eq!(wizard.conditions.trusted_networks, vec!["Home".to_owned()]);
 
         wizard.update(Message::RemoveTrustedNetwork(0));
-        assert!(wizard.conditions.trusted_networks.is_empty());
+        assert!(
+            wizard.conditions.trusted_networks.is_empty(),
+            "{:?}",
+            wizard.conditions.trusted_networks
+        );
     }
 
     #[test]
     fn a_new_backup_has_no_hooks() {
         let (wizard, _) = Wizard::create(Some(Path::new("/home/alex")));
-        assert!(wizard.hooks.is_empty());
+        assert!(wizard.hooks.is_empty(), "{:?}", wizard.hooks);
     }
 
     #[test]
@@ -2321,7 +2325,7 @@ mod tests {
         assert!(!wizard.hooks[0].enabled);
 
         wizard.update(Message::RemoveHook(0));
-        assert!(wizard.hooks.is_empty());
+        assert!(wizard.hooks.is_empty(), "{:?}", wizard.hooks);
     }
 
     #[test]

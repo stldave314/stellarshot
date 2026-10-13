@@ -313,7 +313,7 @@ impl App {
             || self
                 .restore
                 .as_ref()
-                .is_some_and(|(page, _)| page.is_restoring())
+                .is_some_and(|(page, _)| page.is_writing())
     }
 
     fn show_error(&mut self, context: &str, error: &EngineError) {
@@ -700,14 +700,14 @@ impl Application for App {
                 .map(move |message| Message::Wizard(session, message));
         }
         if let Some((page, _)) = &self.restore {
-            let name = self
+            let (name, append_only) = self
                 .config
                 .profile(&page.profile_id)
-                .map(|profile| profile.name.as_str())
+                .map(|profile| (profile.name.as_str(), profile.append_only))
                 .unwrap_or_default();
             let session = self.restore_session;
             return page
-                .view(name)
+                .view(name, append_only)
                 .map(move |message| Message::RestorePage(session, message));
         }
         if self.config.profiles.is_empty() {

@@ -50,26 +50,40 @@
   <screenshots>
     <screenshot type="default">
       <caption>A backup and its snapshots, with Back Up Now</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/profile.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/profile.png</image>
     </screenshot>
     <screenshot>
       <caption>Setting up a backup, with a live size estimate</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/wizard.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/wizard.png</image>
     </screenshot>
     <screenshot>
       <caption>Browsing a snapshot to restore files</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/restore.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/restore.png</image>
     </screenshot>
     <screenshot>
       <caption>The first screen, before anything is backed up</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/empty.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/empty.png</image>
     </screenshot>
     <screenshot>
       <caption>A backup in the light theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.9.0/docs/screenshots/profile-light.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/profile-light.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.10.0" date="2026-10-12">
+      <description>
+        <p>Name, note and tag snapshots, and take files out of a backup for
+        good.</p>
+        <ul>
+          <li>A Snapshots page lists every snapshot with a filter, and opens one
+          to name it, note it, tag it, pin it, browse it or delete it.</li>
+          <li>Files backed up by mistake can be removed from every snapshot and
+          their data erased from the storage.</li>
+          <li>Snapshot rows say what changed and open their snapshot directly.</li>
+          <li>Escape steps back out of the restore and Snapshots pages.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-09-30">
       <description>
         <p>Test an automatic backup from its page, translated launcher

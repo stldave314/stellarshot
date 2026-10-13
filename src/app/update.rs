@@ -194,7 +194,7 @@ impl App {
                     || self
                         .restore
                         .as_ref()
-                        .is_some_and(|(page, _)| page.is_restoring())
+                        .is_some_and(|(page, _)| page.is_writing())
                     || self.wizard.as_ref().is_some_and(Wizard::busy)
                     || dialog_busy
                 {
@@ -228,6 +228,20 @@ impl App {
                         return self.on_message(Message::Quit);
                     }
                     return Task::none();
+                }
+                // Escape steps back out of a full-page view, as it closes a
+                // dialog: a sheet or the restore page, or the Snapshots page.
+                if key == Key::Named(cosmic::iced::keyboard::key::Named::Escape) {
+                    if let Some((page, _)) = self.restore.as_mut() {
+                        let effects = page.escape();
+                        return self.run_restore_effects(effects);
+                    }
+                    if let Some(id) = self.selected().map(str::to_owned)
+                        && let Some(state) = self.pages.get_mut(&id)
+                        && let Some(effects) = state.escape()
+                    {
+                        return self.run_profile_effects(&id, effects);
+                    }
                 }
                 for (key_bind, action) in &self.key_binds {
                     if key_bind.matches(modifiers, &key, None) {

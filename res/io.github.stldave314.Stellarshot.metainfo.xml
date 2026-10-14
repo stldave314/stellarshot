@@ -50,26 +50,36 @@
   <screenshots>
     <screenshot type="default">
       <caption>A backup and its snapshots, with Back Up Now</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/profile.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/profile.png</image>
     </screenshot>
     <screenshot>
       <caption>Setting up a backup, with a live size estimate</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/wizard.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/wizard.png</image>
     </screenshot>
     <screenshot>
       <caption>Browsing a snapshot to restore files</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/restore.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/restore.png</image>
     </screenshot>
     <screenshot>
       <caption>The first screen, before anything is backed up</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/empty.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/empty.png</image>
     </screenshot>
     <screenshot>
       <caption>A backup in the light theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.0/docs/screenshots/profile-light.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/profile-light.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.10.1" date="2026-10-13">
+      <description>
+        <p>A keyring that is locked is asked to unlock.</p>
+        <ul>
+          <li>After logging in without typing the login password, a remembered
+          backup password was not found and a new one could not be saved. The
+          keyring's own unlock prompt now appears when a backup is opened.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-10-12">
       <description>
         <p>Name, note and tag snapshots, and take files out of a backup for

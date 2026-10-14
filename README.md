@@ -309,6 +309,14 @@ If the password is not remembered, the page asks for it first. Enter it once
 and it is kept for the rest of the session (and in the keyring if you leave
 **Remember password** on).
 
+If your keyring is locked, as it is after logging in without typing your
+login password (automatic login, a fingerprint), Stellarshot asks it to
+unlock when a backup's page opens, and the keyring shows its own prompt for
+your login password. Answer it and the remembered password is used; cancel
+it and the page asks for the backup's password instead. An automatic backup
+never raises that prompt: with the keyring still locked it waits for its
+next turn.
+
 Next to **Back Up Now** is **Estimate Size**, showing how much this backup
 covers right now — a count of files and total size — without opening the
 backup or asking for its password. It only walks the folders on disk, so it
@@ -911,10 +919,13 @@ next automatic backup will run.
 <summary>The password is asked for every time.</summary>
 
 **Remember password** was off, or the keyring could not be reached. Check that
-a Secret Service is running (`busctl --user list | grep org.freedesktop.secrets`)
-and that your login keyring is unlocked. Stellarshot waits up to a minute for
-the keyring, for example while you answer an unlock prompt, and then carries on
-without it.
+a Secret Service is running (`busctl --user list | grep org.freedesktop.secrets`).
+A keyring that is only locked is asked to unlock when the backup's page opens:
+answer the keyring's own prompt with your login password. Stellarshot waits up
+to five minutes for that, and up to a minute for the keyring otherwise, then
+carries on without it. If the prompt appears at every login, your keyring is
+not being unlocked when you log in, which automatic login and fingerprint
+login both cause.
 
 </details>
 
@@ -1196,7 +1207,9 @@ cargo clippy --all-targets --all-features
 
 Both `cargo check` and `cargo clippy` are warning-free, and CI enforces it with
 `RUSTFLAGS=-D warnings`. `tests/keyring.rs` needs a running Secret Service and
-fails without one; CI provides it with an unlocked gnome-keyring. What each
+fails without one; CI provides it with an unlocked gnome-keyring.
+`scripts/verify-locked-keyring.sh` covers the locked case against a private
+keyring and its real unlock prompt. What each
 check proves, and how each one is kept from passing when it has nothing to
 check, is in [VALIDATION.md](VALIDATION.md).
 

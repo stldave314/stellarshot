@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A locked keyring is unlocked, not treated as empty.** After logging in
+  without typing the login password (automatic login, a fingerprint) the
+  keyring is locked; Stellarshot then did not find a remembered password,
+  asked for it, and could not save it either ("could not be remembered"),
+  without the keyring's unlock prompt ever appearing. Opening a backup's page
+  now asks the keyring to unlock, which shows its own prompt. Automatic
+  backups still never raise one.
+
 ## [0.10.0] - 2026-10-12
 
 ### Added

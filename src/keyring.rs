@@ -7,14 +7,22 @@
 //! `KWallet`), which encrypts it with the login password. Scheduled backups need
 //! this: they run with nobody there to type a password.
 //!
-//! Every function here treats a missing or locked keyring as "not
-//! remembered". The keyring is a convenience; the password prompt must keep
-//! working without it.
+//! A keyring that is locked (as it is after logging in without typing the
+//! login password: automatic login, a fingerprint) holds the passwords but
+//! will neither give them out nor take a new one, and does not offer to
+//! unlock by itself: it has to be asked. The window asks, which makes the
+//! keyring show its own unlock prompt, because a person is there to answer
+//! it (see [`allow_unlock_prompt`]). A scheduled run never does: nobody is.
+//!
+//! Beyond that, every function here treats a keyring that is missing, or
+//! still locked, as "not remembered". The keyring is a convenience; the
+//! password prompt must keep working without it.
 
 use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::constants::APP_ID;
-use crate::constants::KEYRING_TIMEOUT;
+use crate::constants::{KEYRING_TIMEOUT, KEYRING_UNLOCK_TIMEOUT};
 use crate::debug::KEYRING;
 use crate::engine::Secret;
 use crate::{debug_log, error_log};
@@ -24,6 +32,61 @@ async fn bounded<T>(request: impl Future<Output = oo7::Result<T>>) -> Result<T, 
     match tokio::time::timeout(KEYRING_TIMEOUT, request).await {
         Ok(result) => result.map_err(|err| err.to_string()),
         Err(_) => Err("the keyring did not answer".to_owned()),
+    }
+}
+
+/// Whether this process may ask a locked keyring to unlock.
+static MAY_PROMPT: AtomicBool = AtomicBool::new(false);
+
+/// One unlock at a time: two requests arriving together (a page loading its
+/// password while another saves one) would otherwise each raise a prompt.
+/// The second waits here and then finds the keyring already unlocked.
+static UNLOCKING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Let this process ask a locked keyring to unlock, which makes the keyring
+/// show its own password prompt. For the window only, called once as it
+/// starts: a scheduled run, or the child process a backup runs in, has
+/// nobody to answer a prompt, and must go on treating a locked keyring as
+/// one it cannot use.
+pub fn allow_unlock_prompt() {
+    MAY_PROMPT.store(true, Ordering::Relaxed);
+}
+
+/// The keyring, unlocked first if it is locked and this process may ask
+/// (see [`allow_unlock_prompt`]). `what` names the request for the log.
+///
+/// A prompt that is dismissed, or not answered within
+/// [`KEYRING_UNLOCK_TIMEOUT`], is an error like any other here: the caller
+/// falls back to what it does without a keyring.
+async fn open(what: &str) -> Result<oo7::Keyring, String> {
+    let keyring = bounded(oo7::Keyring::new()).await?;
+    if !MAY_PROMPT.load(Ordering::Relaxed) {
+        return Ok(keyring);
+    }
+    let _one_at_a_time = UNLOCKING.lock().await;
+    if !bounded(keyring.is_locked()).await? {
+        return Ok(keyring);
+    }
+    debug_log!(
+        KEYRING,
+        "the keyring is locked: asking it to unlock for {what}"
+    );
+    match tokio::time::timeout(KEYRING_UNLOCK_TIMEOUT, keyring.unlock()).await {
+        Ok(Ok(())) => {
+            debug_log!(KEYRING, "the keyring was unlocked");
+            Ok(keyring)
+        }
+        Ok(Err(err)) => {
+            error_log!(KEYRING, "the keyring was not unlocked for {what}: {err}");
+            Err(err.to_string())
+        }
+        Err(_) => {
+            error_log!(
+                KEYRING,
+                "the keyring's unlock prompt was not answered for {what}"
+            );
+            Err("the keyring's unlock prompt was not answered".to_owned())
+        }
     }
 }
 
@@ -45,7 +108,7 @@ async fn store_item(
     secret: &Secret,
     what: &str,
 ) -> Result<(), String> {
-    let keyring = bounded(oo7::Keyring::new()).await?;
+    let keyring = open(what).await?;
     bounded(keyring.create_item(label, attrs, secret.expose(), true))
         .await
         .inspect_err(|err| error_log!(KEYRING, "could not store {what} in the keyring: {err}"))?;
@@ -58,7 +121,7 @@ async fn store_item(
 /// yet at login, no Secret Service, a timeout). `what` names it for the
 /// log; every failure is logged.
 async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Result<Option<Secret>, String> {
-    let keyring = bounded(oo7::Keyring::new())
+    let keyring = open(what)
         .await
         .inspect_err(|err| error_log!(KEYRING, "could not open the keyring for {what}: {err}"))?;
     let items = bounded(keyring.search_items(attrs))
@@ -88,7 +151,7 @@ async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Result<Option<Secre
 
 /// Forget the item identified by `attrs`. Succeeds if there was none.
 async fn forget_item(attrs: &[(&str, &str); 2], what: &str) -> Result<(), String> {
-    let keyring = bounded(oo7::Keyring::new()).await?;
+    let keyring = open(what).await?;
     bounded(keyring.delete(attrs)).await?;
     debug_log!(KEYRING, "forgot {what}");
     Ok(())

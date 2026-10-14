@@ -135,6 +135,13 @@ pub const WAITING_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 /// "not remembered" instead of a request that never ends.
 pub const KEYRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// Longest wait for a person to answer the keyring's own unlock prompt,
+/// which only the window ever raises (see `keyring::allow_unlock_prompt`).
+/// Far longer than [`KEYRING_TIMEOUT`]: the prompt can appear as the window
+/// opens, behind whatever the person is doing, and the backup's own
+/// password field stays usable all the while, so waiting costs nothing.
+pub const KEYRING_UNLOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Longest wait for a `password_command`. Long enough for a password
 /// manager CLI to unlock a vault interactively once; short enough that one
 /// left stuck waiting on a prompt nobody can see (a GUI pinentry, a device

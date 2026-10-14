@@ -37,7 +37,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libxkbcommon-dev libwayland-dev \
-            dbus gnome-keyring rclone rpm2cpio cpio fuse3
+            dbus gnome-keyring rclone rpm2cpio cpio fuse3 \
+            gcr xvfb xdotool fonts-dejavu-core
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
@@ -64,6 +65,12 @@ jobs:
             echo -n ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
             cargo test --all-features --locked
           '
+
+      # The test above only ever sees an unlocked keyring. This one locks a
+      # private keyring and proves the window unlocks it through the real
+      # prompt, and that nothing unattended ever raises one.
+      - name: Verify a locked keyring is unlocked from the window only
+        run: scripts/verify-locked-keyring.sh
 
       # Proves the release feature really removes developer logging, instead of
       # trusting that the constant does what it says.

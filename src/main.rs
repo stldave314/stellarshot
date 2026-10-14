@@ -21,6 +21,11 @@ fn main() -> ExitCode {
         _ => {}
     }
 
+    // Only from here on is there a person at a window: a locked keyring may
+    // now be asked to unlock, which shows its own prompt. The modes above
+    // run unattended and must never raise one.
+    stellarshot::keyring::allow_unlock_prompt();
+
     let (settings, mut flags) = startup::init();
     // `--new-backup` opens the setup wizard straight away: the desktop
     // entry's "New Backup" action.

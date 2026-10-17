@@ -78,10 +78,14 @@ head -c 2500000 /dev/urandom > "$HOME_DIR/Downloads/installer.iso"
 head -c 700000 /dev/urandom > "$HOME_DIR/Projects/site/node_modules/lib.js"
 echo "hello" > "$HOME_DIR/Projects/site/index.html"
 
-# A demo repository with real snapshots.
-REPO="$DEMO/backups/alex-home"
-mkdir -p "$(dirname "$REPO")"
-DEMO_PASSWORD="$PASSWORD" target/debug/examples/demo_repository "$REPO" "$HOME_DIR" 4
+# A demo repository with real snapshots. Made outside the demo home, so the
+# snapshots do not contain it, and moved into it as `~/Backups` (Déjà Dup's
+# own default is `~/deja-dup`) only after the wizard's screenshots, so their
+# size estimate does not count it: the destination then reads as a path a
+# person would choose, not a temporary folder's.
+STAGED_REPO="$DEMO/staged-repo"
+REPO="$HOME_DIR/Backups"
+DEMO_PASSWORD="$PASSWORD" target/debug/examples/demo_repository "$STAGED_REPO" "$HOME_DIR" 4
 
 CONFIG="$DEMO/config"
 mkdir -p "$DEMO/runtime"
@@ -209,6 +213,7 @@ if wanted folder-tree; then
 fi
 
 # 4. A backup profile with snapshots, unlocked from the keyring.
+mv "$STAGED_REPO" "$REPO"
 SETTINGS="$CONFIG/cosmic/$APP_ID/v2"
 mkdir -p "$SETTINGS"
 cat > "$SETTINGS/profiles" <<RON
@@ -218,7 +223,7 @@ cat > "$SETTINGS/profiles" <<RON
         name: "Home",
         destination: Local(path: "$REPO"),
         sources: ["$HOME_DIR"],
-        excludes: ["$HOME_DIR/.cache", "$HOME_DIR/Downloads"],
+        excludes: ["$HOME_DIR/.cache", "$HOME_DIR/Downloads", "$REPO"],
         exclude_patterns: ["node_modules"],
         one_file_system: true,
         // Manual, not Daily: a debug binary under target/debug isn't a

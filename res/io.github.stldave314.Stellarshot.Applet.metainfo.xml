@@ -34,6 +34,25 @@
     <color type="primary" scheme_preference="dark">#1f3a46</color>
   </branding>
   <releases>
+    <release version="0.11.0" date="2026-10-16">
+      <description>
+        <p>Safer restores and cleaner credentials, and ready for the COSMIC
+        Store.</p>
+        <ul>
+          <li>Closing the restore page no longer stops a running cloud backup,
+          and a snapshot dated in the future no longer makes "Keep for N days"
+          forget the others.</li>
+          <li>A crafted snapshot can no longer write outside the folder being
+          restored into, and opening someone else's repository no longer
+          takes over their folders.</li>
+          <li>Sign-in tokens are removed with their backup, downloads are
+          private, and closing the window quits when there is nothing to
+          watch.</li>
+          <li>Scheduled backups and drives work inside a Flatpak, and the panel
+          applet has a store listing of its own.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.1" date="2026-10-13">
       <description>
         <p>A keyring that is locked is asked to unlock.</p>

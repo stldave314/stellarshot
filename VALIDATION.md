@@ -877,7 +877,7 @@ Things a test cannot reach yet, and how they were confirmed.
 | The `.deb` contains the binary, desktop entry, both icons, metainfo and README, with `Recommends: rclone` and the no-reply maintainer address | `dpkg-deb --info` and `--contents` on the built package | M0 |
 | The shipped binary has no debug log path | `dpkg-deb -x`, then `strings usr/bin/stellarshot` | M0 |
 | `release-build` strips developer logging, proven both ways | With the source switch turned on: the release build with `release-build` holds no `developer-debug.log` string, and a build without the feature holds one; the switch then put back | 0.10.0 |
-| The screenshots match 0.10.0 | `scripts/screenshots.sh profile restore profile-light`, every image inspected: the rows with their file counts and three buttons, the info button beside "Recent snapshots", and Remove… beside Restore… | 0.10.0 |
+| The screenshots match 0.11.0 | `scripts/screenshots.sh`, every image inspected: the destination reads `~/Backups` (the demo repository now lives in the demo home, built outside it and moved in after the wizard's screenshots), no temporary path anywhere; the empty first screen is kept for the README but no longer listed in the store | 0.11.0 |
 | The window starts in a COSMIC Wayland session and exits cleanly | Launched for six seconds; no output on stderr, no process left behind | M1 |
 | Settings migrate on a real account | First launch copied `~/.config/cosmic/com.github.cosmic-utils.Stellarshot/v1/repositories` to the new ID | M1 |
 | The main screen, wizard and profile page render, the estimate fills in, and a remembered password unlocks the page | `scripts/screenshots.sh`, then every image inspected | M2 |

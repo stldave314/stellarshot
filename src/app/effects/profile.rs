@@ -219,8 +219,8 @@ impl App {
                 profile::Effect::ChangePassword => {
                     self.dialogs.open(Dialog::ChangePassword {
                         id: id.clone(),
-                        password: String::new(),
-                        confirm: String::new(),
+                        password: crate::core::redacted::Redacted::default(),
+                        confirm: crate::core::redacted::Redacted::default(),
                         busy: false,
                     });
                     cosmic::iced::widget::operation::focus(new_password_input_id())

@@ -47,6 +47,9 @@ pub fn service_name(id: &str) -> String {
 /// session), which a backup from the window does not. Returns once the
 /// start is queued, not when the run ends.
 pub fn start_now(id: &str) -> Result<(), String> {
+    if crate::sandbox::sandboxed() {
+        return crate::background::start_now(id);
+    }
     if !crate::profile::valid_id(id) {
         return Err(format!("not a backup ID: {id:?}"));
     }
@@ -92,7 +95,8 @@ fn exec_quote(path: &Path) -> Option<String> {
 /// literally there (no quoting), expanding only `%` specifiers.
 pub(crate) fn condition_path(path: &Path) -> Option<String> {
     let text = path.to_str()?;
-    if text.contains(['\n', '\r']) {
+    // A trailing backslash continues the line in a unit file.
+    if text.contains(['\n', '\r']) || text.ends_with('\\') {
         return None;
     }
     Some(text.replace('%', "%%"))
@@ -232,46 +236,45 @@ pub fn executable() -> Result<PathBuf, String> {
 
 /// `path` is safe to name as a scheduled unit's `ExecStart`: neither `path`
 /// itself nor any directory above it is writable by anyone but its owner,
-/// and `path` is owned by root or the current user.
+/// and every one of them is owned by root or the current user. (A folder
+/// another user owns is theirs to rename and replace, whatever its mode.)
 ///
 /// No exception for a sticky directory such as `/tmp` (mode `1777`). Sticky
 /// only stops another user from replacing an entry that already exists;
 /// after a reboot wipes `/tmp`, nothing stops them from creating
 /// `/tmp/stellarshot/stellarshot` first, and the timer would run it.
 pub(crate) fn trusted_executable(path: &Path) -> bool {
+    // SAFETY: `getuid` cannot fail and has no preconditions.
+    trusted_executable_for(path, unsafe { libc::getuid() })
+}
+
+/// [`trusted_executable`], for the user `uid`: lets a test see a folder it
+/// owns as someone else's, which only root could arrange for real.
+fn trusted_executable_for(path: &Path, uid: u32) -> bool {
     use std::os::unix::fs::MetadataExt;
 
-    fn safe_from_others(metadata: &std::fs::Metadata) -> bool {
-        metadata.mode() & 0o022 == 0
-    }
-
-    let Ok(file_metadata) = std::fs::metadata(path) else {
-        return false;
+    let trusted = |metadata: &std::fs::Metadata| {
+        metadata.mode() & 0o022 == 0 && (metadata.uid() == 0 || metadata.uid() == uid)
     };
-    let current_uid = unsafe { libc::getuid() };
-    let owned_by_root_or_us = file_metadata.uid() == 0 || file_metadata.uid() == current_uid;
-    if !owned_by_root_or_us || !safe_from_others(&file_metadata) {
-        return false;
-    }
-    let mut dir = path.parent();
-    while let Some(directory) = dir {
-        let Ok(metadata) = std::fs::metadata(directory) else {
+    let mut current = Some(path);
+    while let Some(entry) = current {
+        let Ok(metadata) = std::fs::metadata(entry) else {
             return false;
         };
-        if !safe_from_others(&metadata) {
+        if !trusted(&metadata) {
             return false;
         }
-        dir = directory.parent();
+        current = entry.parent();
     }
     true
 }
 
 fn systemctl(args: &[&str]) -> Result<(), String> {
-    let output = Command::new("systemctl")
-        .arg("--user")
-        .args(args)
-        .output()
-        .map_err(|err| format!("systemctl: {err}"))?;
+    let output = crate::bounded::output_within(
+        Command::new("systemctl").arg("--user").args(args),
+        crate::constants::HELPER_TIMEOUT,
+    )
+    .map_err(|err| format!("systemctl: {err}"))?;
     debug_log!(
         SCHED,
         "systemctl --user {}: {}",
@@ -348,10 +351,17 @@ fn remove_stale(dir: &Path, unit_name: &str) -> Result<bool, String> {
 /// `RemainAfterExit` service keeps marked active. One still running is left
 /// alone.
 fn stop_if_finished(service: &str) {
-    let finished = Command::new("systemctl")
-        .args(["--user", "show", "--property=SubState", "--value", service])
-        .output()
-        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "exited");
+    let finished = crate::bounded::output_within(
+        Command::new("systemctl").args([
+            "--user",
+            "show",
+            "--property=SubState",
+            "--value",
+            service,
+        ]),
+        crate::constants::HELPER_TIMEOUT,
+    )
+    .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "exited");
     if finished && let Err(err) = systemctl(&["stop", service]) {
         debug_log!(SCHED, "stopping {service}: {err}");
     }
@@ -362,6 +372,19 @@ fn stop_if_finished(service: &str) {
 pub fn apply(profile: &Profile) -> Result<(), String> {
     if profile.schedule == Schedule::Manual {
         return remove(&profile.id);
+    }
+    if crate::sandbox::sandboxed() {
+        if profile.schedule == Schedule::OnConnect
+            && !matches!(profile.destination, Destination::Removable { .. })
+        {
+            return Err(
+                "a schedule of \"when the drive connects\" needs a removable drive destination"
+                    .to_owned(),
+            );
+        }
+        // The background process reads every schedule itself; it only has
+        // to be running, and set to start at login.
+        return crate::background::schedule_changed();
     }
     let dir = unit_dir().ok_or("no configuration directory")?;
     std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
@@ -398,6 +421,11 @@ pub fn apply(profile: &Profile) -> Result<(), String> {
 /// Stop and delete a profile's timer, path unit and service. Succeeds if
 /// there were none.
 pub fn remove(id: &str) -> Result<(), String> {
+    // The background process reads every schedule itself, and ends once
+    // none is left; `reconcile` stops it starting at login.
+    if crate::sandbox::sandboxed() {
+        return Ok(());
+    }
     let Some(dir) = unit_dir() else {
         return Ok(());
     };
@@ -468,6 +496,9 @@ trait Timer {
 /// not meant for programs to read) over the session bus every user session
 /// already has.
 pub async fn next_run(id: &str) -> Option<i64> {
+    if crate::sandbox::sandboxed() {
+        return crate::background::next_run(id);
+    }
     match query_next_run(id).await {
         Ok(usec) => usec,
         Err(err) => {
@@ -497,6 +528,19 @@ async fn query_next_run(id: &str) -> zbus::Result<Option<i64>> {
 /// scheduled profiles need, and remove any left from profiles that are gone
 /// or no longer scheduled. Returns what could not be done.
 pub fn reconcile(profiles: &[Profile]) -> Vec<String> {
+    if crate::sandbox::sandboxed() {
+        let scheduled = profiles.iter().any(|p| p.schedule != Schedule::Manual);
+        let result = if scheduled {
+            crate::background::schedule_changed()
+        } else {
+            crate::background::nothing_scheduled()
+        };
+        return result
+            .inspect_err(|err| error_log!(SCHED, "background scheduling: {err}"))
+            .err()
+            .into_iter()
+            .collect();
+    }
     let mut errors = Vec::new();
     for profile in profiles.iter().filter(|p| p.schedule != Schedule::Manual) {
         if let Err(err) = apply(profile) {
@@ -588,6 +632,29 @@ mod tests {
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         assert!(trusted_executable(&binary));
+    }
+
+    #[test]
+    fn a_binary_under_a_folder_another_user_owns_is_not_trusted() {
+        let dir = private_dir();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let binary = dir.path().join("stellarshot");
+        std::fs::write(&binary, b"").unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // SAFETY: `getuid` cannot fail.
+        let uid = unsafe { libc::getuid() };
+
+        assert!(trusted_executable_for(&binary, uid));
+        assert!(
+            !trusted_executable_for(&binary, uid + 1),
+            "seen by another user, the folder is someone else's"
+        );
+    }
+
+    #[test]
+    fn a_drive_path_ending_in_a_backslash_is_refused() {
+        assert_eq!(condition_path(Path::new("/dev/disk/by-uuid/ab\\")), None);
+        assert!(condition_path(Path::new("/dev/disk/by-uuid/ab")).is_some());
     }
 
     #[test]

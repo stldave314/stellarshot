@@ -153,6 +153,9 @@ impl Destination {
     /// Where the engine finds the repository right now. A removable drive
     /// that is not plugged in is `DestinationUnavailable`, naming the drive.
     pub fn location(&self) -> Result<Location, EngineError> {
+        if !self.paths_are_sane() {
+            return Err(EngineError::new(ErrorKind::UnsafePath, self.describe()));
+        }
         match self {
             Self::Local { path } => Ok(Location::local(path)),
             Self::Removable {
@@ -579,6 +582,7 @@ impl Profile {
             skip_if_unchanged: self.skip_if_unchanged,
             dry_run: false,
             time: None,
+            hostname: None,
             profile_tag: crate::engine::profile_tag(&self.id),
         }
     }
@@ -602,6 +606,31 @@ fn deserialize_id<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<S
 /// letters, digits and dashes only, at most 64 characters. Shared by
 /// `schedule` (a systemd unit name and `--scheduled <id>` argument) and
 /// `settings_export::merge` (an imported profile's ID is untrusted).
+/// Whether `path` is a plain relative path, every part of it an ordinary
+/// name: no `..`, no root, nothing that could step outside where it is
+/// joined on. Empty (the place itself) is plain.
+pub(crate) fn plain_relative(path: &Path) -> bool {
+    path.components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+impl Destination {
+    /// Whether the paths in this destination are ones the wizard could
+    /// have produced: a folder's absolute path, and a path inside a drive
+    /// that stays inside it. A relative folder path such as `rclone::…`
+    /// would be read by rustic as a backend of its own, and a drive path
+    /// with `..` in it would make a backup, and Delete everything, act on
+    /// the internal disk. A hand-edited or imported settings file is
+    /// checked against the same rules as the wizard.
+    pub(crate) fn paths_are_sane(&self) -> bool {
+        match self {
+            Self::Local { path } => path.is_absolute(),
+            Self::Removable { relative_path, .. } => plain_relative(relative_path),
+            Self::Sftp { .. } | Self::Rclone { .. } | Self::Rest { .. } => true,
+        }
+    }
+}
+
 pub(crate) fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
@@ -618,14 +647,7 @@ pub(crate) fn valid_id(id: &str) -> bool {
 /// rclone as connection options (`:sftp,host=h,ssh="…"`) or, if it starts
 /// with `--`, as a flag.
 pub fn valid_rclone_remote(name: &str) -> bool {
-    let Some(suffix) = name.strip_prefix("stellarshot-") else {
-        return false;
-    };
-    let shape_ok = suffix.len() == 8
-        && suffix
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
-    shape_ok && rclone::remote_exists(&rclone::config_path(), name)
+    rclone::is_own_remote_name(name) && rclone::remote_exists(&rclone::config_path(), name)
 }
 
 /// The default exclusions for a profile that backs up `home`.
@@ -1069,6 +1091,33 @@ mod tests {
         assert!(!valid_rclone_remote("stellarshot-tooshort"));
         assert!(!valid_rclone_remote("stellarshot-UPPERCASE"));
         assert!(!valid_rclone_remote("not-stellarshot-deadbeef"));
+    }
+
+    #[test]
+    fn a_folder_path_that_is_not_absolute_or_a_drive_path_that_leaves_it_fails_to_locate() {
+        let local = Destination::Local {
+            path: "rclone::sftp,host=h:x".into(),
+        };
+        assert_eq!(local.location().unwrap_err().kind, ErrorKind::UnsafePath);
+        for relative_path in ["../../home/x", "/etc", "a/../../b"] {
+            let removable = Destination::Removable {
+                uuid: "1111-AAAA".into(),
+                relative_path: relative_path.into(),
+                label: "Backup".into(),
+            };
+            assert_eq!(
+                removable.location().unwrap_err().kind,
+                ErrorKind::UnsafePath,
+                "{relative_path}"
+            );
+        }
+        assert!(
+            Destination::Local {
+                path: "/backups/home".into()
+            }
+            .location()
+            .is_ok()
+        );
     }
 
     #[test]

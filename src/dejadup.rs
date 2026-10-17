@@ -82,10 +82,11 @@ pub fn find() -> Option<Import> {
 }
 
 fn dconf_dump() -> Option<String> {
-    let output = Command::new("dconf")
-        .args(["dump", &format!("/{SCHEMA_PATH}/")])
-        .output()
-        .ok()?;
+    let output = crate::bounded::output_within(
+        Command::new("dconf").args(["dump", &format!("/{SCHEMA_PATH}/")]),
+        crate::constants::HELPER_TIMEOUT,
+    )
+    .ok()?;
     let text = String::from_utf8(output.stdout).ok()?;
     (output.status.success() && !text.trim().is_empty()).then_some(text)
 }

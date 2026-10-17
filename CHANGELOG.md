@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Ready to run as a Flatpak.** Inside a sandbox, scheduled backups run from
+  a background process of Stellarshot's own instead of systemd timers,
+  started at login through the Background portal (or an autostart entry
+  where the desktop has none), removable drives are found through UDisks2,
+  and Mount as Folder, hooks and the password command, which need the host,
+  say they are unavailable. Native packages work as before.
+- **A store listing for the panel applet**, and the app now says it is made
+  for COSMIC, so the COSMIC Store can show each where it belongs.
+
+### Changed
+
+- **Closing the window quits when there is nothing to watch.** With no
+  backup running and the applet not on a panel, nothing would show
+  Stellarshot still running, so closing the window quits it, and a backup
+  that ends with the window closed lets it quit then. Otherwise it still
+  minimizes to the panel, but every backup that is not running anything is
+  locked, its password no longer held in memory.
+
+- **Opening an existing backup takes only this computer's folders.** It used
+  to take the folders of the newest snapshot from any computer, unseen, so
+  a repository someone shared could have your next backup upload whatever
+  it listed. With no snapshot from this computer, the backup starts with no
+  folders and its page asks for them.
+- **Search everywhere** lists up to 20 snapshots per file, with a count of
+  the rest, and says when more files matched than it shows.
+- **The Snapshots page** lists up to 200 snapshots, and **Versions** up to
+  500, each saying how many more there are.
+- **A shorter store summary**, "Back up and restore your files", and a
+  description without the development note.
+- **A dismissed keyring prompt is the answer for half a minute**: backups
+  waiting behind it no longer raise it again one after another.
+- **The runtime folder an older version left readable is made private**
+  instead of failing every backup until logout.
+
+### Fixed
+
+- **Closing the restore page no longer stops a running cloud backup.** The
+  check for left-over rclone processes mistook the one under a backup the
+  window had started for an orphan, at every start and every time the
+  restore page closed, and stopped it.
+- **A snapshot dated in the future no longer makes "Keep for N days" forget
+  every other one.** The window was counted back from the newest snapshot,
+  so one taken once with the clock years ahead put all the real ones
+  outside it. Such a snapshot is now kept and left out of the count, and no
+  longer makes a backup read as "backed up just now".
+- **Search everywhere no longer runs out of memory** on a short query over a
+  long history.
+- **Changing a password while the keyring is locked says the keyring was not
+  updated**, instead of leaving the old password in it silently for the next
+  automatic backup to fail with.
+- **A backup whose window has gone still reports an error properly.** Writing
+  the error where the window used to read it made the backup crash, or hang
+  holding the repository until logout.
+- **Canceling, logging out or stopping a backup during its After hooks lets
+  the running hook finish**, instead of killing it.
+- **Sign-ins and copied rclone remotes are removed with their backup.** The
+  tokens and credentials they hold stayed in Stellarshot's own rclone
+  configuration for good.
+- **A helper that hangs no longer holds everything up.** `systemctl`,
+  `systemd-run`, `dconf`, `fusermount` and `rclone version` are stopped after
+  30 seconds, and a stopped process stuck on a hung mount is no longer waited
+  for without end.
+- **A hook dies with the backup that started it** when that backup is killed
+  outright, instead of running on unwatched.
+- **An unreadable settings file is copied aside once**, privately, rather
+  than again at every start.
+
+### Security
+
+- **Restore refuses a snapshot with files inside something that is not a
+  folder**, such as a symlink. A crafted snapshot could otherwise have
+  written, linked or changed permissions outside the folder being restored
+  into. The same check covers downloads, search and deleted files, along with
+  names holding a NUL, names too long for a filesystem, and a name twice in
+  one folder; and no walk of a snapshot visits more than 100 million items.
+- **Downloaded files and folders are readable only by you**, instead of by
+  every user on the machine.
+- **A mounted snapshot cannot run programs**, gain setuid or act as a device:
+  `noexec`, `nosuid` and `nodev` are set rather than left to defaults.
+- **A downloaded folder's archive no longer pads a file without limit** to
+  the size a crafted snapshot claims for it.
+- **An imported settings file is held to the wizard's rules for folders**:
+  a relative folder, or a drive folder that leads off the drive, is refused;
+  so is an exclude file that is not a regular file or is over 1 MiB, and an
+  import adds at most 200 backups.
+- **A scheduled backup's program must sit under folders only root or you
+  own**, not merely ones no one else can write to.
+- **Passwords and secrets being typed never show in debug output**, the
+  Google client secret field is masked, and a REST password holding `@` or
+  `/` no longer slips partly into an error message.
+- **rustls 0.23.46**, for RUSTSEC-2026-0346 to 0349 (TLS session secrets in
+  debug output, an ECH data leak, a decompression allocation, a key-exchange
+  downgrade). It is what REST server destinations connect through.
+
 ## [0.10.1] - 2026-10-13
 
 ### Fixed

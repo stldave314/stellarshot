@@ -10,6 +10,7 @@ use cosmic::{Element, theme, widget};
 
 use super::{Effect, Message as PageMessage, ModifyContext, ProfileState, card};
 use crate::app::format;
+use crate::constants::SNAPSHOT_ROW_LIMIT;
 use crate::engine::{SnapshotDetails, SnapshotSummary};
 use crate::fl;
 use crate::profile::Profile;
@@ -238,13 +239,9 @@ impl ProfileState {
     ) -> Element<'a, PageMessage> {
         let spacing = theme::active().cosmic().spacing;
         let query = manage.filter.trim().to_lowercase();
+        let (rows, hidden) = visible(snapshots, &query, SNAPSHOT_ROW_LIMIT);
         let mut section = widget::settings::section();
-        let mut shown = 0;
-        for snapshot in snapshots
-            .iter()
-            .filter(|snapshot| query.is_empty() || snapshot.details.matches(&query))
-        {
-            shown += 1;
+        for snapshot in &rows {
             let id = snapshot.id.clone();
             let browse = widget::button::icon(widget::icon::from_name("folder-open-symbolic"))
                 .padding(spacing.space_xxs)
@@ -270,8 +267,17 @@ impl ProfileState {
                     ),
             );
         }
-        let list: Element<'a, PageMessage> = if shown == 0 {
+        let list: Element<'a, PageMessage> = if rows.is_empty() {
             widget::text::body(fl!("snapshots-no-match")).into()
+        } else if hidden > 0 {
+            widget::column::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .push(section)
+                .push(widget::text::caption(fl!(
+                    "snapshots-more",
+                    count = (hidden as i64)
+                )))
+                .into()
         } else {
             section.into()
         };
@@ -447,9 +453,51 @@ pub(super) fn row_description(snapshot: &SnapshotSummary, tags: bool) -> String 
     parts.join(" · ")
 }
 
+/// The snapshots matching `query` (already lowercase; empty for all), at
+/// most `limit` of them, and how many more matched.
+fn visible<'a>(
+    snapshots: &'a [SnapshotSummary],
+    query: &str,
+    limit: usize,
+) -> (Vec<&'a SnapshotSummary>, usize) {
+    let mut matching = snapshots
+        .iter()
+        .filter(|snapshot| query.is_empty() || snapshot.details.matches(query));
+    let rows: Vec<_> = matching.by_ref().take(limit).collect();
+    (rows, matching.count())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_list_shows_at_most_the_limit_and_counts_the_rest() {
+        let many: Vec<SnapshotSummary> = (0..5_000)
+            .map(|n| {
+                let mut summary = SnapshotSummary {
+                    id: format!("{n:08x}"),
+                    ..SnapshotSummary::default()
+                };
+                if n % 2 == 0 {
+                    summary.details.name = format!("even {n}");
+                }
+                summary
+            })
+            .collect();
+        let (rows, hidden) = visible(&many, "", SNAPSHOT_ROW_LIMIT);
+        assert_eq!(
+            (rows.len(), hidden),
+            (SNAPSHOT_ROW_LIMIT, 5_000 - SNAPSHOT_ROW_LIMIT)
+        );
+        let (rows, hidden) = visible(&many, "even", SNAPSHOT_ROW_LIMIT);
+        assert_eq!(
+            (rows.len(), hidden),
+            (SNAPSHOT_ROW_LIMIT, 2_500 - SNAPSHOT_ROW_LIMIT)
+        );
+        let (rows, hidden) = visible(&many, "even 4998", SNAPSHOT_ROW_LIMIT);
+        assert_eq!((rows.len(), hidden), (1, 0));
+    }
     use crate::app::child::ChildEvent;
     use crate::engine::Secret;
     use crate::event_log::EventKind;

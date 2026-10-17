@@ -135,9 +135,124 @@ pub fn tail_str(text: &str, limit: usize) -> &str {
     &text[boundary..]
 }
 
+/// Reap `child`, already killed, within `limit`: whether it went. A process
+/// stuck in the kernel (on a hung NFS share or FUSE mount) ignores even
+/// SIGKILL until that returns, and a plain `wait` would hold up whatever
+/// waits on it, a backup's repository lock included. One left behind stays
+/// a zombie until this process ends, which is the lesser harm.
+pub fn reap_within(child: &mut std::process::Child, limit: std::time::Duration) -> bool {
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return true,
+            Ok(None) if started.elapsed() >= limit => return false,
+            Ok(None) => std::thread::sleep(crate::constants::PROCESS_POLL_INTERVAL),
+        }
+    }
+}
+
+/// Run `command` to the end, as `Command::output` does, but give up after
+/// `limit`: its whole process group is then killed and this returns
+/// `TimedOut`. For the small helpers Stellarshot runs (`systemctl`, `dconf`,
+/// `fusermount`, `rclone version`), any of which can hang on a wedged
+/// service or mount and would otherwise hold up whatever waits on it, a
+/// scheduled run included. Each pipe keeps at most `HELPER_OUTPUT_MAX`
+/// bytes from its start.
+pub fn output_within(
+    command: &mut std::process::Command,
+    limit: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use crate::constants::{HELPER_OUTPUT_MAX, PROCESS_POLL_INTERVAL};
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()?;
+    let reader = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            pipe.map(|pipe| read_head(pipe, HELPER_OUTPUT_MAX).0)
+                .unwrap_or_default()
+        })
+    };
+    let stdout = reader(
+        child
+            .stdout
+            .take()
+            .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
+    );
+    let stderr = reader(
+        child
+            .stderr
+            .take()
+            .map(|pipe| Box::new(pipe) as Box<dyn Read + Send>),
+    );
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() >= limit {
+            if let Some(group) = rustix::process::Pid::from_raw(child.id().cast_signed()) {
+                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+            }
+            reap_within(&mut child, crate::constants::DRAIN_AFTER_EXIT);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("no answer within {} seconds", limit.as_secs()),
+            ));
+        }
+        std::thread::sleep(PROCESS_POLL_INTERVAL);
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reaping_gives_up_on_a_process_that_will_not_go() {
+        let mut alive = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        assert!(!reap_within(
+            &mut alive,
+            std::time::Duration::from_millis(300)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let _ = alive.kill();
+        assert!(reap_within(&mut alive, std::time::Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn a_helper_that_answers_is_read_and_one_that_hangs_is_stopped() {
+        let output = output_within(
+            std::process::Command::new("sh").args(["-c", "echo hello; echo oops >&2"]),
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"hello\n");
+        assert_eq!(output.stderr, b"oops\n");
+
+        let started = std::time::Instant::now();
+        let err = output_within(
+            std::process::Command::new("sleep").arg("300"),
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
 
     #[test]
     fn the_tail_keeps_only_the_last_bytes_however_much_was_written() {

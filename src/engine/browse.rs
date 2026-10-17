@@ -18,11 +18,11 @@ use rustic_core::vfs::OpenFile;
 use rustic_core::{IndexedFullStatus, LsOptions, Repository, TreeId};
 use serde::{Deserialize, Serialize};
 
-use crate::constants::TREE_MAX_DEPTH;
+use crate::constants::{GLOBAL_MATCH_SNAPSHOTS, TAR_PADDING_MAX, TREE_MAX_DEPTH};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
-use super::restore::{check_walked, reject_unsafe_name, reject_unsafe_relative_path};
+use super::restore::{Walk, reject_unsafe_name, reject_unsafe_relative_path};
 use super::snapshots::SnapshotSummary;
 use crate::debug::ENGINE;
 use crate::error_log;
@@ -110,8 +110,21 @@ pub struct GlobalMatch {
     pub path: PathBuf,
     pub kind: EntryKind,
     pub size: u64,
-    /// Every snapshot this exact path was found in, newest first.
-    pub snapshots: Vec<SnapshotSummary>,
+    /// The IDs of the snapshots this exact path was found in, newest first,
+    /// at most [`GLOBAL_MATCH_SNAPSHOTS`] of them.
+    pub snapshots: Vec<String>,
+    /// How many snapshots it was found in, including those not listed.
+    pub found_in: usize,
+}
+
+/// What [`Browser::search_all`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GlobalSearch {
+    /// Sorted by path.
+    pub matches: Vec<GlobalMatch>,
+    /// Whether more paths matched than were collected: the search should be
+    /// narrowed to see them.
+    pub truncated: bool,
 }
 
 /// An open repository for looking around in.
@@ -262,8 +275,13 @@ fn write_atomically(
     destination: &Path,
     write: impl FnOnce(&mut std::fs::File) -> Result<(), EngineError>,
 ) -> Result<(), EngineError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // Private from the start, set on the temporary file at creation: what is
+    // downloaded can be anything a snapshot holds, a private key included.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true).mode(0o600);
     atomicwrites::AtomicFile::new(destination, atomicwrites::AllowOverwrite)
-        .write(write)
+        .write_with_options(write, options)
         .map_err(|err| match err {
             atomicwrites::Error::Internal(err) => EngineError::from(err),
             atomicwrites::Error::User(err) => err,
@@ -279,6 +297,8 @@ struct BlobReader<'a> {
     open_file: OpenFile,
     position: usize,
     size: usize,
+    /// Zeros written so far where the stored content ran short.
+    padded: usize,
 }
 
 impl Read for BlobReader<'_> {
@@ -304,6 +324,17 @@ impl Read for BlobReader<'_> {
             // (see `builder.rs`'s own `append`/`pad_zeroes`), so stopping
             // early here would misalign every entry written after this one
             // in the archive rather than merely truncating this one file.
+            //
+            // Bounded, though: the declared size comes from the repository,
+            // and a crafted one claiming a terabyte for a few bytes of
+            // content would otherwise be written out in zeros until the
+            // disk is full.
+            self.padded += want;
+            if self.padded > TAR_PADDING_MAX {
+                return Err(std::io::Error::other(
+                    "the snapshot says this file is far larger than its stored content",
+                ));
+            }
             buf[..want].fill(0);
             self.position += want;
             return Ok(want);
@@ -483,16 +514,19 @@ impl Browser {
             let mut tar = tar::Builder::new(gzip);
             listable(&root)?;
             listable(&root)?;
+            let mut walk = Walk::default();
             for item in repo.ls(&root, &LsOptions::default())? {
                 let (relative, node) = item?;
-                check_walked(&relative, &node)?;
+                walk.check(&relative, &node)?;
                 let mut header = tar::Header::new_gnu();
                 // A directory with no recorded mode of its own must still
                 // be enterable once extracted: `0o644` (no execute bit)
                 // would leave `tar` itself unable to write anything inside
                 // it before this fix was even reached.
                 let default_mode = if node.is_dir() { 0o755 } else { 0o644 };
-                header.set_mode(node.meta.mode.unwrap_or(default_mode));
+                // Permission bits only: setuid, setgid and sticky never
+                // come out of a snapshot, as a restore never brings them back.
+                header.set_mode(node.meta.mode.map_or(default_mode, |mode| mode & 0o777));
                 if let Some(mtime) = node.meta.mtime {
                     header.set_mtime(u64::try_from(mtime.as_second()).unwrap_or(0));
                 }
@@ -525,6 +559,7 @@ impl Browser {
                         // Only a 32-bit system has files too big to
                         // address; it reads what it can and pads the rest.
                         size: usize::try_from(node.meta.size).unwrap_or(usize::MAX),
+                        padded: 0,
                     };
                     tar.append_data(&mut header, &relative, &mut reader)?;
                     if reader.position != reader.size {
@@ -566,9 +601,10 @@ impl Browser {
         let root = node_at(&repo, file, Path::new("/"))?;
         let mut found = Vec::new();
         listable(&root)?;
+        let mut walk = Walk::default();
         for item in repo.ls(&root, &LsOptions::default())? {
             let (path, node) = item?;
-            check_walked(&path, &node)?;
+            walk.check(&path, &node)?;
             if node
                 .name()
                 .to_string_lossy()
@@ -591,18 +627,38 @@ impl Browser {
     /// which shares the walk of any subtree byte-identical across
     /// snapshots (the common case for a backup) rather than repeating it
     /// once per snapshot.
-    pub fn search_all(&self, query: &str, limit: usize) -> Result<Vec<GlobalMatch>, EngineError> {
+    pub fn search_all(&self, query: &str, limit: usize) -> Result<GlobalSearch, EngineError> {
         let query = query.to_lowercase();
         if query.is_empty() {
-            return Ok(Vec::new());
+            return Ok(GlobalSearch::default());
         }
         let repo = self.repo()?;
         let ids = self.snapshots.iter().map(|(file, _)| file.tree);
-        let result = repo.find_matching_nodes(ids, &|_path, node| {
-            node.name()
+        // At most `limit` distinct paths are ever accepted. rustic keeps
+        // every accepted node for every snapshot it appears in, and caches a
+        // subtree's matches without asking again, so this is the one place a
+        // broad query ("a") can be bounded before it costs memory.
+        let accepted: std::cell::RefCell<HashSet<PathBuf>> = std::cell::RefCell::default();
+        let truncated = std::cell::Cell::new(false);
+        let result = repo.find_matching_nodes(ids, &|path, node| {
+            if !node
+                .name()
                 .to_string_lossy()
                 .to_lowercase()
                 .contains(&query)
+            {
+                return false;
+            }
+            let mut accepted = accepted.borrow_mut();
+            if accepted.contains(path) {
+                return true;
+            }
+            if accepted.len() >= limit {
+                truncated.set(true);
+                return false;
+            }
+            accepted.insert(path.to_path_buf());
+            true
         })?;
         let mut by_path: BTreeMap<PathBuf, (usize, Vec<usize>)> = BTreeMap::new();
         for (snapshot_index, hits) in result.matches.iter().enumerate() {
@@ -616,23 +672,28 @@ impl Browser {
                 snapshot_indices.push(snapshot_index);
             }
         }
-        let mut matches: Vec<GlobalMatch> = by_path
+        let matches = by_path
             .into_iter()
+            .take(limit)
             .map(|(path, (node_index, snapshot_indices))| {
                 let node = &result.nodes[node_index];
                 GlobalMatch {
                     path,
                     kind: kind_of(node),
                     size: node.meta.size,
+                    found_in: snapshot_indices.len(),
                     snapshots: snapshot_indices
                         .into_iter()
-                        .map(|index| self.snapshots[index].1.clone())
+                        .take(GLOBAL_MATCH_SNAPSHOTS)
+                        .map(|index| self.snapshots[index].1.id.clone())
                         .collect(),
                 }
             })
             .collect();
-        matches.truncate(limit);
-        Ok(matches)
+        Ok(GlobalSearch {
+            matches,
+            truncated: truncated.get(),
+        })
     }
 
     /// `path` in every snapshot that has it, newest first.
@@ -727,9 +788,10 @@ impl Browser {
                     continue;
                 }
                 listable(&node)?;
+                let mut walk = Walk::default();
                 for item in repo.ls(&node, &LsOptions::default())? {
                     let (relative, node) = item?;
-                    check_walked(&relative, &node)?;
+                    walk.check(&relative, &node)?;
                     let path = scope.join(relative);
                     if node.is_file() && seen.insert(path.clone()) {
                         candidates.push((path, node.meta.size));

@@ -80,8 +80,14 @@ pub fn mount(
     // original owner is rarely who is looking at it now — enforcing the
     // original mode would only lock the mounting user out of their own
     // `0600` files.
+    // Named here rather than left to the library's defaults: a snapshot can
+    // come from anyone sharing the repository, and nothing in it should run
+    // from a double-click, gain a setuid bit, or act as a device.
     config.mount_options = vec![
         MountOption::RO,
+        MountOption::NoExec,
+        MountOption::NoSuid,
+        MountOption::NoDev,
         MountOption::FSName("stellarshot".to_owned()),
     ];
     let session = fuser::spawn_mount(fs, mount_point, &config)
@@ -113,15 +119,14 @@ pub fn unmount_dead() {
             continue;
         }
         let unmounted = ["fusermount3", "fusermount"].iter().any(|program| {
-            std::process::Command::new(program)
-                .arg("-u")
-                .arg("--")
-                .arg(&point)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
+            crate::bounded::output_within(
+                std::process::Command::new(program)
+                    .arg("-u")
+                    .arg("--")
+                    .arg(&point),
+                crate::constants::HELPER_TIMEOUT,
+            )
+            .is_ok_and(|output| output.status.success())
         });
         debug_log!(
             MOUNT,

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::{EngineError, ErrorKind};
 use super::repo::Repo;
-use crate::constants::RETENTION_MAX_DAYS;
+use crate::constants::{FUTURE_SNAPSHOT_TOLERANCE_SECONDS, RETENTION_MAX_DAYS};
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -185,6 +185,18 @@ pub(super) fn belongs_to_profile(
                 && matches_untagged_sources(&snapshot.paths, sources)))
 }
 
+/// Whether `snapshot` says it was taken further ahead of `now` than
+/// [`FUTURE_SNAPSHOT_TOLERANCE_SECONDS`]. rustic's "keep within" rule counts
+/// back from the newest snapshot in a group, so such a snapshot, left in,
+/// would make every real one look old.
+fn is_from_the_future(snapshot: &SnapshotFile, now: &jiff::Zoned) -> bool {
+    snapshot.time.timestamp().as_second()
+        > now
+            .timestamp()
+            .as_second()
+            .saturating_add(FUTURE_SNAPSHOT_TOLERANCE_SECONDS)
+}
+
 /// How retention groups snapshots: by host and folders, so that changing
 /// what a backup covers starts a new history instead of counting against
 /// the old one. Not by label, as rustic's own default does: the label is
@@ -262,6 +274,9 @@ impl Repo {
     /// snapshots, tagged or not, are never touched by this one's rules.
     ///
     /// Snapshots are grouped by host and folders: see [`retention_groups`].
+    /// A snapshot dated further ahead than
+    /// [`FUTURE_SNAPSHOT_TOLERANCE_SECONDS`] is kept and left out of the
+    /// rules entirely; see [`is_from_the_future`].
     pub fn forget(
         &self,
         rules: &KeepRules,
@@ -280,13 +295,21 @@ impl Repo {
                 kept: total,
             });
         }
+        let now = jiff::Zoned::now();
+        let (future, snapshots): (Vec<_>, Vec<_>) = snapshots
+            .into_iter()
+            .partition(|snapshot| is_from_the_future(snapshot, &now));
+        if !future.is_empty() {
+            debug_log!(
+                ENGINE,
+                "forget on {host}: keeping {} snapshot(s) dated in the future",
+                future.len()
+            );
+        }
         let grouped = Grouped::from_items(snapshots, retention_groups());
-        let ids = ForgetGroups::from_grouped_snapshots_with_retention(
-            grouped,
-            &rules.options(),
-            &jiff::Zoned::now(),
-        )?
-        .into_forget_ids();
+        let ids =
+            ForgetGroups::from_grouped_snapshots_with_retention(grouped, &rules.options(), &now)?
+                .into_forget_ids();
         self.inner.delete_snapshots(&ids)?;
         let removed = ids.len() as u64;
         debug_log!(ENGINE, "forget on {host}: removed {removed} of {total}");

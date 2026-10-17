@@ -272,11 +272,20 @@ search-results = { $count ->
 search-all-placeholder = Jede Momentaufnahme durchsuchen
 search-all-intro = Finde eine Datei anhand ihres Namens über jede Momentaufnahme hinweg, egal wo sie gesichert wurde.
 search-all-none = Nichts hat in irgendeiner Momentaufnahme übereingestimmt.
+search-all-truncated = Es gibt mehr Treffer, als angezeigt werden können. Suche genauer, um den Rest zu sehen.
+search-all-more-snapshots = { $count ->
+    [one] und 1 weitere Momentaufnahme
+   *[other] und { $count } weitere Momentaufnahmen
+}
 folder-empty = Dieser Ordner ist leer.
 versions-title = Versionen
 versions-same = { $count ->
     [one] ↳ in 1 älteren Momentaufnahme gleich
    *[other] ↳ in { $count } älteren Momentaufnahmen gleich
+}
+versions-more = { $count ->
+    [one] 1 ältere Version wird nicht angezeigt.
+   *[other] { $count } ältere Versionen werden nicht angezeigt.
 }
 open-copy = Kopie öffnen
 download = Herunterladen …
@@ -668,13 +677,18 @@ desktop-keywords = Sicherung;Datensicherung;Backup;Momentaufnahme;Wiederherstell
 desktop-new-backup = Neue Sicherung
 desktop-restore = Dateien wiederherstellen
 applet-comment = Ob gerade eine Sicherung läuft und wann jede zuletzt gelungen ist
-metainfo-summary = Sichere deine Dateien mit verschlüsselten Momentaufnahmen
+metainfo-summary = Sichere Dateien und hol sie zurück
+applet-metainfo-summary = Deine Sicherungen im Panel sehen
 
 # Snapshots page, and removing files from snapshots
 manage-snapshots = Momentaufnahmen verwalten…
 snapshots-title = Momentaufnahmen von { $name }
 snapshots-filter = Nach Name, Schlagwort oder Notiz filtern
 snapshots-no-match = Keine Momentaufnahme passt.
+snapshots-more = { $count ->
+    [one] 1 weitere Momentaufnahme passt. Grenze den Filter ein, um sie zu sehen.
+   *[other] { $count } weitere Momentaufnahmen passen. Grenze den Filter ein, um sie zu sehen.
+}
 snapshot-open = Diese Momentaufnahme öffnen
 snapshot-pinned = Angeheftet
 snapshot-tag-list = Schlagwörter: { $tags }
@@ -744,3 +758,6 @@ remove-files-still-held = { $count ->
     [one] Eine andere Momentaufnahme enthält sie noch
    *[other] { $count } andere Momentaufnahmen enthalten sie noch
 }: die eines anderen Computers oder einer anderen Sicherung, oder hier nicht gewählte. Ihre Daten bleiben im Speicher.
+background-reason = Führt deine geplanten Sicherungen im Hintergrund aus, ab der Anmeldung
+background-refused = Geplante Sicherungen brauchen die Erlaubnis, im Hintergrund zu laufen, die nicht erteilt wurde. Erlaube Stellarshot in deinen Systemeinstellungen, im Hintergrund zu laufen, und speichere den Zeitplan dann erneut.
+sandbox-unavailable = In der Flatpak-Version von Stellarshot nicht verfügbar: Sie kann außerhalb ihrer Sandbox keine Programme ausführen und keine Ordner einhängen.

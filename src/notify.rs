@@ -105,18 +105,25 @@ async fn show(
 /// unit of its own: started from the scheduled run's service directly, it
 /// would be stopped with it. Whether it started.
 async fn hand_off(id: u32, profile_id: &str) -> bool {
+    if crate::sandbox::sandboxed() {
+        return spawn_detached(&["--await-notification", &id.to_string(), profile_id]);
+    }
     let Ok(program) = crate::timers::executable() else {
         return false;
     };
-    let started = Command::new("systemd-run")
-        .args(["--user", "--collect", "--quiet", "--"])
-        .arg(&program)
-        .arg("--await-notification")
-        .arg(id.to_string())
-        .arg(profile_id)
-        .status()
-        .await
-        .is_ok_and(|status| status.success());
+    let started = tokio::time::timeout(
+        crate::constants::HELPER_TIMEOUT,
+        Command::new("systemd-run")
+            .args(["--user", "--collect", "--quiet", "--"])
+            .arg(&program)
+            .arg("--await-notification")
+            .arg(id.to_string())
+            .arg(profile_id)
+            .kill_on_drop(true)
+            .status(),
+    )
+    .await
+    .is_ok_and(|status| status.is_ok_and(|status| status.success()));
     debug_log!(SCHED, "handed notification {id} to its own unit: {started}");
     started
 }
@@ -200,15 +207,50 @@ pub fn await_main(args: &[String]) -> std::process::ExitCode {
 /// as a unit of its own: a scheduled run is a service, and systemd stops
 /// everything a service started when the service ends.
 async fn open_profile(profile_id: &str) {
+    if crate::sandbox::sandboxed() {
+        spawn_detached(&["--profile", profile_id]);
+        return;
+    }
     let Ok(program) = crate::timers::executable() else {
         return;
     };
-    let launched = Command::new("systemd-run")
-        .args(["--user", "--collect", "--quiet", "--"])
-        .arg(&program)
-        .args(["--profile", profile_id])
-        .status()
-        .await
-        .is_ok_and(|status| status.success());
+    let launched = tokio::time::timeout(
+        crate::constants::HELPER_TIMEOUT,
+        Command::new("systemd-run")
+            .args(["--user", "--collect", "--quiet", "--"])
+            .arg(&program)
+            .args(["--profile", profile_id])
+            .kill_on_drop(true)
+            .status(),
+    )
+    .await
+    .is_ok_and(|status| status.is_ok_and(|status| status.success()));
     debug_log!(SCHED, "opened {profile_id} from a notification: {launched}");
+}
+
+/// Start this program again with `args`, in a process group of its own and
+/// not waited for: inside a sandbox, where there is no `systemd-run` to give
+/// it a unit of its own. A scheduled run there is the background process's
+/// child, not a service that would take it down when it ends. Whether it
+/// started.
+fn spawn_detached(args: &[&str]) -> bool {
+    use std::os::unix::process::CommandExt;
+    let Ok(program) = crate::exe::installed_path() else {
+        return false;
+    };
+    let spawned = std::process::Command::new(program)
+        .args(args)
+        .process_group(0)
+        .stdin(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+            true
+        }
+        Err(err) => {
+            debug_log!(SCHED, "could not start {args:?}: {err}");
+            false
+        }
+    }
 }

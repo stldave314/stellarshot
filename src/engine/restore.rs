@@ -565,6 +565,7 @@ fn shaped_stream<'a>(
     rooted: &'a Rooting,
 ) -> Result<impl Iterator<Item = rustic_core::RusticResult<(PathBuf, Node)>> + 'a, EngineError> {
     let items = repo.ls(node, options)?;
+    let mut walk = Walk::default();
     Ok(items
         .enumerate()
         .filter_map(move |(index, entry)| match entry {
@@ -581,7 +582,7 @@ fn shaped_stream<'a>(
                 };
                 // Checked again here, not trusted from the first pass: it
                 // is what is actually handed to rustic.
-                if check_walked(&relative, &item).is_err() {
+                if walk.check(&relative, &item).is_err() {
                     return Some(Err(rustic_core::RusticError::new(
                         rustic_core::ErrorKind::Internal,
                         "an unsafe path appeared in the snapshot's listing",
@@ -616,12 +617,115 @@ fn shaped_stream<'a>(
 pub(super) fn reject_unsafe_name(name: &std::ffi::OsStr) -> Result<(), EngineError> {
     use std::os::unix::ffi::OsStrExt;
     let bytes = name.as_bytes();
-    if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') {
+    // A NUL or a name longer than a filesystem allows reaches `unwrap()`s
+    // inside rustic's own restore, crashing it halfway through.
+    if bytes.is_empty()
+        || bytes == b"."
+        || bytes == b".."
+        || bytes.contains(&b'/')
+        || bytes.contains(&0)
+        || bytes.len() > NAME_MAX_BYTES
+    {
         Err(EngineError::new(
             ErrorKind::UnsafePath,
             name.to_string_lossy().into_owned(),
         ))
     } else {
+        Ok(())
+    }
+}
+
+/// The longest name a Linux filesystem accepts, in bytes (`NAME_MAX`).
+const NAME_MAX_BYTES: usize = 255;
+
+/// Checks every `(relative, node)` pair of one walk of a snapshot's tree, in
+/// the order `repo.ls` yields them, before anything acts on one. Besides
+/// [`check_walked`] for each item on its own, an item must sit inside a
+/// directory item already walked on the current path, and must not repeat
+/// a sibling's name.
+///
+/// rustic walks into any node that carries a subtree, whatever its type, so a
+/// crafted snapshot can give a symlink children. Restoring one would create
+/// the symlink and then write, link or chmod "inside" it: outside the folder
+/// being restored into. A directory seen twice would hit rustic's own
+/// `unwrap()`s, and in a download, two archive entries for one path.
+#[derive(Debug)]
+pub(super) struct Walk {
+    /// The walk's own root first, then each directory open on the current
+    /// path, with the names already seen inside it.
+    levels: Vec<Level>,
+    /// Items checked so far, against [`TREE_MAX_ENTRIES`].
+    ///
+    /// [`TREE_MAX_ENTRIES`]: crate::constants::TREE_MAX_ENTRIES
+    items: usize,
+    /// The most items this walk may check: [`TREE_MAX_ENTRIES`], or a test's
+    /// own, smaller one.
+    ///
+    /// [`TREE_MAX_ENTRIES`]: crate::constants::TREE_MAX_ENTRIES
+    limit: usize,
+}
+
+impl Default for Walk {
+    fn default() -> Self {
+        Self::with_limit(crate::constants::TREE_MAX_ENTRIES)
+    }
+}
+
+#[derive(Debug, Default)]
+struct Level {
+    name: std::ffi::OsString,
+    seen: std::collections::HashSet<std::ffi::OsString>,
+}
+
+impl Walk {
+    fn with_limit(limit: usize) -> Self {
+        Self {
+            levels: Vec::new(),
+            items: 0,
+            limit,
+        }
+    }
+
+    pub(super) fn check(&mut self, relative: &Path, node: &Node) -> Result<(), EngineError> {
+        self.items += 1;
+        if self.items > self.limit {
+            return Err(EngineError::new(
+                ErrorKind::Internal,
+                format!("the snapshot has more than {} items to walk", self.limit),
+            ));
+        }
+        check_walked(relative, node)?;
+        let depth = relative.components().count();
+        if depth == 0 {
+            return Ok(());
+        }
+        let unsafe_path =
+            || EngineError::new(ErrorKind::UnsafePath, relative.display().to_string());
+        if self.levels.is_empty() {
+            self.levels.push(Level::default());
+        }
+        // Its parent must be a directory open on the current path.
+        if self.levels.len() < depth {
+            return Err(unsafe_path());
+        }
+        self.levels.truncate(depth);
+        let Some(parent) = self.levels.last_mut() else {
+            return Err(unsafe_path());
+        };
+        if depth > 1 && relative.parent().and_then(Path::file_name) != Some(parent.name.as_os_str())
+        {
+            return Err(unsafe_path());
+        }
+        let name = node.name().into_owned();
+        if !parent.seen.insert(name.clone()) {
+            return Err(unsafe_path());
+        }
+        if node.is_dir() {
+            self.levels.push(Level {
+                name,
+                seen: std::collections::HashSet::new(),
+            });
+        }
         Ok(())
     }
 }
@@ -634,7 +738,7 @@ pub(super) fn reject_unsafe_name(name: &std::ffi::OsStr) -> Result<(), EngineErr
 /// name. A node named `a/evil` would otherwise pass as the two ordinary
 /// components `a` and `evil`, and land inside whatever `a` turns out to be,
 /// such as a symlink the same restore creates later.
-pub(super) fn check_walked(relative: &Path, node: &Node) -> Result<(), EngineError> {
+fn check_walked(relative: &Path, node: &Node) -> Result<(), EngineError> {
     reject_unsafe_relative_path(relative)?;
     let name = node.name();
     reject_unsafe_name(&name)?;
@@ -725,9 +829,10 @@ fn restore_one(
     let mut decisions = Decisions::default();
     let mut linked = std::collections::HashSet::new();
     super::browse::listable(&node)?;
+    let mut walk = Walk::default();
     for entry in repo.ls(&node, &ls_options)? {
         let (relative, item) = entry?;
-        check_walked(&relative, &item)?;
+        walk.check(&relative, &item)?;
         let index = decisions.skipped.len();
         let decision = shape(
             &context,
@@ -877,15 +982,114 @@ mod tests {
         assert!(check_walked(Path::new("x/other"), &file_node("report.pdf")).is_err());
     }
 
+    fn node(name: &str, node_type: rustic_core::repofile::NodeType) -> Node {
+        Node::new_node(
+            std::ffi::OsStr::new(name),
+            node_type,
+            rustic_core::repofile::Metadata::default(),
+        )
+    }
+
+    fn dir_node(name: &str) -> Node {
+        node(name, rustic_core::repofile::NodeType::Dir)
+    }
+
+    fn symlink_node(name: &str) -> Node {
+        node(
+            name,
+            rustic_core::repofile::NodeType::from_link(Path::new(
+                "/home/someone/.config/autostart",
+            )),
+        )
+    }
+
+    /// Feeds `items` through one [`Walk`]; the index of the first refused.
+    fn first_refused(items: &[(&str, Node)]) -> Option<usize> {
+        let mut walk = Walk::default();
+        items
+            .iter()
+            .position(|(path, node)| walk.check(Path::new(path), node).is_err())
+    }
+
+    #[test]
+    fn a_walk_refuses_children_of_a_symlink() {
+        let items = [
+            ("a", symlink_node("a")),
+            ("a/evil.desktop", file_node("evil.desktop")),
+        ];
+        assert_eq!(
+            first_refused(&items),
+            Some(1),
+            "nothing may sit inside a symlink"
+        );
+    }
+
+    #[test]
+    fn a_walk_refuses_children_of_a_file_or_a_closed_folder() {
+        let inside_a_file = [("f", file_node("f")), ("f/x", file_node("x"))];
+        assert_eq!(first_refused(&inside_a_file), Some(1));
+        // `d` was closed when `e` began; a later `d/x` is out of order.
+        let reopened = [
+            ("d", dir_node("d")),
+            ("e", dir_node("e")),
+            ("d/x", file_node("x")),
+        ];
+        assert_eq!(first_refused(&reopened), Some(2));
+    }
+
+    #[test]
+    fn a_walk_refuses_a_name_seen_twice_in_one_folder() {
+        let symlink_over_folder = [
+            ("a", dir_node("a")),
+            ("a", symlink_node("a")),
+            ("a/x", file_node("x")),
+        ];
+        assert_eq!(first_refused(&symlink_over_folder), Some(1));
+        let apart = [
+            ("a", file_node("a")),
+            ("b", file_node("b")),
+            ("a", dir_node("a")),
+        ];
+        assert_eq!(first_refused(&apart), Some(2));
+    }
+
+    #[test]
+    fn a_walk_stops_past_its_limit() {
+        let mut walk = Walk::with_limit(3);
+        for name in ["a", "b", "c"] {
+            assert!(walk.check(Path::new(name), &file_node(name)).is_ok());
+        }
+        let err = walk.check(Path::new("d"), &file_node("d")).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Internal);
+    }
+
+    #[test]
+    fn a_walk_accepts_an_ordinary_tree() {
+        let items = [
+            ("d", dir_node("d")),
+            ("d/f", file_node("f")),
+            ("d/sub", dir_node("sub")),
+            ("d/sub/g", file_node("g")),
+            ("d/h", file_node("h")),
+            ("link", symlink_node("link")),
+            ("z", file_node("z")),
+            ("e", dir_node("e")),
+            ("e/f", file_node("f")),
+        ];
+        assert_eq!(first_refused(&items), None);
+    }
+
     #[test]
     fn a_single_name_must_be_a_plain_name() {
         use std::ffi::OsStr;
-        for bad in ["", ".", "..", "a/b", "/"] {
+        let too_long = "x".repeat(NAME_MAX_BYTES + 1);
+        for bad in ["", ".", "..", "a/b", "/", "a\0b", too_long.as_str()] {
             assert!(
                 reject_unsafe_name(OsStr::new(bad)).is_err(),
                 "{bad:?} must be refused"
             );
         }
+        assert!(reject_unsafe_name(OsStr::new(&"x".repeat(NAME_MAX_BYTES))).is_ok());
         assert!(reject_unsafe_name(OsStr::new("notes.txt")).is_ok());
         assert!(reject_unsafe_name(OsStr::new("..hidden")).is_ok());
     }

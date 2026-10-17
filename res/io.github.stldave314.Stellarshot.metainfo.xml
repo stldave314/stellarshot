@@ -4,11 +4,11 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
   <name>Stellarshot</name>
-  <summary>Back up your files with encrypted snapshots</summary>
-  <summary xml:lang="de">Sichere deine Dateien mit verschlüsselten Momentaufnahmen</summary>
-  <summary xml:lang="sv">Säkerhetskopiera dina filer med krypterade ögonblicksbilder</summary>
-  <summary xml:lang="bg">Архивирайте файловете си с шифровани моментни състояния</summary>
-  <summary xml:lang="gsw">Sicher dini Dateie mit verschlüsslete Momentuufnahme</summary>
+  <summary>Back up and restore your files</summary>
+  <summary xml:lang="de">Sichere Dateien und hol sie zurück</summary>
+  <summary xml:lang="sv">Säkerhetskopiera och återställ filer</summary>
+  <summary xml:lang="bg">Архивирайте и възстановявайте файлове</summary>
+  <summary xml:lang="gsw">Sicher Dateie und hol si zrugg</summary>
   <developer id="io.github.stldave314">
     <name>stldave314</name>
   </developer>
@@ -33,14 +33,13 @@
       snapshots. A dry run shows what a restore will do before anything is
       written, and an existing file is kept unless you choose otherwise.
     </p>
-    <p>
-      Stellarshot is a fork of the cosmic-utils Stellarshot project and is under
-      active development.
-    </p>
   </description>
   <url type="homepage">https://github.com/stldave314/stellarshot</url>
   <url type="bugtracker">https://github.com/stldave314/stellarshot/issues</url>
   <url type="vcs-browser">https://github.com/stldave314/stellarshot</url>
+  <url type="help">https://github.com/stldave314/stellarshot#readme</url>
+  <url type="translate">https://github.com/stldave314/stellarshot/blob/main/CONTRIBUTING.md</url>
+  <url type="contribute">https://github.com/stldave314/stellarshot/blob/main/CONTRIBUTING.md</url>
   <launchable type="desktop-id">io.github.stldave314.Stellarshot.desktop</launchable>
   <content_rating type="oars-1.1" />
   <branding>
@@ -59,10 +58,6 @@
     <screenshot>
       <caption>Browsing a snapshot to restore files</caption>
       <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/restore.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>The first screen, before anything is backed up</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.10.1/docs/screenshots/empty.png</image>
     </screenshot>
     <screenshot>
       <caption>A backup in the light theme</caption>
@@ -239,9 +234,13 @@
     <keyword>restic</keyword>
   </keywords>
   <provides>
+    <id>com.system76.CosmicApplication</id>
     <binary>stellarshot</binary>
     <binary>stellarshot-applet</binary>
   </provides>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
   <supports>
     <control>keyboard</control>
     <control>pointing</control>

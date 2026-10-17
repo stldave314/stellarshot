@@ -283,11 +283,20 @@ search-results = { $count ->
 search-all-placeholder = Search every snapshot
 search-all-intro = Find a file by name across every snapshot, wherever it was backed up.
 search-all-none = Nothing matched in any snapshot.
+search-all-truncated = More matched than can be shown. Search for something more specific to see the rest.
+search-all-more-snapshots = { $count ->
+    [one] and 1 more snapshot
+   *[other] and { $count } more snapshots
+}
 folder-empty = This folder is empty.
 versions-title = Versions
 versions-same = { $count ->
     [one] ↳ the same in 1 older snapshot
    *[other] ↳ the same in { $count } older snapshots
+}
+versions-more = { $count ->
+    [one] 1 older version is not shown.
+   *[other] { $count } older versions are not shown.
 }
 open-copy = Open Copy
 download = Download…
@@ -668,13 +677,18 @@ desktop-keywords = Backup;Backups;Snapshot;Restore;restic;rustic;
 desktop-new-backup = New Backup
 desktop-restore = Restore Files
 applet-comment = Whether a backup is running, and when each last succeeded
-metainfo-summary = Back up your files with encrypted snapshots
+metainfo-summary = Back up and restore your files
+applet-metainfo-summary = See your backups from the panel
 
 # Snapshots page, and removing files from snapshots
 manage-snapshots = Manage Snapshots…
 snapshots-title = Snapshots of { $name }
 snapshots-filter = Filter by name, tag or note
 snapshots-no-match = No snapshot matches.
+snapshots-more = { $count ->
+    [one] 1 more snapshot matches. Narrow the filter to see it.
+   *[other] { $count } more snapshots match. Narrow the filter to see them.
+}
 snapshot-open = Open this snapshot
 snapshot-pinned = Pinned
 snapshot-tag-list = Tags: { $tags }
@@ -744,3 +758,6 @@ remove-files-still-held = { $count ->
     [one] One other snapshot still holds them
    *[other] { $count } other snapshots still hold them
 }: another computer's or backup's, or ones not chosen here. Their data stays in the storage.
+background-reason = Runs your scheduled backups in the background, from when you log in
+background-refused = Scheduled backups need permission to run in the background, which was not given. Allow Stellarshot to run in the background in your system settings, then save the schedule again.
+sandbox-unavailable = Not available in the Flatpak version of Stellarshot: it cannot run programs or mount folders outside its sandbox.

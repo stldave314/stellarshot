@@ -628,8 +628,11 @@ A new backup engine behind one module, on the current rustic release.
 - **A disaster-recovery USB image** with Stellarshot and the backups' settings
   on it, booting straight into restore
 - "Revert to previous version" from the COSMIC file manager
-- Flatpak (it needs full filesystem access and an rclone binary, which works
-  against the sandbox, so it waits)
+- Flatpak, for the COSMIC Store: the application side is done (scheduling,
+  drives and the host-only features behave inside a sandbox); the manifest
+  and the submission are what is left. See
+  `docs/plans/2026-10-16-cosmic-store-audit.md` and
+  `docs/specs/2026-10-16-flatpak-packaging.md`
 - Converting Déjà Dup duplicity backups
 
 ## To investigate

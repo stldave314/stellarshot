@@ -58,6 +58,11 @@ pub fn run_before(hooks: &[Hook]) -> Result<Vec<HookResult>, Vec<HookResult>> {
         .iter()
         .filter(|hook| hook.enabled && hook.timing == HookTiming::Before)
     {
+        // A SIGTERM is already running the After hooks: starting another
+        // Before hook now would run it alongside them.
+        if crate::proc_signal::terminating() {
+            return Err(results);
+        }
         let result = run_one(hook);
         let failed = !result.ok;
         results.push(result);
@@ -128,6 +133,12 @@ fn run_command(command: &str) -> Result<(), String> {
         // (`sh -c 'mydaemon &'`) can be reached too: see `kill_group` and
         // `wait_with_timeout`'s own doc comment.
         .process_group(0)
+        // Its own group is out of reach of the window's kill of the run
+        // that started it: should that run be killed outright, the hook
+        // goes with it rather than run on unwatched. Hooks only run in a
+        // `--run` or `--scheduled` process, from a thread that lives as
+        // long as it does, which is what this signal is tied to.
+        .parent_death_signal()
         .spawn()
         .map_err(|err| format!("hook: {err}"))?;
     let group = i32::try_from(child.id()).ok();
@@ -196,7 +207,7 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
                     // group of its own; not yet reaped, so its PID is
                     // still its own.
                     let _ = child.kill();
-                    let _ = child.wait();
+                    crate::bounded::reap_within(&mut child, DRAIN_AFTER_EXIT);
                     break Err(format!("timed out after {}s", timeout.as_secs()));
                 }
                 std::thread::sleep(PROCESS_POLL_INTERVAL);
@@ -221,6 +232,28 @@ fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<(ExitStatus,
             .unwrap_or_else(|_| "<stderr left open by a background process>".to_owned())
     };
     Ok((status, stderr))
+}
+
+/// [`Command::process_group`]'s companion for a hook: see where it is used.
+trait ParentDeathSignal {
+    fn parent_death_signal(&mut self) -> &mut Self;
+}
+
+impl ParentDeathSignal for Command {
+    fn parent_death_signal(&mut self) -> &mut Self {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: the closure runs in the child between fork and exec, where
+        // only async-signal-safe calls are allowed; `prctl(PR_SET_PDEATHSIG)`
+        // is one, and it allocates nothing.
+        unsafe {
+            self.pre_exec(|| {
+                rustix::process::set_parent_process_death_signal(Some(
+                    rustix::process::Signal::KILL,
+                ))
+                .map_err(std::io::Error::from)
+            })
+        }
+    }
 }
 
 #[cfg(test)]

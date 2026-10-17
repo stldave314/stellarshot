@@ -272,11 +272,20 @@ search-results = { $count ->
 search-all-placeholder = Sök i alla ögonblicksbilder
 search-all-intro = Hitta en fil efter namn i alla ögonblicksbilder, oavsett var den säkerhetskopierades.
 search-all-none = Inget matchade i någon ögonblicksbild.
+search-all-truncated = Fler träffar än som kan visas. Sök på något mer specifikt för att se resten.
+search-all-more-snapshots = { $count ->
+    [one] och 1 ögonblicksbild till
+   *[other] och { $count } ögonblicksbilder till
+}
 folder-empty = Den här mappen är tom.
 versions-title = Versioner
 versions-same = { $count ->
     [one] ↳ likadan i 1 äldre ögonblicksbild
    *[other] ↳ likadan i { $count } äldre ögonblicksbilder
+}
+versions-more = { $count ->
+    [one] 1 äldre version visas inte.
+   *[other] { $count } äldre versioner visas inte.
 }
 open-copy = Öppna kopia
 download = Ladda ned…
@@ -668,13 +677,18 @@ desktop-keywords = Säkerhetskopia;Säkerhetskopiering;Backup;Ögonblicksbild;Å
 desktop-new-backup = Ny säkerhetskopia
 desktop-restore = Återställ filer
 applet-comment = Om en säkerhetskopiering pågår, och när var och en senast lyckades
-metainfo-summary = Säkerhetskopiera dina filer med krypterade ögonblicksbilder
+metainfo-summary = Säkerhetskopiera och återställ filer
+applet-metainfo-summary = Se dina säkerhetskopior i panelen
 
 # Snapshots page, and removing files from snapshots
 manage-snapshots = Hantera ögonblicksbilder…
 snapshots-title = Ögonblicksbilder för { $name }
 snapshots-filter = Filtrera efter namn, etikett eller anteckning
 snapshots-no-match = Ingen ögonblicksbild matchar.
+snapshots-more = { $count ->
+    [one] 1 ögonblicksbild till matchar. Begränsa filtret för att se den.
+   *[other] { $count } ögonblicksbilder till matchar. Begränsa filtret för att se dem.
+}
 snapshot-open = Öppna den här ögonblicksbilden
 snapshot-pinned = Fäst
 snapshot-tag-list = Etiketter: { $tags }
@@ -744,3 +758,6 @@ remove-files-still-held = { $count ->
     [one] En annan ögonblicksbild har dem fortfarande
    *[other] { $count } andra ögonblicksbilder har dem fortfarande
 }: en annan dators eller säkerhetskopias, eller sådana som inte valdes här. Deras data finns kvar i lagringen.
+background-reason = Kör dina schemalagda säkerhetskopior i bakgrunden, från det att du loggar in
+background-refused = Schemalagda säkerhetskopior behöver tillåtelse att köras i bakgrunden, och den gavs inte. Tillåt Stellarshot att köras i bakgrunden i systeminställningarna och spara sedan schemat igen.
+sandbox-unavailable = Inte tillgängligt i Flatpak-versionen av Stellarshot: den kan inte köra program eller montera mappar utanför sin sandlåda.

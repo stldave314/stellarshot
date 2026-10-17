@@ -46,6 +46,7 @@ pub mod menu;
 pub mod migrate;
 mod nav;
 pub mod pages;
+mod panel;
 pub mod portal;
 mod profiles;
 pub mod startup;
@@ -247,9 +248,8 @@ fn backup_unreadable_profiles() -> String {
         // Nothing to copy; still tell the user which file to look at.
         return original.display().to_string();
     }
-    let backup = original.with_file_name(format!("profiles.unreadable-{}", format::now()));
-    match std::fs::copy(&original, &backup) {
-        Ok(_) => {
+    match safety_copy(&original, format::now()) {
+        Ok(backup) => {
             error_log!(
                 CONFIG,
                 "profiles could not be read; copied {} to {} before anything can be saved",
@@ -261,12 +261,50 @@ fn backup_unreadable_profiles() -> String {
         Err(err) => {
             error_log!(
                 CONFIG,
-                "profiles could not be read, and the safety copy to {} also failed: {err}",
-                backup.display()
+                "profiles could not be read, and the safety copy of {} also failed: {err}",
+                original.display()
             );
             original.display().to_string()
         }
     }
+}
+
+/// A copy of `original` beside it, `profiles.unreadable-<now>`, or the copy
+/// an earlier start already made of exactly the same contents: the file
+/// stays unreadable from one start to the next until someone deals with it,
+/// and a new copy at every start would pile up for good.
+fn safety_copy(original: &std::path::Path, now: i64) -> std::io::Result<PathBuf> {
+    let contents = std::fs::read(original)?;
+    if let Some(dir) = original.parent() {
+        for entry in std::fs::read_dir(dir)?.flatten() {
+            let earlier = entry.path();
+            let is_copy = entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("profiles.unreadable-");
+            if is_copy
+                && entry
+                    .metadata()
+                    .is_ok_and(|meta| meta.len() == contents.len() as u64)
+                && std::fs::read(&earlier).is_ok_and(|earlier| earlier == contents)
+            {
+                return Ok(earlier);
+            }
+        }
+    }
+    let backup = original.with_file_name(format!("profiles.unreadable-{now}"));
+    // Private, as the file it copies: it holds hook commands and the like.
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&backup)?
+            .write_all(&contents)?;
+    }
+    Ok(backup)
 }
 
 impl App {
@@ -625,6 +663,12 @@ impl Application for App {
             Task::none()
         };
         debug_log!(UI, "started with {} profiles", app.config.profiles.len());
+        // At startup no wizard is signing in yet, unless one was asked for.
+        let sweep = if flags_start_wizard {
+            Task::none()
+        } else {
+            app.sweep_rclone_remotes()
+        };
         let detect_dejadup = Task::perform(
             tasks::blocking(|| Ok(crate::dejadup::find().is_some())),
             |found| cosmic::Action::App(Message::DejaDupDetected(found.unwrap_or(false))),
@@ -637,6 +681,7 @@ impl Application for App {
                 reconcile,
                 wizard,
                 detect_dejadup,
+                sweep,
                 remove_old_open_copies(),
             ]),
         )
@@ -785,5 +830,35 @@ impl Application for App {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         self.on_message(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unreadable_profiles_file_is_copied_once_privately() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let original = dir.path().join("profiles");
+        std::fs::write(&original, b"not what this version can read").unwrap();
+
+        let first = safety_copy(&original, 100).unwrap();
+        let second = safety_copy(&original, 200).unwrap();
+
+        assert_eq!(first, second, "the same contents are not copied again");
+        assert_eq!(
+            std::fs::read(&first).unwrap(),
+            b"not what this version can read"
+        );
+        let mode = std::fs::metadata(&first).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        std::fs::write(&original, b"changed again").unwrap();
+        assert_ne!(
+            safety_copy(&original, 300).unwrap(),
+            first,
+            "new contents, new copy"
+        );
     }
 }

@@ -32,7 +32,9 @@ impl App {
             DialogMessage::DiscardWizard => {
                 self.dialogs.close();
                 self.discard_wizard();
-                Task::none()
+                // A sign-in or a remote chosen in the discarded wizard
+                // left its credentials behind.
+                self.sweep_rclone_remotes()
             }
             DialogMessage::Typed(text) => {
                 match self.dialogs.front_mut() {
@@ -217,9 +219,13 @@ impl App {
                     // point; a keyring failure here does not undo that, so
                     // it is reported separately rather than as this whole
                     // operation having failed.
+                    // An unreadable keyring (locked, its prompt dismissed,
+                    // no answer) is reported, never read as "nothing was
+                    // remembered": the old password would stay in it, and
+                    // the next scheduled backup would fail with it.
                     let keyring = Task::perform(
                         async move {
-                            if crate::keyring::load(&profile.id).await.is_some() {
+                            if crate::keyring::load_checked(&profile.id).await?.is_some() {
                                 crate::keyring::store(&profile.id, &profile.name, &new_password)
                                     .await
                             } else {

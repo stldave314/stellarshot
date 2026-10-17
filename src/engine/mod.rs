@@ -30,8 +30,8 @@ mod uploads;
 
 pub use backup::{BackupReport, BackupRequest};
 pub use browse::{
-    Browser, Change, DiffEntry, EntryKind, FileVersion, GlobalMatch, MissingEntry, MountEntry,
-    TreeEntry,
+    Browser, Change, DiffEntry, EntryKind, FileVersion, GlobalMatch, GlobalSearch, MissingEntry,
+    MountEntry, TreeEntry,
 };
 pub use disk_tree::{DiskEntry, list_with_sizes};
 pub use error::{EngineError, ErrorKind};
@@ -45,7 +45,7 @@ pub use repo::{
     scrub_url_credentials,
 };
 pub use restore::{ConflictPolicy, Ownership, RestorePreview, RestoreRequest, Target};
-pub use snapshots::{SnapshotDetails, SnapshotSummary, short_id};
+pub use snapshots::{SnapshotDetails, SnapshotSummary, newest_settled, short_id};
 pub use statistics::Statistics;
 
 #[cfg(test)]

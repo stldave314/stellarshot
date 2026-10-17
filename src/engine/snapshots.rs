@@ -15,7 +15,7 @@ use crate::debug::ENGINE;
 use crate::{debug_log, error_log};
 
 /// What the UI needs to know about one snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotSummary {
     /// Full snapshot ID, in hex.
     pub id: String,
@@ -113,6 +113,18 @@ pub const SHORT_ID_LEN: usize = 8;
 
 pub fn short_id(id: &str) -> &str {
     id.get(..SHORT_ID_LEN).unwrap_or(id)
+}
+
+/// The newest of `snapshots` (listed newest first) that is not dated further
+/// ahead of `now` than [`FUTURE_SNAPSHOT_TOLERANCE_SECONDS`]: what "last
+/// backed up" means. A snapshot taken once with the clock years ahead would
+/// otherwise read as "backed up just now" for years, and silence the
+/// overdue warning with it.
+///
+/// [`FUTURE_SNAPSHOT_TOLERANCE_SECONDS`]: crate::constants::FUTURE_SNAPSHOT_TOLERANCE_SECONDS
+pub fn newest_settled(snapshots: &[SnapshotSummary], now: i64) -> Option<&SnapshotSummary> {
+    let limit = now.saturating_add(crate::constants::FUTURE_SNAPSHOT_TOLERANCE_SECONDS);
+    snapshots.iter().find(|snapshot| snapshot.time <= limit)
 }
 
 /// Newest first, to the nanosecond; the ID settles a true tie, so the order
@@ -338,6 +350,28 @@ mod tests {
             pinned: false,
             details: SnapshotDetails::default(),
         }
+    }
+
+    #[test]
+    fn the_newest_settled_snapshot_skips_one_dated_in_the_future() {
+        let at = |time| SnapshotSummary {
+            time,
+            ..counted(0, 0, 0)
+        };
+        let now = 1_000_000;
+        let snapshots = [at(4_070_908_800), at(now - 60), at(now - 86_400)];
+        assert_eq!(
+            newest_settled(&snapshots, now).map(|s| s.time),
+            Some(now - 60)
+        );
+        let slightly_ahead = [at(now + 3_600)];
+        assert_eq!(
+            newest_settled(&slightly_ahead, now).map(|s| s.time),
+            Some(now + 3_600),
+            "a clock an hour off is not a mistake worth ignoring"
+        );
+        assert!(newest_settled(&[at(4_070_908_800)], now).is_none());
+        assert!(newest_settled(&[], now).is_none());
     }
 
     #[test]

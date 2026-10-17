@@ -112,3 +112,23 @@ fn the_store_summary_matches_the_locale_files() {
         assert!(text.contains(&expected), "missing or stale: {expected}");
     }
 }
+
+#[test]
+fn the_applet_store_summary_matches_the_locale_files() {
+    let path = root().join("res/io.github.stldave314.Stellarshot.Applet.metainfo.xml");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        text.contains(&format!(
+            "<summary>{}</summary>",
+            fluent("en", "applet-metainfo-summary")
+        )),
+        "the summary must match applet-metainfo-summary in en"
+    );
+    for locale in translations() {
+        let expected = format!(
+            "<summary xml:lang=\"{locale}\">{}</summary>",
+            fluent(&locale, "applet-metainfo-summary")
+        );
+        assert!(text.contains(&expected), "missing or stale: {expected}");
+    }
+}

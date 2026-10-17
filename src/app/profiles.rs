@@ -11,6 +11,39 @@ use crate::debug::CONFIG;
 use crate::{error_log, fl};
 
 impl App {
+    /// Remove the remotes in Stellarshot's own rclone configuration that no
+    /// backup uses any more: see [`engine::rclone::remove_unused_remotes`].
+    ///
+    /// Skipped while the wizard is open, which may be signing in or copying
+    /// a remote right now, writing the same file under a name no backup
+    /// has yet; and when the backup list could not be read, since an empty
+    /// list would make every remote look unused.
+    pub(in crate::app) fn sweep_rclone_remotes(&self) -> Task<Message> {
+        if self.wizard.is_some() || self.profiles_read_only {
+            return Task::none();
+        }
+        let in_use: std::collections::HashSet<String> = self
+            .config
+            .profiles
+            .iter()
+            .filter_map(|profile| match &profile.destination {
+                Destination::Rclone { remote, .. } => Some(remote.clone()),
+                _ => None,
+            })
+            .collect();
+        Task::perform(
+            tasks::blocking(move || {
+                engine::rclone::remove_unused_remotes(&engine::rclone::config_path(), &in_use)
+            }),
+            |result| {
+                if let Err(err) = result {
+                    error_log!(CONFIG, "could not remove unused rclone remotes: {err}");
+                }
+                app(Message::Noop)
+            },
+        )
+    }
+
     /// Put `secret` in the keyring for the backup `profile_id`, and report
     /// it if the keyring refuses: the repository itself is unaffected, but a
     /// scheduled run would have no password to use.
@@ -169,7 +202,12 @@ impl App {
                 ))),
             },
         );
-        Task::batch([unschedule, forget, self.activate_selected()])
+        Task::batch([
+            unschedule,
+            forget,
+            self.sweep_rclone_remotes(),
+            self.activate_selected(),
+        ])
     }
 
     /// See [`crate::profile::secure_rest_passwords`].

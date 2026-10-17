@@ -7,13 +7,50 @@ use cosmic::widget::menu::action::MenuAction;
 
 use crate::app::{
     Action, App, Dialog, DialogMessage, EngineError, Key, Message, NavItem, ProfileState, Task,
-    Wizard, app, backup_unreadable_profiles, engine, errors, format, home_dir, place,
+    Wizard, app, backup_unreadable_profiles, engine, errors, format, home_dir, place, restore,
     spawn_new_window, tasks, unmount_off_thread, window,
 };
 use crate::debug::{CONFIG, UI};
 use crate::{debug_log, error_log, fl};
 
 impl App {
+    /// Anything that would be cut off by quitting: a backup, a restore, a
+    /// repository being created or opened by the wizard, or a password
+    /// change or deletion running from a dialog (any busy dialog, not only
+    /// the one in front: it may be waiting behind another).
+    fn something_running(&self) -> bool {
+        self.pages.values().any(ProfileState::is_busy)
+            || self
+                .restore
+                .as_ref()
+                .is_some_and(|(page, _)| page.is_writing())
+            || self.wizard.as_ref().is_some_and(Wizard::busy)
+            || self.dialogs.any(Dialog::is_busy)
+    }
+
+    /// Forget the password of every backup that is not running anything.
+    fn lock_idle_backups(&mut self) {
+        for page in self.pages.values_mut() {
+            page.lock();
+        }
+    }
+
+    /// `task`, for a message that may have ended some work. With the window
+    /// closed, a backup whose work just ended forgets its password, and once
+    /// nothing is left running and no applet is on a panel the app quits,
+    /// after `task` (which may still be recording the result) is done.
+    fn while_closed(&mut self, task: Task<Message>) -> Task<Message> {
+        if self.core.main_window_id().is_some() {
+            return task;
+        }
+        self.lock_idle_backups();
+        if self.something_running() || super::panel::applet_on_a_panel() {
+            return task;
+        }
+        debug_log!(UI, "the last work ended with the window closed: quitting");
+        task.chain(cosmic::iced::exit())
+    }
+
     pub(in crate::app) fn on_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Profile(id, message) => {
@@ -34,7 +71,8 @@ impl App {
                 // wizard's presence goes through its own `rebuild_nav` call
                 // elsewhere, once the effect it returns is handled below.
                 self.refresh_nav_row(&id);
-                return self.run_profile_effects(&id, effects);
+                let task = self.run_profile_effects(&id, effects);
+                return self.while_closed(task);
             }
             Message::Wizard(session, _) | Message::WizardFinished(session, _)
                 if session != self.wizard_session =>
@@ -73,7 +111,8 @@ impl App {
                     return unmount_off_thread(message);
                 };
                 let effects = page.update(message);
-                return self.run_restore_effects(effects);
+                let task = self.run_restore_effects(effects);
+                return self.while_closed(task);
             }
             Message::Dialog(message) => return self.on_dialog(message),
             Message::NewBackup => {
@@ -168,6 +207,13 @@ impl App {
             }
             Message::CloseContextDrawer => self.core.window.show_context = false,
             Message::WindowClose => {
+                // With nothing running and no applet on a panel, nothing
+                // would show the app still there: quit instead.
+                if !self.something_running() && !super::panel::applet_on_a_panel() {
+                    debug_log!(UI, "window closed with nothing to watch: quitting");
+                    return cosmic::iced::exit();
+                }
+                self.lock_idle_backups();
                 // Cleared here, not left for a later close event, so
                 // `dbus_activation` sees "no window" right away rather than
                 // trying to focus one that is on its way out.
@@ -187,17 +233,7 @@ impl App {
                 if self.dialogs.any(|dialog| matches!(dialog, Dialog::Quit)) {
                     return Task::none();
                 }
-                // Any busy dialog, not only the one in front: it may be
-                // waiting behind another the user opened meanwhile.
-                let dialog_busy = self.dialogs.any(Dialog::is_busy);
-                if self.pages.values().any(ProfileState::is_busy)
-                    || self
-                        .restore
-                        .as_ref()
-                        .is_some_and(|(page, _)| page.is_writing())
-                    || self.wizard.as_ref().is_some_and(Wizard::busy)
-                    || dialog_busy
-                {
+                if self.something_running() {
                     self.dialogs.open(Dialog::Quit);
                 } else {
                     return cosmic::iced::exit();
@@ -289,15 +325,18 @@ impl App {
                     // would keep Quit asking for confirmation forever.
                     self.pages.retain(|id, _| self.config.profile(id).is_some());
                     self.runs.retain(|id, _| self.config.profile(id).is_some());
-                    if self
-                        .restore
-                        .as_ref()
-                        .is_some_and(|(page, _)| self.config.profile(&page.profile_id).is_none())
-                    {
-                        self.restore = None;
-                    }
+                    // Closed as Back closes it, so a mounted snapshot is
+                    // unmounted off this thread (dropping the page here would
+                    // wait for the mount to end on it).
+                    let close = match self.restore.as_mut() {
+                        Some((page, _)) if self.config.profile(&page.profile_id).is_none() => {
+                            let effects = page.update(restore::Message::Close);
+                            self.run_restore_effects(effects)
+                        }
+                        _ => Task::none(),
+                    };
                     self.rebuild_nav(None);
-                    return self.update_theme();
+                    return Task::batch([close, self.update_theme()]);
                 }
             }
             Message::SystemThemeModeChange => return self.update_theme(),

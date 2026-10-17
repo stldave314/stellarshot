@@ -824,6 +824,44 @@ another file is named.
 | `opening_an_rclone_repository_leaves_no_zombie_behind` (`tests/rclone.rs`), reworked | Only a zombie that stays one fails it: it used to fail now and then on another test's rclone caught between its kill and its reaping. **Proven able to fail:** with a child deliberately never reaped, it fails and names it; without, the rclone suite passed eight runs in a row |
 | `opens_at_the_snapshot_asked_for_comparing_what_it_changed` and its neighbors (`src/app/pages/restore.rs`) | A snapshot's Browse button opens the restore page at it, with Compare set to it against the one before; a snapshot that has gone opens the newest instead |
 
+### Added for the COSMIC Store audit (2026-10-16)
+
+From `docs/plans/2026-10-16-cosmic-store-audit.md`. Against real repositories
+in temporary folders (`src/engine/tests.rs`) unless another file is named.
+
+| Test | What it proves |
+| --- | --- |
+| `a_serve_owned_by_a_run_child_is_kept` (`src/engine/serve.rs`) | A `--run` child is started through `/proc/self/exe`, so the kernel names it `exe`; the stand-in parent is a copy of `sh` named `stellarshot` run through a symlink named `exe`, and the test first asserts the name really is `exe`. **Proven able to fail:** with the old name check, the sweep stopped the live serve (1, not 0) |
+| `a_future_dated_snapshot_does_not_make_keep_for_forget_the_real_ones` | Three real snapshots and one dated 2099, "keep 30 days": all four kept. **Proven able to fail:** before the fix it removed the three real ones and kept only the 2099 one |
+| `the_newest_settled_snapshot_skips_one_dated_in_the_future` (`src/engine/snapshots.rs`) | "Last backed up" skips a snapshot more than a day ahead, not one an hour ahead |
+| `search_all_stays_bounded_on_a_broad_query` | 25 snapshots of 60 matching files, a limit of 10: 10 paths, each counted in all 25 snapshots and listing 20, and the search says it was cut short; a narrow search is complete |
+| `a_walk_refuses_children_of_a_symlink`, `…_of_a_file_or_a_closed_folder`, `…_a_name_seen_twice_in_one_folder`, `a_walk_accepts_an_ordinary_tree`, `a_walk_stops_past_its_limit`, `a_single_name_must_be_a_plain_name` (`src/engine/restore.rs`) | Every walk of a snapshot (both restore passes, download, search, deleted files) refuses an item inside a non-directory, a reopened folder, a repeated name, a NUL, a name over 255 bytes, and more items than its limit. **Proven able to fail:** with both of the guard's checks disabled, the symlink and closed-folder tests fail; with either one alone they still pass, since each covers the other. **Not yet proven end to end:** no real repository holding such a tree has been built (rustic's public API cannot write one) |
+| `an_error_with_nobody_reading_stderr_is_still_reported` (`tests/runner.rs`) | A wrong-password run whose stderr pipe is closed exits 1 with its error event. **Proven able to fail:** it exited 101 before `error_log!` stopped panicking on EPIPE |
+| `a_sigterm_during_an_after_hook_lets_it_finish` (`tests/runner.rs`) | SIGTERM while an After hook sleeps: the hook still finishes. **Proven able to fail:** the hook was killed before. The child runs in a process group of its own, as the window starts it: without that, its exit signals the test's own group (the first run of this test stopped cargo) |
+| `only_remotes_stellarshot_created_and_nothing_uses_are_unused`, `unused_remotes_are_removed_and_the_file_stays_private` (`src/engine/rclone.rs`) | Only `stellarshot-xxxxxxxx` sections no backup names are removed; a section the user added by hand is kept; the file stays `0600` |
+| `finishing_open_never_takes_another_computers_folders`, `inherited_folders_come_from_this_computer_and_are_capped` (`src/app/tasks.rs`) | Opening a repository whose only snapshot is another computer's adopts no folders; this computer's are taken, at most 100 |
+| `the_list_shows_at_most_the_limit_and_counts_the_rest` (`src/app/pages/profile/snapshots.rs`) | 5,000 snapshots: 200 rows and the right remainder, filtered or not |
+| `the_applet_is_found_in_the_center_or_either_wing` (`src/app/panel.rs`) | The applet is found in a panel's center or either wing, and nowhere else |
+| `a_timed_backup_is_due_once_its_period_has_passed`, `the_last_run_is_the_newer_of_success_and_failure`, `the_next_run_is_a_period_after_the_last_and_never_in_the_past`, `the_autostart_entry_runs_this_flatpak_in_the_background` (`src/background.rs`) | The sandboxed scheduler's timing and its autostart entry. **Not yet run in a Flatpak:** there is no manifest yet |
+| `udisks_filesystems_mounted_as_removable_media_are_drives` (`src/drives.rs`) | UDisks2's answer becomes the same drives as mountinfo's: removable mounts only |
+| `downloads_are_readable_only_by_their_owner` | A downloaded file and folder archive are `0600`. Discriminates: this session's umask is `0007`, under which the old code wrote `0660` |
+| `an_exclude_file_that_is_not_a_regular_file_fails_the_backup_at_once` | `/dev/zero` as an exclude file fails within seconds |
+| `a_folder_path_that_is_not_absolute_or_a_drive_path_that_leaves_it_fails_to_locate` (`src/profile.rs`), `a_relative_folder_or_a_drive_path_leaving_the_drive_is_rejected_on_import`, `an_import_adds_at_most_so_many_backups` (`src/settings_export.rs`) | The wizard's folder rules hold for a hand-edited or imported file; an import adds at most 200 |
+| `a_binary_under_a_folder_another_user_owns_is_not_trusted`, `a_drive_path_ending_in_a_backslash_is_refused` (`src/timers.rs`) | A folder another user owns, seen through a different uid, is not trusted; a unit path cannot end in a line continuation |
+| `scrub_url_credentials_does_not_fail_open_on_an_at_or_a_slash_in_the_password` (`src/engine/repo.rs`) | Neither `p@ss` nor `p/ss` leaves any of the password in an error message |
+| `debug_output_never_shows_the_text` (`src/core/redacted.rs`), `a_password_being_chosen_never_shows_in_debug_output` (`src/app/dialog.rs`) | A password being chosen never reaches `{:?}` |
+| `a_helper_that_answers_is_read_and_one_that_hangs_is_stopped`, `reaping_gives_up_on_a_process_that_will_not_go` (`src/bounded.rs`) | `sleep 300` is stopped after a second; a wait for a process that will not go gives up |
+| `a_pre_existing_directory_only_others_can_read_is_made_private` (`src/engine/lock.rs`) | A `0755` runtime folder is made `0700`; a world-writable one is still refused |
+| `an_unreadable_profiles_file_is_copied_once_privately` (`src/app.rs`) | The same contents are copied once, at `0600`; changed contents get a new copy |
+| `a_dismissed_prompt_is_not_raised_again_straight_away` (`src/keyring.rs`) | A dismissed unlock prompt holds for 30 seconds, then may be asked again |
+| `the_applet_store_summary_matches_the_locale_files` (`tests/desktop_l10n.rs`) | The applet's store summary in every locale |
+| `scripts/validate-metadata.sh`, extended | The app provides `com.system76.CosmicApplication` and has a summary of at most 35 characters; the applet's metainfo exists, provides `com.system76.CosmicApplet`, names the current release and has a short summary. **Proven able to fail:** with the provide removed and the old 43-character summary put back, both checks fail |
+
+The rclone and REST server tests failed here with `Connect` errors after
+several minutes: OpenSnitch holding back a freshly built test binary. Copied
+to a path an existing rule allows, the same binaries passed 9 of 9 and 4 of 4
+in seconds.
+
 ### Packages (`./install.sh package`, CI)
 
 CI builds the `.deb`, `.rpm` and tarball on every push, installs each in a

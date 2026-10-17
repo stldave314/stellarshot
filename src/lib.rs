@@ -7,6 +7,7 @@
 //! drive the engine and the child process directly.
 
 pub mod app;
+pub(crate) mod background;
 pub(crate) mod bounded;
 pub(crate) mod conditions;
 pub(crate) mod constants;
@@ -26,10 +27,16 @@ pub(crate) mod proc_signal;
 pub mod profile;
 pub mod run_state;
 pub mod runner;
+pub(crate) mod sandbox;
 pub mod scheduled;
 pub mod settings_export;
 pub(crate) mod status;
 pub(crate) mod timers;
+
+/// Entry point for `stellarshot --background`: see [`background`].
+pub fn background_main() -> std::process::ExitCode {
+    background::main()
+}
 
 /// Make this process's memory unreadable through a core dump, for a process
 /// that holds a repository password (a `--run` child, a `--scheduled` run).

@@ -586,7 +586,8 @@ pub fn main(args: &[String]) -> ExitCode {
     let _ = crate::core::config::StellarshotConfig::config();
 
     let Some(operation) = args.first().and_then(|arg| Operation::from_arg(arg)) else {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "usage: stellarshot --run <backup|restore|check|delete-snapshots|set-pinned|set-details|remove-paths|maintain|change-password> < job.json"
         );
         return ExitCode::from(2);

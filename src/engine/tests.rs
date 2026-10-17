@@ -1136,7 +1136,7 @@ fn search_all_finds_every_snapshot_a_name_appears_in() {
     fs::write(fixture.source.join("unrelated.txt"), b"noise").unwrap();
     back_up(&fixture, &sources(&fixture.source));
 
-    let found = browser(&fixture).search_all("keepme", 10).unwrap();
+    let found = browser(&fixture).search_all("keepme", 10).unwrap().matches;
 
     assert_eq!(
         found.len(),
@@ -1160,7 +1160,7 @@ fn search_all_matches_every_distinct_path() {
     fs::write(fixture.source.join("other.txt"), b"c").unwrap();
     back_up(&fixture, &sources(&fixture.source));
 
-    let found = browser(&fixture).search_all("report", 10).unwrap();
+    let found = browser(&fixture).search_all("report", 10).unwrap().matches;
 
     assert_eq!(found.len(), 2);
     assert!(found.iter().any(|m| m.path.ends_with("report-jan.txt")));
@@ -1174,8 +1174,51 @@ fn search_all_ignores_case_and_an_empty_query_finds_nothing() {
     fs::write(fixture.source.join("Report.txt"), b"a").unwrap();
     back_up(&fixture, &sources(&fixture.source));
 
-    assert_eq!(browser(&fixture).search_all("REPORT", 10).unwrap().len(), 1);
-    assert_eq!(browser(&fixture).search_all("", 10).unwrap().len(), 0);
+    assert_eq!(
+        browser(&fixture)
+            .search_all("REPORT", 10)
+            .unwrap()
+            .matches
+            .len(),
+        1
+    );
+    assert_eq!(
+        browser(&fixture).search_all("", 10).unwrap().matches.len(),
+        0
+    );
+}
+
+#[test]
+fn search_all_stays_bounded_on_a_broad_query() {
+    // A one-letter search of an ordinary backup with a long history once
+    // collected every hit in every snapshot, with a full copy of each
+    // snapshot's summary per hit, before keeping only `limit` of them.
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    for n in 0..60 {
+        fs::write(fixture.source.join(format!("file-{n}.txt")), b"x").unwrap();
+    }
+    let snapshots = crate::constants::GLOBAL_MATCH_SNAPSHOTS + 5;
+    for round in 0..snapshots {
+        fs::write(fixture.source.join("changing.txt"), format!("{round}")).unwrap();
+        back_up(&fixture, &sources(&fixture.source));
+    }
+
+    let found = browser(&fixture).search_all("file", 10).unwrap();
+
+    assert_eq!(found.matches.len(), 10, "no more paths than asked for");
+    assert!(found.truncated, "and the caller is told there were more");
+    for found in &found.matches {
+        assert_eq!(found.found_in, snapshots, "counted in every snapshot");
+        assert_eq!(
+            found.snapshots.len(),
+            crate::constants::GLOBAL_MATCH_SNAPSHOTS,
+            "but only so many listed"
+        );
+    }
+    let narrow = browser(&fixture).search_all("file-7.txt", 10).unwrap();
+    assert_eq!(narrow.matches.len(), 1);
+    assert!(!narrow.truncated, "a narrow search is complete");
 }
 
 #[test]
@@ -1376,6 +1419,53 @@ fn dump_file_writes_exactly_that_files_bytes() {
         .unwrap();
 
     assert_eq!(fs::read(&destination).unwrap(), b"plain");
+}
+
+/// A downloaded file or folder can hold anything a snapshot holds, a
+/// private key included; it used to land with the umask's mode, readable by
+/// every other user on the machine.
+#[test]
+fn downloads_are_readable_only_by_their_owner() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = fixture();
+    awkward_tree(&fixture.source);
+    back_up(&fixture, &sources(&fixture.source));
+    let file = fixture.work.join("plain.txt");
+    let archive = fixture.work.join("nested.tar.gz");
+
+    let browser = browser(&fixture);
+    browser
+        .dump_file("latest", &fixture.source.join("plain.txt"), &file)
+        .unwrap();
+    browser
+        .archive_folder("latest", &fixture.source.join("nested"), &archive)
+        .unwrap();
+
+    for path in [&file, &archive] {
+        let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "{}", path.display());
+    }
+}
+
+/// An imported setting could name a device or a FIFO as a file of exclude
+/// patterns; reading `/dev/zero` whole never ends.
+#[test]
+fn an_exclude_file_that_is_not_a_regular_file_fails_the_backup_at_once() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("a.txt"), b"a").unwrap();
+    let request = BackupRequest {
+        exclude_pattern_files: vec![PathBuf::from("/dev/zero")],
+        ..sources(&fixture.source)
+    };
+
+    let started = std::time::Instant::now();
+    let result = open(&fixture.repo, &secret())
+        .unwrap()
+        .backup(&request, Arc::new(NoProgress));
+
+    assert_eq!(result.unwrap_err().kind, ErrorKind::Io);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
 }
 
 #[test]
@@ -2447,6 +2537,58 @@ fn forget_applies_the_rules() {
     let mut newest = taken[2..].to_vec();
     newest.sort();
     assert_eq!(left, newest, "the two newest days are kept");
+}
+
+#[test]
+fn a_future_dated_snapshot_does_not_make_keep_for_forget_the_real_ones() {
+    // rustic measures "within N days" back from the newest snapshot in the
+    // group, not from now. One snapshot taken with the clock years ahead
+    // (a dead RTC battery) would otherwise push every real one outside the
+    // window, and the next clean-up would forget the whole history.
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    let now = jiff::Timestamp::now().as_second();
+    let tag = "stellarshot-profile:p";
+    for (day, time) in [
+        now - 3 * 86_400,
+        now - 2 * 86_400,
+        now - 86_400,
+        4_070_908_800,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        fs::write(fixture.source.join("file.txt"), format!("day {day}")).unwrap();
+        back_up(
+            &fixture,
+            &BackupRequest {
+                time: Some(time),
+                profile_tag: tag.into(),
+                ..sources(&fixture.source)
+            },
+        );
+    }
+    let rules = KeepRules {
+        within_days: Some(30),
+        ..KeepRules::default()
+    };
+
+    let report = open(&fixture.repo, &secret())
+        .unwrap()
+        .forget(
+            &rules,
+            &hostname(),
+            tag,
+            std::slice::from_ref(&fixture.source),
+        )
+        .unwrap();
+
+    assert_eq!(
+        (report.removed, report.kept),
+        (0, 4),
+        "the three real snapshots are within 30 days of now, and the future one is kept"
+    );
+    assert_eq!(snapshot_ids(&fixture).len(), 4);
 }
 
 #[test]

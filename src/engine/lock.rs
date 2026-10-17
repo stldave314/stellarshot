@@ -303,11 +303,18 @@ pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
             "{} is not owned by the current user, refusing to use it as a private directory",
             dir.display()
         )))
-    } else if metadata.permissions().mode() & 0o077 != 0 {
+    } else if metadata.permissions().mode() & 0o022 != 0 {
+        // Others could have put something in it already; tightening it now
+        // would not take that back out.
         Err(io::Error::other(format!(
-            "{} is readable or writable by group or other, refusing to use it as a private directory",
+            "{} is writable by group or other, refusing to use it as a private directory",
             dir.display()
         )))
+    } else if metadata.permissions().mode() & 0o077 != 0 {
+        // Ours, not a symlink, and only ever readable by others (an older
+        // version left the runtime folder at `0755`): made private, rather
+        // than refused, which would fail every backup until logout.
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
     } else {
         Ok(())
     }
@@ -417,6 +424,21 @@ mod tests {
         let location = Location::local("/backups/home");
         let err = acquire_in(&target, &location).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Io);
+    }
+
+    #[test]
+    fn a_pre_existing_directory_only_others_can_read_is_made_private() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("readable");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let location = Location::local("/backups/home");
+        let lock = acquire_in(&target, &location);
+
+        assert!(lock.is_ok(), "{:?}", lock.err());
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[test]

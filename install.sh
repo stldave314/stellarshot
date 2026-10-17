@@ -110,6 +110,8 @@ stage() {
 
     "${runner[@]}" install -Dm644 "res/$APP_ID.metainfo.xml" \
         "$root$PREFIX/share/metainfo/$APP_ID.metainfo.xml"
+    "${runner[@]}" install -Dm644 "res/$APPLET_ID.metainfo.xml" \
+        "$root$PREFIX/share/metainfo/$APPLET_ID.metainfo.xml"
 
     "${runner[@]}" install -Dm644 LICENSE \
         "$root$PREFIX/share/licenses/$BIN_APP/LICENSE"
@@ -149,7 +151,8 @@ cmd_uninstall() {
         "$PREFIX/share/applications/$APPLET_ID.desktop" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID.svg" \
         "$PREFIX/share/icons/hicolor/scalable/apps/$APP_ID-symbolic.svg" \
-        "$PREFIX/share/metainfo/$APP_ID.metainfo.xml"
+        "$PREFIX/share/metainfo/$APP_ID.metainfo.xml" \
+        "$PREFIX/share/metainfo/$APPLET_ID.metainfo.xml"
     as_root rm -rf "$PREFIX/share/licenses/$BIN_APP" "$PREFIX/share/doc/$BIN_APP"
     as_root update-desktop-database "$PREFIX/share/applications" 2>/dev/null || true
     as_root gtk-update-icon-cache -f "$PREFIX/share/icons/hicolor" 2>/dev/null || true

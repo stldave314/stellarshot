@@ -150,8 +150,12 @@ limit parallel compile jobs on a small machine.
 ## What is coming
 
 A clearer picture of every backup, finer control over what is backed
-up, more storage options and alerts beyond the desktop, on the way to 1.0.
-The detail is in [ROADMAP.md](ROADMAP.md).
+up, more storage options and alerts beyond the desktop, on the way to 1.0,
+and a Flatpak for the COSMIC Store. In a Flatpak, scheduled backups run from
+a background process of Stellarshot's own (started at login) instead of
+systemd timers, and **Mount as Folder**, hooks and a password command are
+not available, since they need programs outside the sandbox. The detail is
+in [ROADMAP.md](ROADMAP.md).
 
 ---
 
@@ -256,8 +260,12 @@ so a backup never copies itself.
 <summary><a id="opening-an-existing-backup"></a><strong>Opening an existing backup</strong></summary>
 
 **Open an existing backup** on the first screen asks where it is (any of the
-places above) and its password. The folders to back up are taken from the most
-recent snapshot, so the backup carries on as it was.
+places above) and its password. The folders to back up are taken from this
+computer's most recent snapshot in it, so the backup carries on as it was.
+Another computer's folders are never taken over: a repository someone shares
+with you could list anything. With no snapshot from this computer, the backup
+starts with no folders and its page asks you to choose them; every snapshot
+can still be browsed and restored.
 
 </details>
 
@@ -351,7 +359,8 @@ heading recalls what a snapshot is. Each row has three buttons:
 | Bin | Deletes it, after asking. Worth it for one that caught something by mistake, which shows as a large amount added. Its space is freed at the next clean-up |
 
 **Manage Snapshots…** opens every snapshot of the backup, with a filter that
-finds them by name, tag or note. Open one to see when it was taken, on which
+finds them by name, tag or note (the first 200 are listed; narrow the filter
+for the rest). Open one to see when it was taken, on which
 computer, of which folders, and what changed in it, and to give it:
 
 - **A name**, shown in place of its date wherever it is listed ("Before the
@@ -428,10 +437,10 @@ page at that snapshot.
 
 | Tab | What it is for |
 | --- | --- |
-| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. Ticked items can also be taken out of the backup altogether with **Remove…** (see [Taking files out of your backups](#taking-files-out)). **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly, with **Open Folder** and **Unmount** while it is live; one left behind by a crash is unmounted the next time Stellarshot starts. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
+| **Browse** | Pick a snapshot from the list (newest first) and move through its folders. Ticked items can also be taken out of the backup altogether with **Remove…** (see [Taking files out of your backups](#taking-files-out)). **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly (nothing in it can be run as a program from there), with **Open Folder** and **Unmount** while it is live; one left behind by a crash is unmounted the next time Stellarshot starts. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it, readable only by you. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
 | **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
 | **Compare** | Choose two snapshots to list what was added, removed and changed between them, grouped by folder behind a count and expanded on request (a folder with only one change is shown directly). Ticking a changed or removed item restores it as it was in the snapshot on the left |
-| **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match shows every snapshot it was found in; clicking one jumps straight to Browse at that snapshot and folder |
+| **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match shows the snapshots it was found in (up to 20, with a count of the rest); clicking one jumps straight to Browse at that snapshot and folder |
 
 Tick the files and folders you want and press **Restore…**. Then choose:
 
@@ -519,9 +528,15 @@ fallen overdue. Its popup lists every backup with when each last succeeded,
 and **Open Stellarshot** and **Quit** buttons.
 
 Closing the window minimizes it to the panel rather than quitting — the
-process, and any backup in progress, keeps running. Opening Stellarshot again,
-from the applet or the launcher, brings the same window back rather than
-starting a second one. **Quit** (in the window's menu, <kbd>Ctrl</kbd>+<kbd>Q</kbd>,
+process, and any backup in progress, keeps running — while the applet is on a
+panel or something is still running. Every backup not running anything is
+locked again on the way, so its password is no longer held in memory, and the
+rest follow as their work ends. With nothing running and no applet on a
+panel, closing the window quits, and so does the app once the last work it
+was watching ends: nothing would show it still there. Opening Stellarshot
+again, from the applet or the launcher, brings the same window back rather
+than starting a second one, asking the keyring (or you) for the passwords
+again. **Quit** (in the window's menu, <kbd>Ctrl</kbd>+<kbd>Q</kbd>,
 or the applet's popup) closes it for real; if a backup is running it asks
 first, since the backup keeps going in its own process either way, but
 nothing is left watching it or showing its progress. Quitting the applet
@@ -653,7 +668,7 @@ from **Manage Snapshots…** (see [How snapshots work](#how-snapshots-work)).
 | <kbd>Ctrl</kbd>+<kbd>,</kbd> | Settings |
 | <kbd>Ctrl</kbd>+<kbd>I</kbd> | About |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> | New window — a genuinely separate one, not just refocusing this one |
-| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel) |
+| <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close the window (minimizes to the panel while the applet is on one or a backup is running; quits otherwise) |
 | <kbd>Ctrl</kbd>+<kbd>Q</kbd> | Quit for real, rather than minimizing to the panel. Asks first if a backup is running — it keeps going in its own process either way, but nothing is left watching it |
 | <kbd>F1</kbd> | Help |
 | <kbd>Esc</kbd> | Close the dialog or sheet in front; otherwise step back out of the restore page or the Snapshots page. Never while a restore or a removal is running |
@@ -717,7 +732,7 @@ run rustic's own `forget`/`prune`, never restic's.
 | Theme | Match desktop | Follow the desktop's light or dark mode, or force one |
 | Left out of every backup | None | Glob patterns, such as `node_modules` or `target`, left out of every backup without adding them to each one |
 | Cache location | rustic's own default (`~/.cache/rustic`) | Another folder, or no local cache at all, for every repository this computer opens |
-| Export / Import settings | — | Save every backup's folders, exclusions, destination, schedule and history to a file, never a password, and read one back on another computer or after a reinstall. Imported backups start with their schedule off and their hooks disabled, for you to review |
+| Export / Import settings | — | Save every backup's folders, exclusions, destination, schedule and history to a file, never a password, and read one back on another computer or after a reinstall. Imported backups start with their schedule off and their hooks disabled, for you to review. A file is held to the same rules as the wizard: a folder destination must be a full path and a drive folder must stay on its drive, and at most 200 backups are added from one file |
 
 Each backup's own settings (folders, exclusions, destination) are edited on its
 page. Everything is stored through `cosmic-config` in
@@ -780,7 +795,7 @@ stored there, only in the keyring when you ask.
   the password; Stellarshot never reads Déjà Dup's.
 - **Opens existing backups.** Point it at a repository made by an earlier
   Stellarshot, by `restic` or by `rustic`, give the password, and it carries on
-  with the same folders the last snapshot covered.
+  with the same folders this computer's last snapshot covered.
 - **Getting files back without the command line.** Browse any snapshot as a
   folder tree, search it, and see every version of a file, with identical
   versions marked. **Search everywhere** finds a file by name across every
@@ -1082,9 +1097,11 @@ tagged by category (`ENGINE`, `UI`, `CONFIG`, `SCHED`, `MOUNT`) so you can
   with Stellarshot itself, so most people never have to do this by hand.
 - **Timers need systemd.** On a system without a systemd user session,
   automatic backups cannot be set up; **Back Up Now** still works.
-- **Search, Search everywhere, Deleted files and Compare show at most 500
-  entries.** Narrow the search, choose a smaller folder, or compare snapshots
-  closer together. **Search everywhere** finds a name across every snapshot,
+- **Search, Search everywhere, Deleted files, Compare and Versions show at
+  most 500 entries, and Manage Snapshots… 200.** Narrow the search or filter,
+  choose a smaller folder, or compare snapshots closer together. **Search
+  everywhere** also lists at most 20 snapshots for each file it finds, with a
+  count of the rest. **Search everywhere** finds a name across every snapshot,
   not what is inside a file: rustic has no support for searching file
   content, only filenames.
 - **Opening the restore page reads the whole index first,** which can take a

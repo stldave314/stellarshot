@@ -10,6 +10,10 @@
 /// The application ID: desktop entry, icon, settings and keyring items.
 pub const APP_ID: &str = "io.github.stldave314.Stellarshot";
 
+/// The panel applet's own ID: its desktop entry, and how a COSMIC panel's
+/// configuration lists it once added.
+pub const APPLET_ID: &str = "io.github.stldave314.Stellarshot.Applet";
+
 /// The upstream application ID, before this app's own settings existed
 /// under its own.
 pub const OLD_APP_ID: &str = "com.github.cosmic-utils.Stellarshot";
@@ -233,6 +237,37 @@ pub const APPLET_IDLE_REFRESH: std::time::Duration = std::time::Duration::from_s
 /// many widgets per frame, not the folder's or diff's own real size.
 pub const RESTORE_RESULT_LIMIT: usize = 500;
 
+/// How many snapshots "Search everywhere" lists for one path, as buttons to
+/// jump to it; the rest are counted. A path found in every snapshot of a
+/// years-old hourly backup would otherwise carry thousands of them, cloned
+/// and drawn for each of up to [`RESTORE_RESULT_LIMIT`] rows.
+pub const GLOBAL_MATCH_SNAPSHOTS: usize = 20;
+
+/// The most folders a backup made by opening an existing repository takes
+/// over from that repository's newest snapshot. Its own backups chose far
+/// fewer; a snapshot listing more was not made by a person choosing folders.
+pub const OPEN_INHERITED_PATHS_LIMIT: usize = 100;
+
+/// How many snapshots the Snapshots page lists before asking for a narrower
+/// filter. Every row is two buttons rebuilt on each frame, and an hourly
+/// backup that keeps everything makes about 8,700 snapshots a year.
+pub const SNAPSHOT_ROW_LIMIT: usize = 200;
+
+/// The largest file of exclude patterns a backup reads. A real one is a few
+/// kilobytes; this stops one that names `/dev/zero`, or something huge by
+/// mistake, from being read without end.
+pub const EXCLUDE_FILE_MAX_BYTES: u64 = 1024 * 1024;
+
+/// How often the background process (scheduling inside a Flatpak sandbox,
+/// where there are no systemd timers) looks for a backup that is due or a
+/// drive that has just been connected. A timer's own randomized delay is
+/// ten minutes, so a minute is well inside what a schedule promises.
+pub const BACKGROUND_TICK: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// How long to wait for the Background portal's answer: it may be waiting
+/// for the user to answer a permission dialog.
+pub const PORTAL_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// How many rows a backup's own page shows at once before "Show all": its
 /// most recent snapshots, and separately, its most recent history entries.
 pub const PROFILE_RECENT_ROWS: usize = 5;
@@ -254,6 +289,15 @@ pub const SSH_DEFAULT_PORT: u16 = 22;
 /// far past anything a real retention policy needs.
 pub const RETENTION_MAX_DAYS: u32 = 36_500;
 
+/// How far ahead of now a snapshot's time may be and still count as taken
+/// now. rustic measures "keep everything from the last `n` days" back from
+/// the newest snapshot, not from now, so one snapshot dated in the future (a
+/// backup taken once with the clock wrong) would push every real one outside
+/// the window. Snapshots further ahead than this are kept, never forgotten,
+/// and never define the window. A day allows for clocks and time zones that
+/// disagree without ever reaching a real mistake.
+pub const FUTURE_SNAPSHOT_TOLERANCE_SECONDS: i64 = 86_400;
+
 /// The largest settings export file an import will read. A real export is
 /// a few kilobytes per backup plus its history (capped at
 /// [`EVENT_LOG_CAPACITY`] entries each); this is far above any of that,
@@ -267,6 +311,24 @@ pub const MAX_EXPORT_BYTES: u64 = 8 * 1024 * 1024;
 /// rendered into the sidebar, the applet, notifications and unit
 /// descriptions, none of which should be handed a megabyte.
 pub const IMPORT_NAME_MAX_CHARS: usize = 256;
+
+/// The most backups one imported settings file may add. Anyone's real
+/// export holds a handful; past this, the rest are counted as refused rather
+/// than each saved, scheduled and listed until the window freezes.
+pub const IMPORT_MAX_PROFILES: usize = 200;
+
+/// How long a small helper program (`systemctl`, `dconf`, `fusermount`,
+/// `rclone version`, `systemd-run`) may take before it is stopped. Each
+/// answers in milliseconds; one that does not is stuck on a wedged service
+/// or mount, and must not hold up a scheduled run or the window with it.
+pub const HELPER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The most output kept from such a helper, per pipe.
+pub const HELPER_OUTPUT_MAX: usize = 64 * 1024;
+
+/// How long a dismissed keyring unlock prompt is taken as the answer for
+/// every request waiting behind it, before one may ask again.
+pub const KEYRING_DISMISSAL_MEMORY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The most a Stellarshot-run rclone command that changes something (deleting
 /// a repository, forgetting a remote) may take before it is stopped. Long,
@@ -338,3 +400,16 @@ pub const JOB_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// snapshots gives up: far beyond any real file system's paths, and well
 /// short of what the recursion's stack can hold.
 pub const TREE_MAX_DEPTH: usize = 1024;
+
+/// How many items one walk of a snapshot's tree (a restore, a download, a
+/// search, a look for deleted files) may visit before giving up. A tree that
+/// refers to the same subtree twice at every level is tiny in the repository
+/// and enormous to walk: forty levels make a trillion items. Real backups
+/// stay far below this.
+pub const TREE_MAX_ENTRIES: usize = 100_000_000;
+
+/// How many zeros a downloaded folder's archive may write for one file whose
+/// stored content is shorter than the size its snapshot records (a file that
+/// shrank while it was backed up). Real ones fall short by little; a crafted
+/// size would otherwise be padded out until the disk is full.
+pub const TAR_PADDING_MAX: usize = 64 * 1024 * 1024;

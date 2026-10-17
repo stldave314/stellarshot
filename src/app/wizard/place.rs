@@ -17,6 +17,7 @@ use cosmic::{Element, theme, widget};
 use crate::app::format;
 use crate::constants::BANDWIDTH_FIELD_WIDTH;
 use crate::constants::SSH_DEFAULT_PORT as SSH_PORT;
+use crate::core::redacted::Redacted;
 use crate::drives::Drive;
 use crate::engine::{EngineError, Probe};
 use crate::fl;
@@ -62,7 +63,7 @@ pub struct Place {
     /// A Google API client of the user's own, instead of the one Stellarshot
     /// signs in with by default. Both empty means the default.
     pub google_client_id: String,
-    pub google_client_secret: String,
+    pub google_client_secret: Redacted,
     /// The custom-credentials fields are shown.
     pub google_advanced: bool,
     pub cloud_path: String,
@@ -107,7 +108,7 @@ pub enum Message {
     SignedIn(Result<String, EngineError>),
     ToggleGoogleAdvanced,
     GoogleClientId(String),
-    GoogleClientSecret(String),
+    GoogleClientSecret(Redacted),
     CloudPath(String),
     RemotesListed(Result<Vec<String>, EngineError>),
     PickRemote(usize),
@@ -131,7 +132,7 @@ pub enum Effect {
     /// signs in with Stellarshot's own.
     SignIn {
         name: String,
-        credentials: Option<(String, String)>,
+        credentials: Option<(String, Redacted)>,
     },
     /// Copy the user's remote `from` into Stellarshot's configuration as `to`.
     CopyRemote {
@@ -164,7 +165,7 @@ impl Default for Place {
             google_remote: None,
             signing_in: false,
             google_client_id: String::new(),
-            google_client_secret: String::new(),
+            google_client_secret: Redacted::default(),
             google_advanced: false,
             cloud_path: default_folder(),
             user_remotes: Vec::new(),
@@ -186,9 +187,7 @@ impl Default for Place {
 /// names, no `..` (which would step out of the drive's mount point and make
 /// a backup, and "Delete everything", act on the internal disk) and no `.`.
 fn is_plain_folder(folder: &str) -> bool {
-    std::path::Path::new(folder)
-        .components()
-        .all(|component| matches!(component, std::path::Component::Normal(_)))
+    crate::profile::plain_relative(std::path::Path::new(folder))
 }
 
 impl Place {
@@ -376,9 +375,9 @@ impl Place {
                 }
                 self.signing_in = true;
                 let id = self.google_client_id.trim();
-                let secret = self.google_client_secret.trim();
+                let secret = self.google_client_secret.as_str().trim();
                 let credentials = (!id.is_empty() && !secret.is_empty())
-                    .then(|| (id.to_owned(), secret.to_owned()));
+                    .then(|| (id.to_owned(), Redacted::from(secret)));
                 vec![Effect::SignIn {
                     name: new_remote_name(),
                     credentials,
@@ -701,12 +700,14 @@ impl Place {
                                     .on_input(Message::GoogleClientId),
                                 )
                                 .push(
-                                    widget::text_input(
+                                    widget::secure_input(
                                         fl!("place-google-client-secret"),
-                                        &self.google_client_secret,
+                                        self.google_client_secret.as_str(),
+                                        None,
+                                        true,
                                     )
                                     .label(fl!("place-google-client-secret"))
-                                    .on_input(Message::GoogleClientSecret),
+                                    .on_input(|text| Message::GoogleClientSecret(text.into())),
                                 );
                         }
                         section.push(

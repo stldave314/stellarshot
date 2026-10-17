@@ -32,6 +32,10 @@ const REMOVABLE_ROOTS: &[&str] = &["/media/", "/run/media/"];
 /// of mounts could not be read, which is not the same as no drive being
 /// plugged in.
 pub fn mounted_drives() -> Result<Vec<Drive>, String> {
+    // A sandbox sees neither the host's mounts nor its `/dev/disk`.
+    if crate::sandbox::sandboxed() {
+        return udisks_drives();
+    }
     // Bytes, not a `String`: mountinfo only escapes space, tab, newline and
     // backslash, so one mount point with a non-UTF-8 name would make a
     // `read_to_string` of the whole file fail and every drive look unplugged.
@@ -152,6 +156,96 @@ fn drives_from(
     drives
 }
 
+/// One filesystem as `UDisks2` describes it: its UUID, label and mount points
+/// (each a path's bytes, NUL-terminated as `UDisks2` sends them).
+type UdisksFilesystem = (String, String, Vec<Vec<u8>>);
+
+/// [`mounted_drives`] inside a sandbox: from `UDisks2` over the system bus,
+/// which describes the host's drives where the sandbox's own mounts and
+/// `/dev` do not. Run on a thread of its own, so it works whether or not
+/// the caller is already inside an async runtime.
+fn udisks_drives() -> Result<Vec<Drive>, String> {
+    let filesystems = std::thread::spawn(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())?
+            .block_on(udisks_filesystems())
+            .map_err(|err| err.to_string())
+    })
+    .join()
+    .map_err(|_| "the UDisks2 query failed".to_owned())?
+    .inspect_err(|err| error_log!(ENGINE, "could not ask UDisks2 for drives: {err}"))?;
+    Ok(drives_from_udisks(&filesystems))
+}
+
+/// Every filesystem `UDisks2` knows of that has a UUID.
+async fn udisks_filesystems() -> zbus::Result<Vec<UdisksFilesystem>> {
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+    let connection = zbus::Connection::system().await?;
+    let reply = connection
+        .call_method(
+            Some("org.freedesktop.UDisks2"),
+            "/org/freedesktop/UDisks2",
+            Some("org.freedesktop.DBus.ObjectManager"),
+            "GetManagedObjects",
+            &(),
+        )
+        .await?;
+    let objects: HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>> =
+        reply.body().deserialize()?;
+    let text = |props: &HashMap<String, OwnedValue>, key: &str| {
+        props
+            .get(key)
+            .and_then(|value| String::try_from(value.clone()).ok())
+            .unwrap_or_default()
+    };
+    Ok(objects
+        .values()
+        .filter_map(|interfaces| {
+            let block = interfaces.get("org.freedesktop.UDisks2.Block")?;
+            let filesystem = interfaces.get("org.freedesktop.UDisks2.Filesystem")?;
+            let mount_points = filesystem
+                .get("MountPoints")
+                .and_then(|value| Vec::<Vec<u8>>::try_from(value.clone()).ok())
+                .unwrap_or_default();
+            Some((text(block, "IdUUID"), text(block, "IdLabel"), mount_points))
+        })
+        .filter(|(uuid, _, _)| !uuid.is_empty())
+        .collect())
+}
+
+/// The removable drives among `filesystems`: those mounted where desktop
+/// Linux mounts removable media, as [`drives_from`] decides for mountinfo.
+fn drives_from_udisks(filesystems: &[UdisksFilesystem]) -> Vec<Drive> {
+    let mut drives = Vec::new();
+    for (uuid, label, mount_points) in filesystems {
+        for raw in mount_points {
+            let bytes = raw.strip_suffix(&[0]).unwrap_or(raw);
+            let removable = REMOVABLE_ROOTS
+                .iter()
+                .any(|root| bytes.starts_with(root.as_bytes()));
+            if !removable {
+                continue;
+            }
+            let mount_point = PathBuf::from(OsString::from_vec(bytes.to_vec()));
+            let label = if label.is_empty() {
+                mount_point
+                    .file_name()
+                    .map_or_else(|| uuid.clone(), |name| name.to_string_lossy().into_owned())
+            } else {
+                label.clone()
+            };
+            drives.push(Drive {
+                uuid: uuid.clone(),
+                label,
+                mount_point,
+            });
+        }
+    }
+    drives
+}
+
 /// One line of `/proc/self/mountinfo`, the parts read here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MountLine {
@@ -228,6 +322,45 @@ fn unescape(bytes: &[u8]) -> OsString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn udisks_filesystems_mounted_as_removable_media_are_drives() {
+        let filesystems = vec![
+            (
+                "1111-AAAA".to_owned(),
+                "Backup".to_owned(),
+                vec![b"/media/alex/Backup\0".to_vec()],
+            ),
+            (
+                "2222-BBBB".to_owned(),
+                String::new(),
+                vec![b"/run/media/alex/Photo Disk\0".to_vec()],
+            ),
+            (
+                "3333-CCCC".to_owned(),
+                "root".to_owned(),
+                vec![b"/\0".to_vec()],
+            ),
+            ("4444-DDDD".to_owned(), "unmounted".to_owned(), Vec::new()),
+        ];
+        let drives = drives_from_udisks(&filesystems);
+        assert_eq!(
+            drives,
+            vec![
+                Drive {
+                    uuid: "1111-AAAA".into(),
+                    label: "Backup".into(),
+                    mount_point: "/media/alex/Backup".into(),
+                },
+                Drive {
+                    uuid: "2222-BBBB".into(),
+                    label: "Photo Disk".into(),
+                    mount_point: "/run/media/alex/Photo Disk".into(),
+                },
+            ],
+            "the root filesystem and an unmounted one are not removable drives"
+        );
+    }
 
     const MOUNTINFO: &[u8] = b"\
 22 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw

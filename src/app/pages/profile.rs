@@ -355,6 +355,19 @@ impl ProfileState {
         self.secret.is_some()
     }
 
+    /// Forget the password and what it unlocked, as if the page had never
+    /// been opened: for a window closed with nothing to watch over. Opening
+    /// the page again asks the keyring, or the user, once more. Does nothing
+    /// while work is running, which still needs it.
+    pub fn lock(&mut self) {
+        if self.is_busy() {
+            return;
+        }
+        self.secret = None;
+        self.snapshots = None;
+        self.keyring_checked = false;
+    }
+
     fn has_snapshots(&self) -> bool {
         self.snapshots.as_ref().is_some_and(|s| !s.is_empty())
     }
@@ -832,6 +845,7 @@ impl ProfileState {
             .into();
         }
         let spacing = theme::active().cosmic().spacing;
+        let sandboxed = crate::sandbox::sandboxed();
         let mut page = widget::column::with_capacity(6)
             .spacing(spacing.space_m)
             .padding(spacing.space_m)
@@ -889,11 +903,18 @@ impl ProfileState {
                                 .on_press_maybe(self.can_work().then_some(Message::RunAsScheduled)),
                         )
                 }))
+                // Hooks and a password command run programs, which inside a
+                // sandbox are the runtime's, not the host's.
                 .add(
                     widget::settings::item::builder(fl!("hooks-row"))
-                        .description(hooks_summary(&profile.hooks))
+                        .description(if sandboxed {
+                            fl!("sandbox-unavailable")
+                        } else {
+                            hooks_summary(&profile.hooks)
+                        })
                         .control(
-                            widget::button::standard(fl!("change")).on_press(Message::EditHooks),
+                            widget::button::standard(fl!("change"))
+                                .on_press_maybe((!sandboxed).then_some(Message::EditHooks)),
                         ),
                 )
                 .add(
@@ -926,14 +947,17 @@ impl ProfileState {
                 )
                 .add(
                     widget::settings::item::builder(fl!("password-source-row"))
-                        .description(if profile.password_command.is_empty() {
+                        .description(if sandboxed {
+                            fl!("sandbox-unavailable")
+                        } else if profile.password_command.is_empty() {
                             fl!("password-source-keyring")
                         } else {
                             fl!("password-source-command")
                         })
                         .control(
-                            widget::button::standard(fl!("change"))
-                                .on_press(Message::EditPasswordCommand),
+                            widget::button::standard(fl!("change")).on_press_maybe(
+                                (!sandboxed).then_some(Message::EditPasswordCommand),
+                            ),
                         ),
                 )
                 .add(
@@ -983,7 +1007,9 @@ impl ProfileState {
         let last = self
             .snapshots
             .as_ref()
-            .and_then(|snapshots| snapshots.first().map(|snapshot| snapshot.time))
+            .and_then(|snapshots| {
+                crate::engine::newest_settled(snapshots, now).map(|snapshot| snapshot.time)
+            })
             .or(profile.last_success);
         let headline = match last {
             None => fl!("never-backed-up"),

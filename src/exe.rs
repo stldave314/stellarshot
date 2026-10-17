@@ -42,7 +42,7 @@ pub fn running_image() -> PathBuf {
 
 /// `path` with the kernel's `" (deleted)"` marker removed, comparing as an
 /// `OsStr` rather than a lossy string.
-fn strip_deleted_marker(path: &Path) -> Option<PathBuf> {
+pub(crate) fn strip_deleted_marker(path: &Path) -> Option<PathBuf> {
     const MARKER: &str = " (deleted)";
     let bytes = path.as_os_str().as_encoded_bytes();
     let stripped = bytes.strip_suffix(MARKER.as_bytes())?;

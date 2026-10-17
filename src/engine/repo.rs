@@ -343,14 +343,36 @@ pub fn scrub_url_credentials(text: &str) -> String {
         result.push_str(before);
         let word_end = after.find(char::is_whitespace).unwrap_or(after.len());
         let (word, tail) = after.split_at(word_end);
-        match word.find('@') {
-            Some(at) if !word[..at].contains('/') => result.push_str(&word[at + 1..]),
-            _ => result.push_str(word),
-        }
+        // Only the scheme itself (`http`), not the text before it.
+        let prefix = &rest[..scheme_at];
+        let scheme_start = prefix
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || "+-.".contains(c)))
+            .map_or(0, |index| index + 1);
+        result.push_str(&scrub_word(&prefix[scheme_start..], word));
         rest = tail;
     }
     result.push_str(rest);
     result
+}
+
+/// One word of [`scrub_url_credentials`]: `word` is what follows `scheme`'s
+/// `://`. A URL that parses has its userinfo cut at the last `@` before its
+/// path, the way URL parsing itself reads a password holding an `@`. One
+/// that does not parse, but holds an `@`, may hide a password with a `/` in
+/// it, where no rule can tell where it ends: the whole word goes.
+fn scrub_word(scheme: &str, word: &str) -> String {
+    match url::Url::parse(&format!("{scheme}://{word}")) {
+        Ok(parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
+            let authority_end = word.find('/').unwrap_or(word.len());
+            match word[..authority_end].rfind('@') {
+                Some(at) => word[at + 1..].to_owned(),
+                None => word.to_owned(),
+            }
+        }
+        Ok(_) => word.to_owned(),
+        Err(_) if word.contains('@') => "[redacted]".to_owned(),
+        Err(_) => word.to_owned(),
+    }
 }
 
 pub fn redact_url(url: &str) -> String {
@@ -740,6 +762,18 @@ mod tests {
         assert!(!scrubbed.contains("s3cret"), "{scrubbed}");
         assert!(!scrubbed.contains("alex"), "{scrubbed}");
         assert!(scrubbed.contains("nas:8000/repo/config"), "{scrubbed}");
+    }
+
+    #[test]
+    fn scrub_url_credentials_does_not_fail_open_on_an_at_or_a_slash_in_the_password() {
+        for text in [
+            "error sending request for url (http://alex:p@ss@nas:8000/repo/config)",
+            "error sending request for url (http://alex:p/ss@nas:8000/repo/config)",
+        ] {
+            let scrubbed = scrub_url_credentials(text);
+            assert!(!scrubbed.contains("ss"), "{scrubbed}");
+            assert!(!scrubbed.contains("alex"), "{scrubbed}");
+        }
     }
 
     #[test]

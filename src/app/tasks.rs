@@ -222,6 +222,33 @@ pub struct Finished {
 /// the profile's sources come from the latest snapshot, so an existing
 /// backup carries on as it was. Remembering the password, if asked, is the
 /// caller's own separate task; see [`open`].
+/// The folders a backup made by opening an existing repository starts
+/// with: those of this computer's own newest snapshot, at most
+/// [`OPEN_INHERITED_PATHS_LIMIT`] of them. Never another computer's: a
+/// repository someone shares can list anything (`~/.ssh`), and adopting it
+/// would have the next backup, scheduled or not, upload it where they can
+/// read it, without the folders ever having been shown. With none from this
+/// computer the backup starts with no folders, and its page asks for them.
+///
+/// [`OPEN_INHERITED_PATHS_LIMIT`]: crate::constants::OPEN_INHERITED_PATHS_LIMIT
+fn inherited_sources(snapshots: &[engine::SnapshotSummary], host: &str, now: i64) -> Vec<PathBuf> {
+    let own: Vec<engine::SnapshotSummary> = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.hostname == host)
+        .cloned()
+        .collect();
+    engine::newest_settled(&own, now)
+        .map(|latest| {
+            latest
+                .paths
+                .iter()
+                .take(crate::constants::OPEN_INHERITED_PATHS_LIMIT)
+                .map(PathBuf::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub async fn finish(
     mode: Mode,
     mut profile: Profile,
@@ -255,10 +282,10 @@ pub async fn finish(
             })
             .await?;
             profile.append_only = append_only;
-            if let Some(latest) = snapshots.first() {
-                profile.sources = latest.paths.iter().map(PathBuf::from).collect();
-                profile.last_success = Some(latest.time);
-            }
+            let now = jiff::Timestamp::now().as_second();
+            profile.sources = inherited_sources(&snapshots, &engine::hostname(), now);
+            profile.last_success =
+                engine::newest_settled(&snapshots, now).map(|latest| latest.time);
             snapshots
         }
         _ => Vec::new(),
@@ -446,6 +473,62 @@ mod tests {
         assert_eq!(finished.profile.sources, vec![source]);
         assert!(finished.profile.last_success.is_some());
         assert_eq!(finished.snapshots.len(), 1);
+    }
+
+    #[test]
+    fn finishing_open_never_takes_another_computers_folders() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("documents");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("a.txt"), b"a").unwrap();
+        let repo = dir.path().join("repo");
+        let secret = Secret::new("pw");
+        engine::init(&Location::local(&repo), &secret).unwrap();
+        engine::open(&Location::local(&repo), &secret)
+            .unwrap()
+            .backup(
+                &BackupRequest {
+                    sources: vec![source.clone()],
+                    hostname: Some("someone-elses-computer".into()),
+                    ..BackupRequest::default()
+                },
+                Arc::new(NoProgress),
+            )
+            .unwrap();
+
+        let finished =
+            block_on(finish(Mode::Open, profile(&repo, Vec::new()), Some(secret))).unwrap();
+
+        assert!(
+            finished.profile.sources.is_empty(),
+            "another computer's folders are not adopted unseen: {:?}",
+            finished.profile.sources
+        );
+        assert_eq!(
+            finished.snapshots.len(),
+            1,
+            "its snapshots can still be restored"
+        );
+    }
+
+    #[test]
+    fn inherited_folders_come_from_this_computer_and_are_capped() {
+        let at = |host: &str, time, paths: Vec<String>| engine::SnapshotSummary {
+            hostname: host.into(),
+            time,
+            paths,
+            ..engine::SnapshotSummary::default()
+        };
+        let many: Vec<String> = (0..crate::constants::OPEN_INHERITED_PATHS_LIMIT + 50)
+            .map(|n| format!("/home/a/{n}"))
+            .collect();
+        let snapshots = [
+            at("other", 900, vec!["/home/a/.ssh".into()]),
+            at("this", 800, many),
+        ];
+        let sources = inherited_sources(&snapshots, "this", 1_000);
+        assert_eq!(sources.len(), crate::constants::OPEN_INHERITED_PATHS_LIMIT);
+        assert!(!sources.contains(&PathBuf::from("/home/a/.ssh")));
     }
 
     #[test]

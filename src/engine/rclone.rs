@@ -228,7 +228,7 @@ fn run_bounded(
                 let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
             }
             let _ = child.kill();
-            let _ = child.wait();
+            crate::bounded::reap_within(&mut child, crate::constants::DRAIN_AFTER_EXIT);
             debug_log!(
                 crate::debug::RCLONE,
                 "rclone {} {}",
@@ -252,9 +252,7 @@ fn run_bounded(
 
 /// Whether rclone is installed and runs.
 pub fn available() -> bool {
-    command()
-        .arg("version")
-        .output()
+    crate::bounded::output_within(command().arg("version"), crate::constants::HELPER_TIMEOUT)
         .is_ok_and(|output| output.status.success())
 }
 
@@ -529,8 +527,6 @@ fn set_section_values(
     name: &str,
     values: &[(&str, &str)],
 ) -> Result<(), EngineError> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let text = std::fs::read_to_string(config).map_err(|err| EngineError::io(config, &err))?;
     let header = format!("[{name}]");
     let mut out = Vec::new();
@@ -562,6 +558,15 @@ fn set_section_values(
             format!("{header} is not in {}", config.display()),
         ));
     }
+    replace_privately(config, &out)
+}
+
+/// Replace the configuration at `config` with `lines`, keeping it private.
+/// Written to a new file beside it and renamed over, so a crash never leaves
+/// half a configuration with every sign-in's tokens in it.
+fn replace_privately(config: &Path, lines: &[String]) -> Result<(), EngineError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     let temporary = config.with_extension("conf.new");
     let _ = std::fs::remove_file(&temporary);
     let mut file = std::fs::OpenOptions::new()
@@ -570,10 +575,69 @@ fn set_section_values(
         .mode(0o600)
         .open(&temporary)
         .map_err(|err| EngineError::io(&temporary, &err))?;
-    file.write_all((out.join("\n") + "\n").as_bytes())
+    file.write_all((lines.join("\n") + "\n").as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|err| EngineError::io(&temporary, &err))?;
     std::fs::rename(&temporary, config).map_err(|err| EngineError::io(config, &err))
+}
+
+/// Whether `name` has the shape of a remote Stellarshot creates itself:
+/// `stellarshot-` and 8 lowercase hex digits.
+pub(crate) fn is_own_remote_name(name: &str) -> bool {
+    name.strip_prefix("stellarshot-").is_some_and(|suffix| {
+        suffix.len() == 8
+            && suffix
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
+/// The sections in `text` (an rclone configuration) that Stellarshot created
+/// and nothing in `in_use` names: what a sign-in, or a remote copied while
+/// choosing one, left behind once its backup was removed or never made.
+fn unused_remotes(text: &str, in_use: &std::collections::HashSet<String>) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix('[')?.strip_suffix(']'))
+        .filter(|name| is_own_remote_name(name) && !in_use.contains(*name))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Remove from Stellarshot's own configuration at `config` every remote it
+/// created that no name in `in_use` refers to. Each holds sign-in tokens, a
+/// client secret, or a plaintext copy of one of the user's own remotes, so
+/// none may outlive the backup it was made for. Sections the user may have
+/// added by hand under any other name are kept. Returns what was removed.
+pub fn remove_unused_remotes(
+    config: &Path,
+    in_use: &std::collections::HashSet<String>,
+) -> Result<Vec<String>, EngineError> {
+    let text = match std::fs::read_to_string(config) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(EngineError::io(config, &err)),
+    };
+    let unused = unused_remotes(&text, in_use);
+    if unused.is_empty() {
+        return Ok(unused);
+    }
+    let mut kept = Vec::new();
+    let mut dropping = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            dropping = trimmed
+                .strip_prefix('[')
+                .and_then(|rest| rest.strip_suffix(']'))
+                .is_some_and(|name| unused.iter().any(|unused| unused == name));
+        }
+        if !dropping {
+            kept.push(line.to_owned());
+        }
+    }
+    replace_privately(config, &kept)?;
+    debug_log!(RCLONE, "removed unused remotes: {unused:?}");
+    Ok(unused)
 }
 
 /// Remove a remote Stellarshot created.
@@ -589,6 +653,50 @@ pub fn delete_remote(config: &Path, name: &str) -> Result<(), EngineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_remotes_stellarshot_created_and_nothing_uses_are_unused() {
+        let text = "[stellarshot-0123abcd]\ntype = drive\ntoken = {\"a\":1}\n\n\
+                    [stellarshot-deadbeef]\ntype = sftp\n\n\
+                    [my-own]\ntype = s3\n\n\
+                    [stellarshot-NOTOURS]\ntype = s3\n";
+        let in_use = std::collections::HashSet::from(["stellarshot-deadbeef".to_owned()]);
+        assert_eq!(unused_remotes(text, &in_use), ["stellarshot-0123abcd"]);
+    }
+
+    #[test]
+    fn unused_remotes_are_removed_and_the_file_stays_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("rclone.conf");
+        std::fs::write(
+            &config,
+            "[stellarshot-0123abcd]\ntype = drive\ntoken = secret-token\n\n\
+             [stellarshot-deadbeef]\ntype = sftp\nhost = h\n\n\
+             [my-own]\ntype = s3\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let in_use = std::collections::HashSet::from(["stellarshot-deadbeef".to_owned()]);
+
+        let removed = remove_unused_remotes(&config, &in_use).unwrap();
+
+        assert_eq!(removed, ["stellarshot-0123abcd"]);
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(!text.contains("secret-token"), "the token is gone: {text}");
+        assert!(text.contains("[stellarshot-deadbeef]\ntype = sftp\nhost = h"));
+        assert!(
+            text.contains("[my-own]"),
+            "a section the user added is kept"
+        );
+        let mode = std::fs::metadata(&config).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(
+            remove_unused_remotes(&dir.path().join("missing.conf"), &in_use).unwrap(),
+            Vec::<String>::new(),
+            "no configuration yet is nothing to remove"
+        );
+    }
 
     #[test]
     fn a_client_secret_is_redacted_for_the_log_but_nothing_else_is() {

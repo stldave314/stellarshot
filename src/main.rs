@@ -18,6 +18,7 @@ fn main() -> ExitCode {
         Some("--run") => return stellarshot::runner::main(&args[1..]),
         Some("--scheduled") => return stellarshot::scheduled::main(&args[1..]),
         Some("--await-notification") => return stellarshot::notify::await_main(&args[1..]),
+        Some("--background") => return stellarshot::background_main(),
         _ => {}
     }
 

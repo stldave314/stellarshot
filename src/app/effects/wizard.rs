@@ -257,6 +257,9 @@ impl App {
             scheduled,
             remember_task,
             self.secure_rest_passwords(),
+            // Remotes copied for choices not taken, or the one an edit
+            // replaced.
+            self.sweep_rclone_remotes(),
             self.run_profile_effects(&id, effects),
         ])
     }

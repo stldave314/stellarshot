@@ -272,11 +272,20 @@ search-results = { $count ->
 search-all-placeholder = Jedi Momentuufnahm durchsueche
 search-all-intro = Find e Datei nach ihrem Name über jedi Momentuufnahm windurch, egal wo si gsicheret worde isch.
 search-all-none = Nüt hät i irgendere Momentuufnahm übereigstimmt.
+search-all-truncated = Es git meh Träffer, als zeigt wärde chönd. Sueche gnauer, zum de Rescht z gseh.
+search-all-more-snapshots = { $count ->
+    [one] und 1 wiiteri Momentuufnahm
+   *[other] und { $count } wiiteri Momentuufnahme
+}
 folder-empty = De Ordner isch leer.
 versions-title = Versione
 versions-same = { $count ->
     [one] ↳ i 1 älterer Momentuufnahm glich
    *[other] ↳ i { $count } ältere Momentuufnahme glich
+}
+versions-more = { $count ->
+    [one] 1 älteri Version wird nöd zeigt.
+   *[other] { $count } älteri Versione wärded nöd zeigt.
 }
 open-copy = Kopie öffne
 download = Abelade …
@@ -668,13 +677,18 @@ desktop-keywords = Sicherig;Datesicherig;Backup;Momentuufnahm;Widerherstelle;res
 desktop-new-backup = Neui Sicherig
 desktop-restore = Dateie widerherstelle
 applet-comment = Öb grad e Sicherig lauft und wänn jedi s letscht Mal klappt hät
-metainfo-summary = Sicher dini Dateie mit verschlüsslete Momentuufnahme
+metainfo-summary = Sicher Dateie und hol si zrugg
+applet-metainfo-summary = Dini Sicherige im Panel gseh
 
 # Snapshots page, and removing files from snapshots
 manage-snapshots = Momentuufnahme verwalte…
 snapshots-title = Momentuufnahme vo { $name }
 snapshots-filter = Nach Name, Schlagwort oder Notiz filtere
 snapshots-no-match = Kei Momentuufnahm passt.
+snapshots-more = { $count ->
+    [one] 1 wiiteri Momentuufnahm passt. Gränz de Filter ii, zum si z gseh.
+   *[other] { $count } wiiteri Momentuufnahme passed. Gränz de Filter ii, zum si z gseh.
+}
 snapshot-open = Die Momentuufnahm öffne
 snapshot-pinned = Aagheftet
 snapshot-tag-list = Schlagwörter: { $tags }
@@ -744,3 +758,6 @@ remove-files-still-held = { $count ->
     [one] Ei anderi Momentuufnahm het si no
    *[other] { $count } anderi Momentuufnahme händ si no
 }: die vomene andere Computer oder enere andere Sicherig, oder da nöd gwählti. Iri Date bliibed im Speicher.
+background-reason = Füehrt dini plante Sicherige im Hintergrund us, ab de Aamäldig
+background-refused = Planti Sicherige bruuched d Erlaubnis, im Hintergrund z laufe, und die isch nöd erteilt worde. Erlaub Stellarshot i dine Systemiistellige, im Hintergrund z laufe, und speicher de Ziitplan dänn nomal.
+sandbox-unavailable = I de Flatpak-Version vo Stellarshot nöd verfüegbar: Si cha usserhalb vo ihrer Sandbox kei Programm uusfüehre und kei Ordner iihänke.

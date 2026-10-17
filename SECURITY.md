@@ -55,7 +55,17 @@ note in the [README](README.md).
   only by you. The file is made private before a token is written into it,
   even if it had somehow become readable by others. Your own `~/.config/rclone/rclone.conf` is never written; a
   remote you pick from it is copied, so removing a Stellarshot backup cannot
-  break a remote you use for something else.
+  break a remote you use for something else. A sign-in or copy no backup uses
+  any more (the backup was removed, or the wizard discarded or finished with
+  another choice) is deleted from Stellarshot's file, tokens and all.
+- **Restore checks the snapshot's shape, not just its names.** Nothing may
+  sit inside something that is not a folder, such as a symlink, and no name
+  may appear twice in one folder; a crafted snapshot that tries either is
+  refused before anything is written. The same check covers downloading a
+  folder, searching a snapshot and finding deleted files.
+- **Opening a repository someone else shares does not adopt its folders.** A
+  backup made by opening an existing repository starts with this computer's
+  own folders from it, or none, never another computer's.
 - **SSH servers must be known.** SFTP backups check the server's host key
   against your `~/.ssh/known_hosts`, so an unknown server or a changed key is
   refused rather than trusted. Stellarshot never stores an SSH password; it

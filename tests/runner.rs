@@ -139,6 +139,43 @@ fn runner_reports_wrong_password() {
     assert_eq!(fixture.snapshot_count(), 0);
 }
 
+/// The window's Quit lets a running child outlive it, which closes the pipe
+/// the child's stderr goes to. Rust ignores SIGPIPE, so writing an error
+/// there fails with EPIPE, and `eprintln!` panics on that: the child exited
+/// 101 without ever reporting the error, or, inside its SIGTERM handler,
+/// hung for good holding the repository lock.
+#[test]
+fn an_error_with_nobody_reading_stderr_is_still_reported() {
+    let fixture = Fixture::new();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stellarshot"))
+        .args(["--run", "backup"])
+        .env("XDG_RUNTIME_DIR", fixture.runtime_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stderr.take());
+    let mut stdin = child.stdin.take().unwrap();
+    stdin
+        .write_all(&serde_json::to_vec(&fixture.backup_job("wrong")).unwrap())
+        .unwrap();
+    drop(stdin);
+
+    let output = child.wait_with_output().unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "a failure, not a panic");
+    let last = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .last()
+        .map(String::from);
+    match last.as_deref().map(serde_json::from_str::<Event>) {
+        Some(Ok(Event::Error { error })) => assert_eq!(error.kind, ErrorKind::WrongPassword),
+        other => panic!("expected the error event, got {other:?}"),
+    }
+}
+
 #[test]
 fn runner_rejects_an_unknown_operation() {
     let status = Command::new(env!("CARGO_BIN_EXE_stellarshot"))
@@ -541,6 +578,66 @@ fn an_after_success_hook_runs_once_the_backup_has_actually_finished() {
     assert!(status.success(), "events: {events:?}");
     assert!(marker.exists());
     assert_eq!(fixture.snapshot_count(), 1, "the backup itself still ran");
+}
+
+/// A SIGTERM (Cancel, logout, `systemctl --user stop`) that arrives while an
+/// After hook is running must let it finish: it is the hook that puts things
+/// back ("start the database again"). It used to be killed outright, by the
+/// same step that stops a Before hook.
+#[test]
+fn a_sigterm_during_an_after_hook_lets_it_finish() {
+    let fixture = Fixture::new();
+    let started = fixture.dir.path().join("after-started");
+    let finished = fixture.dir.path().join("after-finished");
+    let job = Job {
+        hooks: vec![Hook {
+            name: "slow after".to_owned(),
+            command: format!(
+                "sh -c 'touch {}; sleep 3; touch {}'",
+                started.display(),
+                finished.display()
+            ),
+            timing: HookTiming::After,
+            enabled: true,
+        }],
+        ..fixture.backup_job(PASSWORD)
+    };
+    // In a process group of its own, as the window starts every child: on
+    // its way out a child signals its whole group, which would otherwise be
+    // this test's.
+    let mut child = {
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_stellarshot"))
+            .args(["--run", "backup"])
+            .env("XDG_RUNTIME_DIR", fixture.runtime_dir())
+            .process_group(0)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(&serde_json::to_vec(&job).unwrap()).unwrap();
+        drop(stdin);
+        child
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !started.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the After hook never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let pid = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
+    let status = child.wait().unwrap();
+
+    assert!(
+        finished.exists(),
+        "the After hook was cut off (exit {status:?})"
+    );
 }
 
 #[test]

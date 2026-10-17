@@ -26,7 +26,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::constants::{IMPORT_NAME_MAX_CHARS, RETENTION_MAX_DAYS};
+use crate::constants::{IMPORT_MAX_PROFILES, IMPORT_NAME_MAX_CHARS, RETENTION_MAX_DAYS};
 use crate::debug::CONFIG;
 use crate::debug_log;
 use crate::engine::redact_url;
@@ -169,7 +169,10 @@ pub fn merge(existing: &[Profile], export: &Export) -> Merged {
             counts.skipped += 1;
             continue;
         }
-        if !profile::valid_id(&profile.id)
+        // A real export holds a handful; tens of thousands of tiny ones
+        // would each be saved, scheduled and listed, and freeze the window.
+        if counts.added >= IMPORT_MAX_PROFILES
+            || !profile::valid_id(&profile.id)
             || !remote_is_safe(&profile.destination)
             || !rest_url_is_sane(&profile.destination)
             || !retention_is_sane(profile.retention)
@@ -253,10 +256,8 @@ pub fn store_history(history: &[(String, Vec<Event>)]) {
 fn remote_is_safe(destination: &Destination) -> bool {
     match destination {
         Destination::Rclone { remote, .. } => profile::valid_rclone_remote(remote),
-        Destination::Local { .. }
-        | Destination::Removable { .. }
-        | Destination::Sftp { .. }
-        | Destination::Rest { .. } => true,
+        Destination::Local { .. } | Destination::Removable { .. } => destination.paths_are_sane(),
+        Destination::Sftp { .. } | Destination::Rest { .. } => true,
     }
 }
 
@@ -499,6 +500,46 @@ mod tests {
             }
         );
         assert!(merged.profiles.is_empty(), "{:?}", merged.profiles);
+    }
+
+    #[test]
+    fn an_import_adds_at_most_so_many_backups() {
+        let export = Export {
+            version: 1,
+            profiles: (0..IMPORT_MAX_PROFILES + 50)
+                .map(|n| profile(&format!("p{n}")))
+                .collect(),
+            history: Vec::new(),
+        };
+
+        let merged = merge(&[], &export);
+
+        assert_eq!(merged.counts.added, IMPORT_MAX_PROFILES);
+        assert_eq!(merged.counts.rejected, 50);
+    }
+
+    #[test]
+    fn a_relative_folder_or_a_drive_path_leaving_the_drive_is_rejected_on_import() {
+        let mut relative = profile("relative-folder");
+        relative.destination = Destination::Local {
+            path: "rclone::sftp,host=h:x".into(),
+        };
+        let mut escaping = profile("escaping-drive");
+        escaping.destination = Destination::Removable {
+            uuid: "1111-AAAA".into(),
+            relative_path: "../../home/x".into(),
+            label: "Backup".into(),
+        };
+        let export = Export {
+            version: 1,
+            profiles: vec![relative, escaping],
+            history: Vec::new(),
+        };
+
+        let merged = merge(&[], &export);
+
+        assert_eq!(merged.counts.rejected, 2, "{:?}", merged.counts);
+        assert_eq!(merged.profiles.len(), 0);
     }
 
     #[test]

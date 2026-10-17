@@ -22,7 +22,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::constants::APP_ID;
-use crate::constants::{KEYRING_TIMEOUT, KEYRING_UNLOCK_TIMEOUT};
+use crate::constants::{KEYRING_DISMISSAL_MEMORY, KEYRING_TIMEOUT, KEYRING_UNLOCK_TIMEOUT};
 use crate::debug::KEYRING;
 use crate::engine::Secret;
 use crate::{debug_log, error_log};
@@ -42,6 +42,23 @@ static MAY_PROMPT: AtomicBool = AtomicBool::new(false);
 /// password while another saves one) would otherwise each raise a prompt.
 /// The second waits here and then finds the keyring already unlocked.
 static UNLOCKING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// When the last unlock prompt was dismissed, or went unanswered. Requests
+/// queued behind it (every backup's page asking at once) then fail at once,
+/// rather than each raise the prompt the user just said no to.
+static DISMISSED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// Whether a prompt dismissed at `dismissed` is recent enough at `now` not
+/// to ask again yet.
+fn recently_dismissed(dismissed: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    dismissed.is_some_and(|at| now.saturating_duration_since(at) < KEYRING_DISMISSAL_MEMORY)
+}
+
+fn note_dismissed(at: Option<std::time::Instant>) {
+    *DISMISSED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = at;
+}
 
 /// Let this process ask a locked keyring to unlock, which makes the keyring
 /// show its own password prompt. For the window only, called once as it
@@ -67,6 +84,12 @@ async fn open(what: &str) -> Result<oo7::Keyring, String> {
     if !bounded(keyring.is_locked()).await? {
         return Ok(keyring);
     }
+    let dismissed = *DISMISSED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if recently_dismissed(dismissed, std::time::Instant::now()) {
+        return Err("the keyring's unlock prompt was just dismissed".to_owned());
+    }
     debug_log!(
         KEYRING,
         "the keyring is locked: asking it to unlock for {what}"
@@ -74,13 +97,16 @@ async fn open(what: &str) -> Result<oo7::Keyring, String> {
     match tokio::time::timeout(KEYRING_UNLOCK_TIMEOUT, keyring.unlock()).await {
         Ok(Ok(())) => {
             debug_log!(KEYRING, "the keyring was unlocked");
+            note_dismissed(None);
             Ok(keyring)
         }
         Ok(Err(err)) => {
             error_log!(KEYRING, "the keyring was not unlocked for {what}: {err}");
+            note_dismissed(Some(std::time::Instant::now()));
             Err(err.to_string())
         }
         Err(_) => {
+            note_dismissed(Some(std::time::Instant::now()));
             error_log!(
                 KEYRING,
                 "the keyring's unlock prompt was not answered for {what}"
@@ -131,6 +157,15 @@ async fn load_item(attrs: &[(&str, &str); 2], what: &str) -> Result<Option<Secre
         debug_log!(KEYRING, "no {what} remembered");
         return Ok(None);
     };
+    if items.len() > 1 {
+        // Each store replaces the one before, so this should not happen;
+        // the first is used, and the log says which question to ask.
+        error_log!(
+            KEYRING,
+            "{} items match {what}; using the first",
+            items.len()
+        );
+    }
     let secret = bounded(item.secret())
         .await
         .inspect_err(|err| error_log!(KEYRING, "could not read {what} from the keyring: {err}"))?;
@@ -237,4 +272,18 @@ pub async fn forget_rest_password(profile_id: &str) -> Result<(), String> {
         &format!("the REST server password for profile {profile_id}"),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dismissed_prompt_is_not_raised_again_straight_away() {
+        let now = std::time::Instant::now();
+        assert!(!recently_dismissed(None, now));
+        assert!(recently_dismissed(Some(now), now));
+        let later = now + KEYRING_DISMISSAL_MEMORY + std::time::Duration::from_secs(1);
+        assert!(!recently_dismissed(Some(now), later));
+    }
 }

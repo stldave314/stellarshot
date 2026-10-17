@@ -148,6 +148,8 @@ pub enum Role {
     Run,
     /// A `--scheduled` run.
     Scheduled,
+    /// The `--background` process that runs scheduled backups in a sandbox.
+    Background,
     /// [`init`] was never called before the first log line: should never
     /// happen outside a bug in some future entry point, but still appends
     /// rather than guessing this is the window and truncating.
@@ -161,6 +163,7 @@ impl Role {
             Self::Applet => "applet",
             Self::Run => "run",
             Self::Scheduled => "scheduled",
+            Self::Background => "background",
             Self::Unknown => "unknown",
         }
     }
@@ -251,9 +254,12 @@ macro_rules! debug_log {
 
 /// Report a genuine error: always to stderr, and to the debug log as well.
 ///
-/// Unlike [`debug_log!`] this is never compiled out.
+/// Unlike [`debug_log!`] this is never compiled out. A failed write to
+/// stderr is ignored rather than panicking as `eprintln!` would: a `--run`
+/// child can outlive the window its stderr was piped to, and must still
+/// report the error on stdout and exit as it should.
 pub fn error(category: &str, args: Arguments<'_>) {
-    eprintln!("stellarshot: {category}: {args}");
+    let _ = writeln!(std::io::stderr(), "stellarshot: {category}: {args}");
     write(category, args);
 }
 

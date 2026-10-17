@@ -10,6 +10,7 @@ use cosmic::{Element, theme};
 use super::Message;
 use super::child;
 use super::config::StellarshotConfig;
+use crate::core::redacted::Redacted;
 use crate::engine::EngineError;
 use crate::fl;
 
@@ -73,8 +74,8 @@ pub enum Dialog {
     /// changing it needs the repository open.
     ChangePassword {
         id: String,
-        password: String,
-        confirm: String,
+        password: Redacted,
+        confirm: Redacted,
         busy: bool,
     },
 }
@@ -196,8 +197,8 @@ pub enum DialogMessage {
     /// "just dismiss" here.
     FinishWizardLater,
     DiscardWizard,
-    NewPassword(String),
-    ConfirmPassword(String),
+    NewPassword(Redacted),
+    ConfirmPassword(Redacted),
     /// One line from the `change-password` child; see [`profile::Message::Pinned`]
     /// for why the raw event, not just the outcome, is threaded through.
     PasswordChanged(String, child::ChildEvent),
@@ -329,7 +330,7 @@ pub(super) fn view<'a>(dialog: &'a Dialog, config: &StellarshotConfig) -> Elemen
                     widget::secure_input(fl!("password"), password.as_str(), None, true)
                         .id(new_password_input_id())
                         .label(fl!("password"))
-                        .on_input(|text| Message::Dialog(DialogMessage::NewPassword(text))),
+                        .on_input(|text| Message::Dialog(DialogMessage::NewPassword(text.into()))),
                 )
                 .push(
                     widget::secure_input(
@@ -339,7 +340,7 @@ pub(super) fn view<'a>(dialog: &'a Dialog, config: &StellarshotConfig) -> Elemen
                         true,
                     )
                     .label(fl!("wizard-confirm"))
-                    .on_input(|text| Message::Dialog(DialogMessage::ConfirmPassword(text)))
+                    .on_input(|text| Message::Dialog(DialogMessage::ConfirmPassword(text.into())))
                     .on_submit(|_| Message::Dialog(DialogMessage::Confirm)),
                 );
             if mismatch {
@@ -426,6 +427,19 @@ mod tests {
 
     /// A busy dialog pushed back behind Quit must still close when its
     /// operation finishes, or it reappears with nothing left to end it.
+    #[test]
+    fn a_password_being_chosen_never_shows_in_debug_output() {
+        let dialog = Dialog::ChangePassword {
+            id: "a".into(),
+            password: "hunter2".into(),
+            confirm: "hunter2".into(),
+            busy: false,
+        };
+        assert!(!format!("{dialog:?}").contains("hunter2"));
+        let message = DialogMessage::NewPassword("hunter2".into());
+        assert!(!format!("{message:?}").contains("hunter2"));
+    }
+
     #[test]
     fn an_operation_closes_its_own_dialog_even_behind_another() {
         let mut dialogs = Dialogs::default();

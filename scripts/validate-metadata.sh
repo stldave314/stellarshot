@@ -147,6 +147,24 @@ check "launchable" \
     "$APP_ID.desktop"
 check "desktop Icon=" "$(sed -n 's/^Icon=//p' "$DESKTOP")" "$APP_ID"
 
+# The COSMIC Store fills its "Made for COSMIC" section only with components
+# that provide this ID; without it the app is listed nowhere as one.
+if grep -q '<id>com.system76.CosmicApplication</id>' "$METAINFO"; then
+    printf '   OK   provides com.system76.CosmicApplication\n'
+else
+    printf '   FAIL missing <provides><id>com.system76.CosmicApplication</id>\n'
+    fail=1
+fi
+
+# Flathub's quality guidelines: a summary over 35 characters is cut short.
+summary=$(sed -n 's:^  <summary>\(.*\)</summary>$:\1:p' "$METAINFO" | head -1)
+if [[ -n "$summary" && ${#summary} -le 35 ]]; then
+    printf '   OK   summary length: %s\n' "${#summary}"
+else
+    printf '   FAIL summary must be 1 to 35 characters, is %s: %s\n' "${#summary}" "$summary"
+    fail=1
+fi
+
 # Store front-ends need these; a missing developer name or vcs-browser URL
 # leaves the listing without an author or a link to the source.
 for tag in "<developer id=" "<name>" "<content_rating" "vcs-browser" "<branding>"; do
@@ -157,6 +175,34 @@ for tag in "<developer id=" "<name>" "<content_rating" "vcs-browser" "<branding>
         fail=1
     fi
 done
+
+# The applet's own listing: what puts it in the COSMIC Store's Applets
+# category, which lists only components providing this ID.
+APPLET_METAINFO="res/$APP_ID.Applet.metainfo.xml"
+echo "== $APPLET_METAINFO: store presentation"
+if [[ -f "$APPLET_METAINFO" ]]; then
+    check "applet component id" \
+        "$(sed -n 's:.*<id>\(.*\)</id>.*:\1:p' "$APPLET_METAINFO" | head -1)" "$APP_ID.Applet"
+    check "applet release version matches Cargo.toml" \
+        "$(sed -n 's/.*<release version="\([^"]*\)".*/\1/p' "$APPLET_METAINFO" | head -1)" \
+        "$cargo_version"
+    if grep -q '<id>com.system76.CosmicApplet</id>' "$APPLET_METAINFO"; then
+        printf '   OK   provides com.system76.CosmicApplet\n'
+    else
+        printf '   FAIL missing <provides><id>com.system76.CosmicApplet</id>\n'
+        fail=1
+    fi
+    applet_summary=$(sed -n 's:^  <summary>\(.*\)</summary>$:\1:p' "$APPLET_METAINFO" | head -1)
+    if [[ -n "$applet_summary" && ${#applet_summary} -le 35 ]]; then
+        printf '   OK   applet summary length: %s\n' "${#applet_summary}"
+    else
+        printf '   FAIL applet summary must be 1 to 35 characters: %s\n' "$applet_summary"
+        fail=1
+    fi
+else
+    printf '   FAIL %s is missing\n' "$APPLET_METAINFO"
+    fail=1
+fi
 
 # Icons named in the desktop entry must actually be installed under the app ID,
 # or the store shows a generic placeholder.

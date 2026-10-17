@@ -28,12 +28,20 @@ const READY_MARKER: &str = "Serving restic REST API on ";
 ///
 /// Declare it after whatever talks to it, so that is dropped first: fields
 /// drop in declaration order.
-#[derive(Debug)]
 pub struct Serve {
     child: Child,
     /// `http://user:password@host:port/`, the credentials being this
     /// process's own one-off ones.
     url: String,
+}
+
+/// Leaves out the URL, which carries this process's one-off credentials.
+impl std::fmt::Debug for Serve {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Serve")
+            .field("pid", &self.child.id())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Serve {
@@ -158,8 +166,9 @@ impl Drop for Serve {
     fn drop(&mut self) {
         debug_log!(RCLONE, "stopping rclone serve");
         let _ = self.child.kill();
-        // Without this the process stays a zombie until the program exits.
-        let _ = self.child.wait();
+        // Without this the process stays a zombie until the program exits;
+        // bounded, so one stuck in the kernel cannot hang whatever drops it.
+        crate::bounded::reap_within(&mut self.child, crate::constants::DRAIN_AFTER_EXIT);
     }
 }
 
@@ -221,6 +230,13 @@ fn is_our_serve(cmdline: &[u8], config: &Path) -> bool {
 
 /// Whether `pid`'s parent is a Stellarshot process (the window, a `--run`
 /// child or a `--scheduled` run), which still owns and will stop it.
+///
+/// Judged by the binary the parent runs, not its name: the window starts
+/// every `--run` child through `/proc/self/exe`, and the kernel names a
+/// process after the path it was executed through, so a live child is
+/// called `exe`. Every Stellarshot process runs as this user, so a parent
+/// whose binary this user cannot read (`init`, after an orphan is
+/// re-parented to it) is not one.
 fn parent_is_stellarshot(pid: i32) -> bool {
     let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
         return true;
@@ -232,8 +248,11 @@ fn parent_is_stellarshot(pid: i32) -> bool {
     else {
         return true;
     };
-    std::fs::read_to_string(format!("/proc/{ppid}/comm"))
-        .is_ok_and(|comm| comm.trim() == "stellarshot")
+    let Ok(binary) = std::fs::read_link(format!("/proc/{ppid}/exe")) else {
+        return false;
+    };
+    let binary = crate::exe::strip_deleted_marker(&binary).unwrap_or(binary);
+    binary.file_name() == Some(std::ffi::OsStr::new("stellarshot"))
 }
 
 /// The address in a "Serving restic REST API on …" line. rclone 1.61 and
@@ -404,6 +423,56 @@ mod tests {
         assert_eq!(stop_orphans(&config), 1);
         let status = child.wait().unwrap();
         assert!(!status.success(), "stopped, not finished: {status:?}");
+    }
+
+    /// The window starts every `--run` child through `/proc/self/exe`, and
+    /// the kernel names a process after the path it was executed through, so
+    /// such a child is called `exe`, not `stellarshot`. A serve it owns is
+    /// not left over and must survive the sweep. The stand-in parent here is
+    /// a copy of `sh` named `stellarshot`, run through a symlink named `exe`:
+    /// the same name and the same binary a real `--run` child has.
+    #[test]
+    fn a_serve_owned_by_a_run_child_is_kept() {
+        use std::io::BufRead;
+        let dir = tempfile::TempDir::new().unwrap();
+        let config = dir.path().join("rclone.conf");
+        let binary = dir.path().join("stellarshot");
+        std::fs::copy("/bin/sh", &binary).unwrap();
+        let link = dir.path().join("exe");
+        std::os::unix::fs::symlink(&binary, &link).unwrap();
+        // The grandchild re-executes itself as `rclone … serve restic`, so
+        // its parent stays the `exe` shell.
+        let script = format!(
+            "python3 -c 'import os; os.execv(\"/usr/bin/python3\", [\"rclone\", \"-c\", \"import time; time.sleep(60)\", \"serve\", \"restic\", \"--config\", \"{}\"])' & echo $!; wait",
+            config.display()
+        );
+        let mut parent = std::process::Command::new(&link)
+            .args(["-c", &script])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("a copy of sh runs");
+        let mut line = String::new();
+        std::io::BufReader::new(parent.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let serve: i32 = line.trim().parse().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        let comm = std::fs::read_to_string(format!("/proc/{}/comm", parent.id())).unwrap();
+        assert_eq!(
+            comm.trim(),
+            "exe",
+            "the stand-in is named as a real child is"
+        );
+
+        let stopped = stop_orphans(&config);
+
+        let alive = std::path::Path::new(&format!("/proc/{serve}")).exists();
+        if let Some(pid) = rustix::process::Pid::from_raw(serve) {
+            let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        }
+        let _ = parent.wait();
+        assert_eq!(stopped, 0, "a live child's serve is not left over");
+        assert!(alive, "and is still running");
     }
 
     #[test]

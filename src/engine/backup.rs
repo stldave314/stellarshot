@@ -13,6 +13,7 @@ use super::error::{EngineError, ErrorKind};
 use super::progress::ProgressSink;
 use super::repo::{Repo, canonicalize_or_raw};
 use super::snapshots::SnapshotSummary;
+use crate::constants::EXCLUDE_FILE_MAX_BYTES;
 use crate::debug::ENGINE;
 use crate::debug_log;
 
@@ -60,6 +61,11 @@ pub struct BackupRequest {
     /// Only the tests and the demo repository set it, to build a history.
     #[serde(default)]
     pub time: Option<i64>,
+    /// Which computer the snapshot says took it; this one's own name if
+    /// unset. Only the tests set it, to stand in for another computer
+    /// sharing the repository.
+    #[serde(default)]
+    pub hostname: Option<String>,
     /// This profile's own tag (see [`crate::engine::profile_tag`]), added to
     /// every snapshot so `forget` can tell this profile's snapshots apart
     /// from another profile's in a repository they share. Empty for none
@@ -156,9 +162,29 @@ impl BackupRequest {
     /// backup silently include whatever it was meant to leave out, possibly
     /// something private, with nothing to show for it.
     fn pattern_file_lines(&self) -> Result<Vec<String>, EngineError> {
+        use std::io::Read;
         let mut lines = Vec::new();
         for path in &self.exclude_pattern_files {
-            let text = std::fs::read_to_string(path).map_err(|err| EngineError::io(path, &err))?;
+            // A regular file of a sensible size: an imported setting could
+            // name `/dev/zero` or a FIFO, read forever or never answered.
+            let file = std::fs::File::open(path).map_err(|err| EngineError::io(path, &err))?;
+            let metadata = file.metadata().map_err(|err| EngineError::io(path, &err))?;
+            if !metadata.is_file() {
+                return Err(EngineError::new(
+                    ErrorKind::Io,
+                    format!("{} is not a regular file", path.display()),
+                ));
+            }
+            let mut text = String::new();
+            file.take(EXCLUDE_FILE_MAX_BYTES + 1)
+                .read_to_string(&mut text)
+                .map_err(|err| EngineError::io(path, &err))?;
+            if text.len() as u64 > EXCLUDE_FILE_MAX_BYTES {
+                return Err(EngineError::new(
+                    ErrorKind::Io,
+                    format!("{} is larger than an exclude file can be", path.display()),
+                ));
+            }
             lines.extend(
                 text.lines()
                     .map(str::to_owned)
@@ -270,6 +296,9 @@ fn new_snapshot(
         let time = jiff::Timestamp::from_second(time)
             .map_err(|err| EngineError::new(ErrorKind::Internal, err.to_string()))?;
         options.time = Some(time.to_zoned(jiff::tz::TimeZone::system()));
+    }
+    if let Some(hostname) = &request.hostname {
+        options.host = Some(hostname.clone());
     }
     if !request.profile_tag.is_empty() {
         options = options.add_tags(&request.profile_tag)?;

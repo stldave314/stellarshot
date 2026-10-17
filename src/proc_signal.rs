@@ -169,11 +169,14 @@ pub fn claim_after_hooks(ticket: Ticket) -> Option<MutexGuard<'static, ()>> {
     )
 }
 
+/// Whether a SIGTERM is being handled: nothing new may start, a Before hook
+/// above all, since the After hooks are already running on its account.
+pub fn terminating() -> bool {
+    state().terminating.load(Ordering::SeqCst)
+}
+
 fn on_term(state: &State) {
     debug_log!(ENGINE, "SIGTERM: stopping");
-    // A Before hook may be running: it is in its own process group, which
-    // the group-wide SIGTERM below does not reach.
-    hooks::kill_running();
     let armed = {
         let mut armed = state.armed.lock().unwrap_or_else(PoisonError::into_inner);
         state.terminating.store(true, Ordering::SeqCst);
@@ -181,6 +184,11 @@ fn on_term(state: &State) {
     };
     match armed {
         Some((_, armed)) => {
+            // Armed means between the Before and After hooks, so a hook
+            // running now is a Before hook: stopped, in its own process
+            // group, which the group-wide SIGTERM below does not reach.
+            // Unarmed, a running hook is an After hook, left to finish.
+            hooks::kill_running();
             for result in hooks::run_after(&armed.hooks, false) {
                 if !result.ok {
                     error_log!(ENGINE, "hook \"{}\" failed: {}", result.name, result.detail);
@@ -206,10 +214,19 @@ fn on_term(state: &State) {
     // but has SIGTERM blocked on every thread, so the extra one just stays
     // pending for the few instructions until `_exit`.
     //
-    // SAFETY: `kill(0, ..)` signals the calling process's own group; `_exit`
-    // never returns.
+    // A Before hook that slipped in between `run_before`'s check of
+    // `terminating` and this is stopped too; the After hooks have finished.
+    hooks::kill_running();
+    // Only a process that leads its own group (a systemd unit, or a child
+    // the window started with a group of its own) may signal it: run from a
+    // script, the group would be the script's.
+    //
+    // SAFETY: `getpgrp` and `getpid` cannot fail; `kill(0, ..)` signals the
+    // calling process's own group; `_exit` never returns.
     unsafe {
-        libc::kill(0, libc::SIGTERM);
+        if libc::getpgrp() == libc::getpid() {
+            libc::kill(0, libc::SIGTERM);
+        }
         libc::_exit(128 + libc::SIGTERM);
     }
 }

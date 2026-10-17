@@ -31,7 +31,7 @@ use crate::fl;
 use crate::run_state;
 use crate::status::{self, Status};
 
-const ID: &str = "io.github.stldave314.Stellarshot.Applet";
+const ID: &str = crate::constants::APPLET_ID;
 
 #[derive(Default)]
 pub struct Applet {

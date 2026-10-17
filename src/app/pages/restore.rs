@@ -24,8 +24,8 @@ use crate::constants::{LIST_ICON_SIZE, RESTORE_MAX_WIDTH};
 use crate::engine::mount::Mount;
 use crate::engine::{
     Browser, Change, ConflictPolicy, DiffEntry, EngineError, EntryKind, FileVersion, GlobalMatch,
-    MissingEntry, Ownership, ProgressEvent, RemoveReport, RestorePreview, RestoreRequest,
-    SnapshotSummary, Target, TreeEntry,
+    GlobalSearch, MissingEntry, Ownership, ProgressEvent, RemoveReport, RestorePreview,
+    RestoreRequest, SnapshotSummary, Target, TreeEntry,
 };
 use crate::fl;
 use crate::runner::Event;
@@ -210,7 +210,7 @@ pub struct RestorePage {
     diff_expanded: BTreeSet<PathBuf>,
     // Search across every snapshot
     global_query: String,
-    global_results: Option<Vec<GlobalMatch>>,
+    global_results: Option<GlobalSearch>,
     // Restoring
     sheet: Option<Sheet>,
     running: Option<Running>,
@@ -263,7 +263,7 @@ pub enum Message {
     ToggleDiffFolder(PathBuf),
     GlobalSearch(String),
     GlobalSearchNow,
-    GlobalFound(String, Result<Vec<GlobalMatch>, EngineError>),
+    GlobalFound(String, Result<GlobalSearch, EngineError>),
     /// Jump to `path`'s folder, in `snapshot`, on the Browse tab.
     JumpToMatch(String, PathBuf),
     /// Open the restore sheet for the current tab's selection.
@@ -1271,6 +1271,13 @@ impl RestorePage {
                 )
                 .push(widget::button::standard(fl!("unmount")).on_press(Message::Unmount))
                 .into(),
+            // FUSE and `fusermount` are the host's, out of a sandbox's reach.
+            None if crate::sandbox::sandboxed() => widget::row::with_capacity(2)
+                .spacing(spacing.space_xs)
+                .align_y(Alignment::Center)
+                .push(widget::button::standard(fl!("restore-mount")))
+                .push(widget::text::caption(fl!("sandbox-unavailable")))
+                .into(),
             None => widget::button::standard(fl!("restore-mount"))
                 .on_press(Message::Mount)
                 .into(),
@@ -1333,11 +1340,25 @@ impl RestorePage {
             .padding([0, 0, 0, spacing.space_xl]);
         column = column.push(widget::text::caption(fl!("versions-title")));
         let mut hidden: i64 = 0;
-        for version in versions {
+        let mut shown = 0;
+        let mut iter = versions.iter();
+        for version in iter.by_ref() {
             if version.same_as_newer {
                 hidden += 1;
                 continue;
             }
+            // Each row is five widgets, rebuilt every frame; a file that
+            // changed hourly for years has thousands of versions.
+            if shown == RESULT_LIMIT {
+                let older = 1 + iter.filter(|version| !version.same_as_newer).count();
+                column = column.push(widget::text::caption(fl!(
+                    "versions-more",
+                    count = (older as i64)
+                )));
+                hidden = 0;
+                break;
+            }
+            shown += 1;
             if hidden > 0 {
                 column = column.push(widget::text::caption(fl!("versions-same", count = hidden)));
                 hidden = 0;
@@ -1568,15 +1589,18 @@ impl RestorePage {
                 list = list.push(widget::text::body(fl!("restore-searching")));
             }
             None => list = list.push(widget::text::body(fl!("search-all-intro"))),
-            Some(results) if results.is_empty() => {
+            Some(results) if results.matches.is_empty() => {
                 list = list.push(widget::text::body(fl!("search-all-none")));
             }
             Some(results) => {
                 list = list.push(widget::text::caption(fl!(
                     "search-results",
-                    count = (results.len() as i64)
+                    count = (results.matches.len() as i64)
                 )));
-                for found in results.iter().take(RESULT_LIMIT) {
+                if results.truncated {
+                    list = list.push(widget::text::caption(fl!("search-all-truncated")));
+                }
+                for found in results.matches.iter().take(RESULT_LIMIT) {
                     list = list.push(self.global_match_row(found));
                 }
             }
@@ -1596,14 +1620,19 @@ impl RestorePage {
             _ => "text-x-generic-symbolic",
         };
         let mut chips =
-            widget::row::with_capacity(found.snapshots.len()).spacing(spacing.space_xxs);
-        for snapshot in &found.snapshots {
-            let id = snapshot.id.clone();
-            let path = found.path.clone();
+            widget::row::with_capacity(found.snapshots.len() + 1).spacing(spacing.space_xxs);
+        for id in &found.snapshots {
             chips = chips.push(
-                widget::button::standard(snapshot.short_id().to_owned())
-                    .on_press(Message::JumpToMatch(id, path)),
+                widget::button::standard(crate::engine::short_id(id).to_owned())
+                    .on_press(Message::JumpToMatch(id.clone(), found.path.clone())),
             );
+        }
+        let unlisted = found.found_in.saturating_sub(found.snapshots.len());
+        if unlisted > 0 {
+            chips = chips.push(widget::text::caption(fl!(
+                "search-all-more-snapshots",
+                count = (unlisted as i64)
+            )));
         }
         widget::column::with_capacity(2)
             .spacing(spacing.space_xxxs)
@@ -2624,7 +2653,10 @@ mod tests {
         page.global_query = "new".into();
         page.update(Message::GlobalSearchNow);
 
-        page.update(Message::GlobalFound("old".into(), Ok(Vec::new())));
+        page.update(Message::GlobalFound(
+            "old".into(),
+            Ok(GlobalSearch::default()),
+        ));
 
         assert!(page.global_results.is_none());
         assert!(page.global_searching.is_some());
@@ -2803,7 +2835,7 @@ mod tests {
     #[test]
     fn an_empty_global_search_clears_any_previous_results_without_a_fetch() {
         let mut page = page_with_snapshots();
-        page.global_results = Some(vec![]);
+        page.global_results = Some(GlobalSearch::default());
         page.global_query = "  ".into();
 
         let effects = page.update(Message::GlobalSearchNow);

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.stldave314.Stellarshot.Applet</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <name>Stellarshot</name>
+  <summary>See your backups from the panel</summary>
+  <summary xml:lang="de">Deine Sicherungen im Panel sehen</summary>
+  <summary xml:lang="sv">Se dina säkerhetskopior i panelen</summary>
+  <summary xml:lang="bg">Архивите ви в панела</summary>
+  <summary xml:lang="gsw">Dini Sicherige im Panel gseh</summary>
+  <developer id="io.github.stldave314">
+    <name>stldave314</name>
+  </developer>
+  <description>
+    <p>
+      A COSMIC panel applet for Stellarshot, the backup application. One icon
+      shows whether a backup is running, has failed, has fallen overdue, or
+      found damage, and its popup lists when each backup last succeeded, with
+      buttons to open Stellarshot or quit it.
+    </p>
+    <p>
+      Add it from COSMIC Settings' panel applet list. Closing Stellarshot's
+      window minimizes it to the applet while it is on a panel.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/stldave314/stellarshot</url>
+  <url type="bugtracker">https://github.com/stldave314/stellarshot/issues</url>
+  <url type="vcs-browser">https://github.com/stldave314/stellarshot</url>
+  <launchable type="desktop-id">io.github.stldave314.Stellarshot.Applet.desktop</launchable>
+  <content_rating type="oars-1.1" />
+  <branding>
+    <color type="primary" scheme_preference="light">#9ac6d8</color>
+    <color type="primary" scheme_preference="dark">#1f3a46</color>
+  </branding>
+  <releases>
+    <release version="0.10.1" date="2026-10-13">
+      <description>
+        <p>A keyring that is locked is asked to unlock.</p>
+        <ul>
+          <li>After logging in without typing the login password, a remembered
+          backup password was not found and a new one could not be saved. The
+          keyring's own unlock prompt now appears when a backup is opened.</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+  <categories>
+    <category>Utility</category>
+  </categories>
+  <provides>
+    <id>com.system76.CosmicApplet</id>
+    <binary>stellarshot-applet</binary>
+  </provides>
+</component>

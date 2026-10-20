@@ -356,21 +356,30 @@ pub fn scrub_url_credentials(text: &str) -> String {
 }
 
 /// One word of [`scrub_url_credentials`]: `word` is what follows `scheme`'s
-/// `://`. A URL that parses has its userinfo cut at the last `@` before its
-/// path, the way URL parsing itself reads a password holding an `@`. One
-/// that does not parse, but holds an `@`, may hide a password with a `/` in
-/// it, where no rule can tell where it ends: the whole word goes.
+/// `://`. Its authority ends where URL parsing ends it, at the first `/`,
+/// `?`, `#` or `\`. A URL that parses with credentials has them cut at the
+/// last `@` in that authority, the way the parser reads a password holding
+/// an `@`. Anything ambiguous goes whole, since a password holding one of
+/// those characters makes the parser end the authority too early, and what
+/// follows then looks like a path or a query: any `@` after the authority
+/// (`alex:12/ss@nas` parses as port 12 and a path), an `@` in the authority
+/// of a URL that parsed without credentials, or any `@` in a word that does
+/// not parse at all.
 fn scrub_word(scheme: &str, word: &str) -> String {
+    const REDACTED: &str = "[redacted]";
+    let authority_end = word.find(['/', '?', '#', '\\']).unwrap_or(word.len());
+    let (authority, rest) = word.split_at(authority_end);
+    let ambiguous = rest.contains('@');
     match url::Url::parse(&format!("{scheme}://{word}")) {
         Ok(parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
-            let authority_end = word.find('/').unwrap_or(word.len());
-            match word[..authority_end].rfind('@') {
-                Some(at) => word[at + 1..].to_owned(),
-                None => word.to_owned(),
+            match authority.rfind('@') {
+                Some(at) if !ambiguous => word[at + 1..].to_owned(),
+                _ => REDACTED.to_owned(),
             }
         }
+        Ok(_) if ambiguous || authority.contains('@') => REDACTED.to_owned(),
         Ok(_) => word.to_owned(),
-        Err(_) if word.contains('@') => "[redacted]".to_owned(),
+        Err(_) if word.contains('@') => REDACTED.to_owned(),
         Err(_) => word.to_owned(),
     }
 }
@@ -777,6 +786,31 @@ mod tests {
     }
 
     #[test]
+    fn scrub_url_credentials_fails_closed_when_the_parser_reads_a_password_as_a_port() {
+        // `?` and `#` end the authority for a URL parser, so these parse
+        // cleanly as host `alex`, port `12`, with no credentials at all.
+        for text in [
+            "error sending request for url (http://alex:12?ss@nas:8000/repo/config)",
+            "error sending request for url (http://alex:12#ss@nas:8000/repo/config)",
+            // A `/` in the password as well, before the `@`.
+            "error sending request for url (http://alex:12?s/s@nas:8000/repo/config)",
+            // Credentials found, but another `@` after a `?`: which `@` ends
+            // the password cannot be told.
+            "error sending request for url (http://alex:p@ss?x@nas:8000/repo/config)",
+            "error sending request for url (http://alex:12\\s/s@nas:8000/repo/config)",
+            // A password with a `/`: read as port 12 and a path.
+            "error sending request for url (http://alex:12/ss@nas:8000/repo/config)",
+            // Credentials found, then an `@` past a `/`: `p@ss/x` may be
+            // the password.
+            "error sending request for url (http://alex:p@ss/x@nas:8000/repo/config)",
+        ] {
+            let scrubbed = scrub_url_credentials(text);
+            assert!(!scrubbed.contains("ss"), "{scrubbed}");
+            assert!(!scrubbed.contains("alex"), "{scrubbed}");
+        }
+    }
+
+    #[test]
     fn scrub_url_credentials_leaves_a_credential_free_message_alone() {
         let text = "error sending request for url (http://nas:8000/repo/config)";
         assert_eq!(scrub_url_credentials(text), text);
@@ -789,12 +823,12 @@ mod tests {
     }
 
     #[test]
-    fn scrub_url_credentials_does_not_mistake_a_path_separator_for_userinfos_end() {
-        // `@` appearing after a `/` in the same word is part of a path or
-        // query, not userinfo (there is no way to have both in one HTTP
-        // URL), so this must be left alone rather than eating part of it.
+    fn scrub_url_credentials_hides_a_url_with_an_at_in_its_path_whole() {
+        // An `@` after a `/` may be in a path, or a password with a `/` in
+        // it (`alex:12/ss@nas` parses as port 12 and a path): the text
+        // cannot tell which, so the word goes whole rather than in part.
         let text = "http://nas:8000/repo/user@example.com/config";
-        assert_eq!(scrub_url_credentials(text), text);
+        assert_eq!(scrub_url_credentials(text), "http://[redacted]");
     }
 
     #[test]

@@ -49,22 +49,35 @@
   <screenshots>
     <screenshot type="default">
       <caption>A backup and its snapshots, with Back Up Now</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.0/docs/screenshots/profile.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.1/docs/screenshots/profile.png</image>
     </screenshot>
     <screenshot>
       <caption>Setting up a backup, with a live size estimate</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.0/docs/screenshots/wizard.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.1/docs/screenshots/wizard.png</image>
     </screenshot>
     <screenshot>
       <caption>Browsing a snapshot to restore files</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.0/docs/screenshots/restore.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.1/docs/screenshots/restore.png</image>
     </screenshot>
     <screenshot>
       <caption>A backup in the light theme</caption>
-      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.0/docs/screenshots/profile-light.png</image>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.11.1/docs/screenshots/profile-light.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.11.1" date="2026-10-19">
+      <description>
+        <p>A password in an address can no longer show through in an error
+        message, and every dependency is up to date.</p>
+        <ul>
+          <li>A REST server password holding a slash, question mark, hash or
+          backslash could be shown in part in an error; any address that
+          could be read more than one way is now hidden whole.</li>
+          <li>libcosmic and the other libraries Stellarshot is built on are
+          updated to their newest versions.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-10-16">
       <description>
         <p>Safer restores and cleaner credentials, and ready for the COSMIC

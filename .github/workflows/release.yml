@@ -66,7 +66,7 @@ jobs:
       # release is built with the compiler it was tested with. CI stays on
       # stable, to hear about a new one early. Raise this with each release
       # (see CONTRIBUTING.md, "Releasing").
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: 1.99.1
           components: clippy
@@ -75,7 +75,7 @@ jobs:
       # trusts whatever an earlier run left there, and a tag push is exactly
       # the run a cache-poisoning attack would aim at.
 
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-deb,cargo-generate-rpm,cargo-auditable
 

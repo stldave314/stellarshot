@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-19
+
+### Security
+
+- **A password in a server address no longer shows through in an error
+  message.** One holding an unencoded `/`, `?`, `#` or `\` made the address
+  read as a server with a port, and part of the password was shown as it
+  was. An address that can be read more than one way is now hidden whole,
+  including one with an `@` in its path, which cannot be told apart from
+  such a password.
+
+### Changed
+
+- **Every dependency at its newest version**, libcosmic included. zbus stays
+  at 5, as libcosmic and the keyring library still need it; the three
+  crates zbus 6 retired are recorded as known in the dependency checks.
+- The GitHub Actions the builds run on are at their newest releases.
+
 ## [0.11.0] - 2026-10-16
 
 ### Added

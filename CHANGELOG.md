@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-28
+
+### Added
+
+- **The panel applet tells you what happened.** Each backup in its popup
+  shows when it last backed up, that backup's total size, new and changed
+  files and the data it added, and the newest entry in its history when that
+  is something else, such as a check or a skipped run. Clicking a backup
+  opens the window on it.
+- **A right-click menu on the applet**: Open Stellarshot, Back Up All Now,
+  Restore Files…, New Backup… and Quit Stellarshot.
+- **Back Up All Now**, from the applet or `stellarshot --back-up-all`, starts
+  every backup with something to back up, each as soon as it is unlocked.
+- **Search everywhere lists each version of a file.** Every match shows its
+  distinct versions, newest first, with the snapshot's date, the file's size
+  and modification time, and how many snapshots kept it unchanged; a file
+  that never changed is one line however many snapshots hold it.
+- **Versions in Browse show each one's modification time** beside its size.
+
+### Changed
+
+- **A new panel icon**: a star inside a circular arrow, in place of a shape
+  that read as a generic drive at panel size.
+- **The applet's popup is laid out as a menu**, its buttons full width and
+  set apart from the list, instead of two left-aligned buttons.
+- **Quit in the applet quits Stellarshot**, asking first if a backup is
+  running, as the window's own Quit does; it used to close only the applet.
+- **Showing a search result marks the file.** Show opens Browse with the
+  file ticked, highlighted and scrolled into view, rather than only its
+  folder.
+- **No password field while the saved one is being fetched.** A backup's
+  page says it is getting the password, then opening the backup, and asks
+  for one only if nothing is remembered or the remembered one no longer
+  works.
+
+### Fixed
+
+- A skipped run in the history read "Skipped:  cannot be reached", missing
+  the destination's name; an unreachable destination, unmet conditions and a
+  locked keyring now each have a sentence of their own.
+
 ## [0.11.1] - 2026-10-19
 
 ### Security

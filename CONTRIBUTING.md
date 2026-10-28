@@ -75,9 +75,9 @@ and publishes it. Before tagging, in one commit:
 2. Set `version` in `Cargo.toml` and let `Cargo.lock` follow (CI builds with
    `--locked`).
 3. Add a `<release version="…" date="…">` entry at the top of
-   `res/io.github.stldave314.Stellarshot.metainfo.xml`, and move all four
-   screenshot `<image>` URLs to `/v<version>/`. Put the same entry at the top
-   of the applet's own `res/io.github.stldave314.Stellarshot.Applet.metainfo.xml`.
+   `res/io.github.stldave314.Stellarshot.metainfo.xml`, and move every
+   screenshot `<image>` URL to `/v<version>/`. Do the same in the applet's own
+   `res/io.github.stldave314.Stellarshot.Applet.metainfo.xml`.
 4. Turn `## [Unreleased]` in `CHANGELOG.md` into `## [<version>] - <date>`
    (the release notes are taken from it) and start a new empty
    `## [Unreleased]`.

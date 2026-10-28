@@ -16,8 +16,10 @@
     <p>
       A COSMIC panel applet for Stellarshot, the backup application. One icon
       shows whether a backup is running, has failed, has fallen overdue, or
-      found damage, and its popup lists when each backup last succeeded, with
-      buttons to open Stellarshot or quit it.
+      found damage. Its popup lists each backup with when it last backed up,
+      what that backup took in, and what has happened since, and its
+      right-click menu backs everything up, restores files, starts a new
+      backup, or opens or quits Stellarshot.
     </p>
     <p>
       Add it from COSMIC Settings' panel applet list. Closing Stellarshot's
@@ -28,12 +30,35 @@
   <url type="bugtracker">https://github.com/stldave314/stellarshot/issues</url>
   <url type="vcs-browser">https://github.com/stldave314/stellarshot</url>
   <launchable type="desktop-id">io.github.stldave314.Stellarshot.Applet.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Each backup's last backup and what happened since, beside the right-click menu</caption>
+      <image>https://raw.githubusercontent.com/stldave314/stellarshot/v0.12.0/docs/screenshots/applet.png</image>
+    </screenshot>
+  </screenshots>
   <content_rating type="oars-1.1" />
   <branding>
     <color type="primary" scheme_preference="light">#9ac6d8</color>
     <color type="primary" scheme_preference="dark">#1f3a46</color>
   </branding>
   <releases>
+    <release version="0.12.0" date="2026-10-28">
+      <description>
+        <p>A more useful panel applet, and a search that tells versions
+        apart.</p>
+        <ul>
+          <li>The applet shows what each backup last did and when, with the
+          last backup's size and changes, and its right-click menu backs
+          everything up, restores, starts a new backup or quits.</li>
+          <li>A new panel icon, and the applet's popup laid out as a menu.</li>
+          <li>Search everywhere lists each version of a file with its size and
+          modification time, showing a file that never changed only once, and
+          Show marks the file in its folder, ready to restore.</li>
+          <li>A backup's page no longer offers a password field while the saved
+          password is still being fetched.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-10-19">
       <description>
         <p>A password in an address can no longer show through in an error

@@ -313,9 +313,12 @@ start, the backup is reading what the repository already holds, which takes a
 while on cloud storage; later, the destination is slow to accept data or is
 limiting requests. The backup carries on by itself either way.
 
-If the password is not remembered, the page asks for it first. Enter it once
-and it is kept for the rest of the session (and in the keyring if you leave
-**Remember password** on).
+When a backup's page opens it first looks for a remembered password (or runs
+the password command), then opens the backup with it, showing what it is
+doing as it goes. The password field appears only if nothing is remembered or
+the remembered password no longer works. Enter it once and it is kept for the
+rest of the session (and in the keyring if you leave **Remember password**
+on).
 
 If your keyring is locked, as it is after logging in without typing your
 login password (automatic login, a fingerprint), Stellarshot asks it to

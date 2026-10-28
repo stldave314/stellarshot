@@ -102,14 +102,35 @@ pub enum SizeEstimateEvent {
     Failed(EngineError),
 }
 
+/// How far the page has got toward a password that opens the repository,
+/// while it has none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Access {
+    /// Nothing asked yet: the page has not been shown since it was opened
+    /// or last locked.
+    #[default]
+    Unchecked,
+    /// Waiting on the keyring, or the password command: it can take
+    /// minutes when the keyring raises its own unlock prompt.
+    Fetching,
+    /// Opening the repository with the remembered password.
+    OpeningSaved,
+    /// Opening the repository with the password just typed: the unlock
+    /// card stays, so a wrong one leaves focus in its field to try again.
+    OpeningTyped,
+    /// Nothing remembered, or it did not open the repository: the user
+    /// types one.
+    Prompt,
+}
+
 /// Everything the page knows beyond the profile's saved settings.
 #[derive(Debug)]
 pub struct ProfileState {
     secret: Option<Secret>,
-    keyring_checked: bool,
+    /// Only meaningful while `secret` is `None`.
+    access: Access,
     unlock_password: String,
     unlock_remember: bool,
-    unlocking: bool,
     /// Whether the unlock field has already been focused once, the first
     /// time this page activates while still locked — a keyboard-only user
     /// landing here otherwise has to Tab or click into it themselves before
@@ -144,6 +165,9 @@ pub struct ProfileState {
     /// Open the restore page as soon as the backup is unlocked: the
     /// desktop entry's "Restore Files" action.
     pub restore_when_unlocked: bool,
+    /// Start a backup as soon as the backup is unlocked: the panel
+    /// applet's "Back Up All Now".
+    pub back_up_when_unlocked: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -272,10 +296,9 @@ impl Default for ProfileState {
     fn default() -> Self {
         Self {
             secret: None,
-            keyring_checked: false,
+            access: Access::Unchecked,
             unlock_password: String::new(),
             unlock_remember: true,
-            unlocking: false,
             unlock_focused: false,
             snapshots: None,
             work: None,
@@ -290,6 +313,7 @@ impl Default for ProfileState {
             history_unreadable: false,
             history_loaded: false,
             restore_when_unlocked: false,
+            back_up_when_unlocked: false,
         }
     }
 }
@@ -365,7 +389,7 @@ impl ProfileState {
         }
         self.secret = None;
         self.snapshots = None;
-        self.keyring_checked = false;
+        self.access = Access::Unchecked;
     }
 
     fn has_snapshots(&self) -> bool {
@@ -400,8 +424,8 @@ impl ProfileState {
     /// Called when the page is shown: look for a remembered password once.
     pub fn activate(&mut self, profile: &Profile) -> Vec<Effect> {
         let mut effects = Vec::new();
-        if !self.keyring_checked && self.secret.is_none() {
-            self.keyring_checked = true;
+        if self.access == Access::Unchecked && self.secret.is_none() {
+            self.access = Access::Fetching;
             effects.push(Effect::LoadKeyring);
         }
         if profile.schedule != Schedule::Manual {
@@ -412,6 +436,16 @@ impl ProfileState {
             effects.push(Effect::FetchHistory);
         }
         effects
+    }
+
+    /// Show the unlock card, focusing its field the first time it appears.
+    fn prompt(&mut self) -> Vec<Effect> {
+        self.access = Access::Prompt;
+        if std::mem::replace(&mut self.unlock_focused, true) {
+            Vec::new()
+        } else {
+            vec![Effect::FocusUnlock]
+        }
     }
 
     /// Start a backup, if one can start.
@@ -428,17 +462,13 @@ impl ProfileState {
     pub fn update(&mut self, message: Message, profile: &Profile) -> Vec<Effect> {
         match message {
             Message::KeyringLoaded(Ok(Some(secret))) => {
-                self.unlocking = true;
+                self.access = Access::OpeningSaved;
                 vec![Effect::Open {
                     secret,
                     remember: false,
                 }]
             }
-            // No password remembered: the unlock card is about to show, so
-            // this is the first moment it is actually worth focusing —
-            // doing it any earlier, before the keyring lookup resolves,
-            // would steal focus into a field that might disappear right
-            // away if a password was found after all.
+            // No password remembered: only now does the unlock card show.
             // A keyring that cannot be reached is, for unlocking by hand, the
             // same as one with nothing remembered: ask for the password.
             Message::KeyringLoaded(
@@ -447,16 +477,11 @@ impl ProfileState {
                     kind: ErrorKind::KeyringUnavailable,
                     ..
                 }),
-            ) => {
-                if self.unlock_focused {
-                    Vec::new()
-                } else {
-                    self.unlock_focused = true;
-                    vec![Effect::FocusUnlock]
-                }
-            }
+            ) => self.prompt(),
             Message::KeyringLoaded(Err(error)) => {
-                vec![Effect::ShowError(fl!("password-command-failed"), error)]
+                let mut effects = self.prompt();
+                effects.push(Effect::ShowError(fl!("password-command-failed"), error));
+                effects
             }
             Message::UnlockPassword(password) => {
                 self.unlock_password = password;
@@ -467,42 +492,53 @@ impl ProfileState {
                 Vec::new()
             }
             Message::Unlock => {
-                if self.unlock_password.is_empty() || self.unlocking {
+                if self.unlock_password.is_empty() || self.access != Access::Prompt {
                     return Vec::new();
                 }
-                self.unlocking = true;
+                self.access = Access::OpeningTyped;
                 vec![Effect::Open {
                     secret: Secret::new(std::mem::take(&mut self.unlock_password)),
                     remember: self.unlock_remember,
                 }]
             }
-            Message::Opened(secret, result) => {
-                self.unlocking = false;
-                match result {
-                    Ok(snapshots) => {
-                        self.secret = Some(secret);
-                        self.snapshots = Some(snapshots);
-                        if std::mem::take(&mut self.restore_when_unlocked) {
-                            return self.update(Message::Restore, profile);
-                        }
-                        Vec::new()
+            Message::Opened(secret, result) => match result {
+                Ok(snapshots) => {
+                    // Should the password stop working later, it is the
+                    // user's to retype: the keyring already gave its own.
+                    self.access = Access::Prompt;
+                    self.secret = Some(secret);
+                    self.snapshots = Some(snapshots);
+                    // Restore first: it only opens a page, while a backup
+                    // takes the work slot that opening it would wait on.
+                    let mut effects = Vec::new();
+                    if std::mem::take(&mut self.restore_when_unlocked) {
+                        effects = self.update(Message::Restore, profile);
                     }
-                    Err(err) => {
-                        self.secret = None;
-                        vec![Effect::ShowError(fl!("open-repo-failed"), err)]
+                    if std::mem::take(&mut self.back_up_when_unlocked) {
+                        effects.extend(self.back_up(profile));
                     }
+                    effects
                 }
-            }
+                Err(err) => {
+                    self.secret = None;
+                    let mut effects = self.prompt();
+                    effects.push(Effect::ShowError(fl!("open-repo-failed"), err));
+                    effects
+                }
+            },
             Message::SnapshotsLoaded(Ok(snapshots)) => {
                 self.snapshots = Some(snapshots);
                 self.forget_missing();
                 Vec::new()
             }
             Message::SnapshotsLoaded(Err(err)) => {
+                let mut effects = Vec::new();
                 if err.kind == ErrorKind::WrongPassword {
                     self.secret = None;
+                    effects = self.prompt();
                 }
-                vec![Effect::ShowError(fl!("open-repo-failed"), err)]
+                effects.push(Effect::ShowError(fl!("open-repo-failed"), err));
+                effects
             }
             Message::BackUpNow => self.back_up(profile),
             Message::Backup(event) => self.on_backup(event),
@@ -870,7 +906,11 @@ impl ProfileState {
         page = page.push(self.status_card(profile, now));
 
         if !self.is_unlocked() {
-            page = page.push(self.unlock_card());
+            page = page.push(match self.access {
+                Access::Prompt | Access::OpeningTyped => self.unlock_card(),
+                Access::Unchecked | Access::Fetching => busy_card(fl!("unlock-fetching")),
+                Access::OpeningSaved => busy_card(fl!("unlock-opening")),
+            });
         } else if let Some(snapshots) = &self.snapshots {
             page = page.push(self.snapshot_list(snapshots, profile.append_only));
         }
@@ -1086,8 +1126,8 @@ impl ProfileState {
 
     fn unlock_card(&self) -> Element<'_, Message> {
         let spacing = theme::active().cosmic().spacing;
-        let unlock =
-            (!self.unlock_password.is_empty() && !self.unlocking).then_some(Message::Unlock);
+        let unlock = (!self.unlock_password.is_empty() && self.access == Access::Prompt)
+            .then_some(Message::Unlock);
         card(
             widget::column::with_capacity(4)
                 .spacing(spacing.space_xs)
@@ -1374,6 +1414,19 @@ fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .into()
 }
 
+/// What the unlock card shows while the page is getting or trying a
+/// password on its own: nothing to type into, so nothing typed is lost
+/// when the remembered password opens the backup a moment later.
+fn busy_card<'a>(label: String) -> Element<'a, Message> {
+    let spacing = theme::active().cosmic().spacing;
+    card(
+        widget::column::with_capacity(2)
+            .spacing(spacing.space_xs)
+            .push(widget::text::title4(label))
+            .push(widget::progress_bar::indeterminate_linear()),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1444,6 +1497,91 @@ mod tests {
             !effects.iter().any(|e| matches!(e, Effect::FocusUnlock)),
             "the unlock field is not refocused every time the keyring is re-checked"
         );
+    }
+
+    #[test]
+    fn no_password_can_be_typed_while_the_keyring_is_asked() {
+        let mut state = ProfileState::new();
+        state.activate(&profile());
+        state.update(Message::UnlockPassword("typed".into()), &profile());
+        let effects = state.update(Message::Unlock, &profile());
+        assert!(effects.is_empty(), "unlocked by hand mid-lookup");
+        assert_eq!(state.access, Access::Fetching);
+    }
+
+    #[test]
+    fn a_remembered_password_opens_without_showing_the_prompt() {
+        let mut state = ProfileState::new();
+        state.activate(&profile());
+        state.update(
+            Message::KeyringLoaded(Ok(Some(Secret::new("pw")))),
+            &profile(),
+        );
+        assert_eq!(state.access, Access::OpeningSaved);
+        state.update(
+            Message::Opened(Secret::new("pw"), Ok(vec![summary(10)])),
+            &profile(),
+        );
+        assert!(state.is_unlocked());
+    }
+
+    #[test]
+    fn a_remembered_password_that_fails_falls_back_to_the_prompt() {
+        let mut state = ProfileState::new();
+        state.activate(&profile());
+        state.update(
+            Message::KeyringLoaded(Ok(Some(Secret::new("stale")))),
+            &profile(),
+        );
+        let effects = state.update(
+            Message::Opened(
+                Secret::new("stale"),
+                Err(EngineError::new(ErrorKind::WrongPassword, "")),
+            ),
+            &profile(),
+        );
+        assert_eq!(state.access, Access::Prompt);
+        assert!(effects.iter().any(|e| matches!(e, Effect::FocusUnlock)));
+        assert!(effects.iter().any(|e| matches!(e, Effect::ShowError(..))));
+    }
+
+    #[test]
+    fn a_failed_password_command_still_shows_the_prompt() {
+        let mut state = ProfileState::new();
+        state.activate(&profile());
+        let effects = state.update(
+            Message::KeyringLoaded(Err(EngineError::new(ErrorKind::Io, "exit 1"))),
+            &profile(),
+        );
+        assert_eq!(state.access, Access::Prompt);
+        assert!(effects.iter().any(|e| matches!(e, Effect::ShowError(..))));
+    }
+
+    #[test]
+    fn locking_asks_the_keyring_again() {
+        let mut state = unlocked();
+        state.lock();
+        let effects = state.activate(&profile());
+        assert!(effects.iter().any(|e| matches!(e, Effect::LoadKeyring)));
+        assert_eq!(state.access, Access::Fetching);
+    }
+
+    #[test]
+    fn back_up_when_unlocked_starts_a_backup_once_opened() {
+        let mut state = ProfileState::new();
+        state.back_up_when_unlocked = true;
+        state.activate(&profile());
+        state.update(
+            Message::KeyringLoaded(Ok(Some(Secret::new("pw")))),
+            &profile(),
+        );
+        let effects = state.update(
+            Message::Opened(Secret::new("pw"), Ok(vec![summary(10)])),
+            &profile(),
+        );
+        assert!(effects.iter().any(|e| matches!(e, Effect::BackUp(_))));
+        assert!(state.is_busy());
+        assert!(!state.back_up_when_unlocked, "only once");
     }
 
     #[test]
@@ -1573,6 +1711,7 @@ mod tests {
     #[test]
     fn unlocking_uses_the_typed_password_and_clears_the_field() {
         let mut state = ProfileState::new();
+        state.update(Message::KeyringLoaded(Ok(None)), &profile());
         state.update(Message::UnlockPassword("typed".into()), &profile());
 
         let effects = state.update(Message::Unlock, &profile());
@@ -1593,6 +1732,10 @@ mod tests {
     #[test]
     fn a_wrong_password_stays_locked_and_is_reported() {
         let mut state = ProfileState::new();
+        state.update(Message::KeyringLoaded(Ok(None)), &profile());
+        state.update(Message::UnlockPassword("wrong".into()), &profile());
+        state.update(Message::Unlock, &profile());
+        assert_eq!(state.access, Access::OpeningTyped);
         let effects = state.update(
             Message::Opened(
                 Secret::new("wrong"),
@@ -1601,6 +1744,8 @@ mod tests {
             &profile(),
         );
         assert!(!state.is_unlocked());
+        assert_eq!(state.access, Access::Prompt);
+        // The field kept its focus: the card never left the screen.
         assert!(matches!(effects.as_slice(), [Effect::ShowError(..)]));
     }
 

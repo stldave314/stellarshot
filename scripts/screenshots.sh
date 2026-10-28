@@ -16,14 +16,19 @@
 # same size, and the real pointer is left alone.
 #
 # The demo profile's password is put in the keyring for the duration of the
-# run, so the profile page opens unlocked, and is removed again on exit.
+# run, so the profile page opens unlocked, and is removed again on exit. The
+# later screenshots (search, search-jump, applet) need no keyring at all:
+# the demo profile gets its password from a command instead, and they run
+# on Xvfb, so nothing of theirs appears on the real screen.
 #
 # Needs: xdotool, ImageMagick (import), a running desktop session with a
-# Secret Service (the keyring), and Xvfb for the folder-tree screenshot.
+# Secret Service (the keyring) for profile, restore and profile-light, and
+# Xvfb for folder-tree, search, search-jump and applet.
 #
 # Usage: scripts/screenshots.sh [name...]
-#   With names (empty, wizard, folder-tree, profile, restore, profile-light),
-#   only those screenshots are written; the others are left as they are.
+#   With names (empty, wizard, folder-tree, profile, restore, profile-light,
+#   search, search-jump, applet), only those screenshots are written; the
+#   others are left as they are.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -63,7 +68,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo build --quiet --bin stellarshot --example demo_repository --example demo_keyring
+cargo build --quiet --bin stellarshot --example demo_repository --example demo_keyring \
+    --example applet_preview
 
 # A small home folder with the kinds of things people back up and leave out.
 HOME_DIR="$DEMO/home/alex"
@@ -73,6 +79,9 @@ head -c 1800000 /dev/urandom > "$HOME_DIR/Pictures/2026/beach.jpg"
 head -c 4200000 /dev/urandom > "$HOME_DIR/Music/album.flac"
 head -c 90000 /dev/urandom > "$HOME_DIR/Documents/Taxes/2025.pdf"
 head -c 24000 /dev/urandom > "$HOME_DIR/Documents/notes.odt"
+# Never changes, unlike notes.odt: a search for "notes" shows one of each.
+printf 'Agenda\n- Budget\n- Holidays\n' > "$HOME_DIR/Documents/meeting notes.txt"
+touch -d '6 days ago' "$HOME_DIR/Documents/meeting notes.txt"
 head -c 900000 /dev/urandom > "$HOME_DIR/.cache/thumbnails/cache.bin"
 head -c 2500000 /dev/urandom > "$HOME_DIR/Downloads/installer.iso"
 head -c 700000 /dev/urandom > "$HOME_DIR/Projects/site/node_modules/lib.js"
@@ -189,12 +198,14 @@ drive_folder_tree() {
     sleep 1
 }
 
-if wanted folder-tree; then
+start_xvfb() {
+    # A display of its own, where clicks land and the real screen is left
+    # alone. Xvfb picks a free display number itself and writes it here.
     command -v Xvfb >/dev/null 2>&1 || {
-        echo "FAIL: Xvfb is required for the folder-tree screenshot" >&2
+        echo "FAIL: Xvfb is required for this screenshot" >&2
         exit 1
     }
-    # Xvfb picks a free display number itself and writes it here.
+    rm -f "$DEMO/display"
     Xvfb -displayfd 1 -screen 0 2880x1800x24 -nolisten tcp > "$DEMO/display" 2>/dev/null &
     XVFB_PID=$!
     for _ in $(seq 50); do
@@ -205,11 +216,19 @@ if wanted folder-tree; then
         echo "FAIL: Xvfb did not start" >&2
         exit 1
     }
-    DISPLAY=":$(cat "$DEMO/display")" WINIT_X11_SCALE_FACTOR="$FOLDER_TREE_SCALE" \
-        run_app folder-tree --new-backup
+}
+
+stop_xvfb() {
     kill "$XVFB_PID"
     wait "$XVFB_PID" 2>/dev/null || true
     XVFB_PID=""
+}
+
+if wanted folder-tree; then
+    start_xvfb
+    DISPLAY=":$(cat "$DEMO/display")" WINIT_X11_SCALE_FACTOR="$FOLDER_TREE_SCALE" \
+        run_app folder-tree --new-backup
+    stop_xvfb
 fi
 
 # 4. A backup profile with snapshots, unlocked from the keyring.
@@ -236,7 +255,9 @@ cat > "$SETTINGS/profiles" <<RON
     ),
 ]
 RON
-DEMO_PASSWORD="$PASSWORD" target/debug/examples/demo_keyring store "$PROFILE_ID"
+if wanted profile || wanted restore || wanted profile-light; then
+    DEMO_PASSWORD="$PASSWORD" target/debug/examples/demo_keyring store "$PROFILE_ID"
+fi
 run_app profile
 
 # 5. Getting files back: the restore page, straight from the desktop
@@ -247,3 +268,122 @@ SETTLE=25 run_app restore --restore
 # 6. The profile page in the light theme, for the second store screenshot.
 echo "Light" > "$SETTINGS/app_theme"
 run_app profile-light
+rm -f "$SETTINGS/app_theme"
+
+# From here on the password comes from a command, not the keyring.
+sed -i "s|last_success: None,|last_success: None,\n        password_command: \"printf $PASSWORD\",|" \
+    "$SETTINGS/profiles"
+
+# 7. Searching every snapshot for "notes": notes.odt changed in each one,
+#    meeting notes.txt in none. Then 8, its second-newest version shown on
+#    the Browse tab, selected and marked. Positions as for folder-tree.
+SEARCH_SCALE=1.75
+SEARCH_WINDOW="1500 1500"
+SEARCH_TAB="${SEARCH_TAB:-1273 259}"
+SEARCH_FIELD="${SEARCH_FIELD:-750 344}"
+SHOW_SECOND_VERSION="${SHOW_SECOND_VERSION:-1385 691}"
+
+drive_search() {
+    local window="$1"
+    # shellcheck disable=SC2086 # two numbers, split on purpose
+    xdotool windowsize --sync "$window" $SEARCH_WINDOW
+    sleep 1
+    xdotool windowfocus "$window"
+    [[ -n "${MEASURE:-}" ]] && import -window "$window" "$MEASURE/measure-1.png"
+    # shellcheck disable=SC2086
+    click_at "$window" $SEARCH_TAB
+    # shellcheck disable=SC2086
+    click_at "$window" $SEARCH_FIELD
+    xdotool type --delay 50 "notes"
+    xdotool key Return
+    sleep 8
+    xdotool mousemove --window "$window" 10 1400
+    sleep 1
+}
+
+drive_search_jump() {
+    local window="$1"
+    drive_search "$window"
+    [[ -n "${MEASURE:-}" ]] && import -window "$window" "$MEASURE/measure-2.png"
+    # shellcheck disable=SC2086
+    click_at "$window" $SHOW_SECOND_VERSION
+    sleep 4
+    # The jump leaves the pointer over a Download button, showing its
+    # tooltip, and a bare move away is not enough to clear it: a click on
+    # empty space below the listing is.
+    click_at "$window" 750 1100
+}
+
+if wanted search || wanted search-jump; then
+    start_xvfb
+    for name in search search-jump; do
+        DISPLAY=":$(cat "$DEMO/display")" WINIT_X11_SCALE_FACTOR="$SEARCH_SCALE" \
+            SETTLE=25 run_app "$name" --restore
+    done
+    stop_xvfb
+fi
+
+# 9. The panel applet's popups, in a plain window (a panel's own popups
+#    cannot be captured): the demo backup plus a second one that has fallen
+#    behind, each with what it last did.
+if wanted applet; then
+    STATE="$DEMO/state/cosmic/$APP_ID/v2"
+    mkdir -p "$STATE"
+    NOW=$(date +%s)
+    cat >> "$SETTINGS/profiles.applet" <<RON
+    (
+        id: "photos-demo",
+        name: "Photos",
+        destination: Local(path: "$DEMO/photos-drive"),
+        sources: ["$HOME_DIR/Pictures"],
+        schedule: Daily,
+        retention: Smart,
+        last_success: Some($((NOW - 4 * 86400))),
+    ),
+]
+RON
+    sed -i '$ d' "$SETTINGS/profiles"
+    cat "$SETTINGS/profiles.applet" >> "$SETTINGS/profiles"
+    rm "$SETTINGS/profiles.applet"
+    cat > "$STATE/run-$PROFILE_ID" <<RON
+(
+    last_success: Some($((NOW - 2 * 3600))),
+    last_check: Some($((NOW - 3600))),
+    last_backup: Some((
+        time: $((NOW - 2 * 3600)),
+        files_new: 2,
+        files_changed: 1,
+        data_added: 1843200,
+        total_bytes: 9254912,
+    )),
+)
+RON
+    cat > "$STATE/event-log-$PROFILE_ID" <<RON
+([
+    (time: $((NOW - 2 * 3600)), kind: BackedUp, source: Desktop),
+    (time: $((NOW - 3600)), kind: Checked(damaged: false), source: Desktop),
+])
+RON
+    cat > "$STATE/run-photos-demo" <<RON
+(
+    last_success: Some($((NOW - 4 * 86400))),
+    last_backup: Some((
+        time: $((NOW - 4 * 86400)),
+        files_new: 41,
+        files_changed: 0,
+        data_added: 196083712,
+        total_bytes: 4831838208,
+    )),
+)
+RON
+    cat > "$STATE/event-log-photos-demo" <<RON
+([
+    (time: $((NOW - 4 * 86400)), kind: BackedUp, source: Desktop),
+    (time: $((NOW - 86400)), kind: Skipped(kind: r#destination-unavailable), source: Desktop),
+])
+RON
+    start_xvfb
+    BIN=target/debug/examples/applet_preview DISPLAY=":$(cat "$DEMO/display")" \
+        WINIT_X11_SCALE_FACTOR="$SEARCH_SCALE" SETTLE=3 run_app applet
+    stop_xvfb
+fi

@@ -51,7 +51,15 @@ preview before anything gets written.
 <td width="50%"><img src="docs/screenshots/wizard.png" alt="Setting up a backup, with a live size estimate" width="100%"></td>
 <td width="50%"><img src="docs/screenshots/restore.png" alt="Browsing a snapshot to restore files" width="100%"></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/search.png" alt="Searching every snapshot: a file that changed listed once per version with its size and modification time, and one that never changed listed once" width="100%"></td>
+<td width="50%"><img src="docs/screenshots/search-jump.png" alt="A search result shown in its snapshot, selected and marked in the folder listing" width="100%"></td>
+</tr>
 </table>
+
+<p align="center">
+  <img src="docs/screenshots/applet.png" alt="The panel applet's popup, with each backup's last backup, its figures and what happened since, beside its right-click menu" width="80%">
+</p>
 
 > **Status: early, and not yet something to trust with your only copy.** You
 > can set up backups of folders to a USB drive, another folder, an SSH server

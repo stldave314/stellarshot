@@ -45,11 +45,21 @@ fn main() {
     for round in 0..count {
         let days_ago = (count - 1 - round) as i64;
         request.time = Some(now - 2 * 3600 - days_ago * 86_400);
+        // A new version each time, growing and dated to its own snapshot,
+        // so a search across them shows each one apart.
+        let notes = source.join("Documents/notes.odt");
         std::fs::write(
-            source.join("Documents/notes.odt"),
-            format!("notes, revision {round}"),
+            &notes,
+            format!("notes, revision {round}\n").repeat(round + 1),
         )
         .expect("the demo source must be writable");
+        let edited = std::time::UNIX_EPOCH
+            + std::time::Duration::from_secs((now - 3 * 3600 - days_ago * 86_400).cast_unsigned());
+        std::fs::File::options()
+            .write(true)
+            .open(&notes)
+            .and_then(|file| file.set_modified(edited))
+            .expect("the demo source must be writable");
         engine::open(&location, &secret)
             .and_then(|repo| repo.backup(&request, Arc::new(NoProgress)))
             .expect("the backup failed");

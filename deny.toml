@@ -18,6 +18,17 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; pulled in through zbus 5, which libcosmic and oo7 require" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; pulled in through zbus 5, which libcosmic and oo7 require" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; pulled in through zbus 5, which libcosmic and oo7 require" },
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml is unmaintained; pulled in transitively through i18n-embed's config reader, not a direct dependency" },
+    # zstd 0.13 / zstd-safe 7, required by rustic_core 0.13.0, the newest
+    # release; the fixes are only in zstd 0.14.3 and zstd-safe 8.2, which no
+    # rustic_core release takes yet. Revisit when one does. rustic_core
+    # only decompresses data that has already passed the repository's
+    # authenticated decryption (`decrypt` before `decode_all` in its
+    # backend/decrypt.rs), so only someone holding the repository key can
+    # hand it a crafted frame.
+    { id = "RUSTSEC-2026-0391", reason = "zstd with_context reuse: rustic_core never calls with_context, only decode_all/encode_all/copy_encode, each on a fresh context" },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe Seekable::decompress: the seekable feature is not enabled, so the code is not compiled in" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe legacy-frame streaming error: rustic_core decompresses only data that passed authenticated decryption, so a crafted frame needs the repository key" },
 ]
 
 [licenses]

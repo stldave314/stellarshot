@@ -275,10 +275,21 @@ search-all-placeholder = Търсене във всяко моментно съ�
 search-all-intro = Намерете файл по име във всяко моментно състояние, независимо къде е бил архивиран.
 search-all-none = Нищо не съвпадна в нито едно моментно състояние.
 search-all-truncated = Съвпаденията са повече, отколкото могат да се покажат. Потърсете нещо по-конкретно, за да видите останалите.
-search-all-more-snapshots = { $count ->
-    [one] и още 1 моментно състояние
-   *[other] и още { $count } моментни състояния
+version-modified = Променен { $time }
+search-all-identical = { $snapshots ->
+    [one] В едно моментно състояние
+   *[other] Еднакъв във всички { $snapshots } моментни състояния
 }
+search-all-summary = { $versions } версии в { $snapshots } моментни състояния
+search-all-version-snapshots = { $count ->
+    [one] 1 моментно състояние
+   *[other] { $count } моментни състояния
+}
+search-all-older-versions = { $count ->
+    [one] и още 1 по-стара версия
+   *[other] и още { $count } по-стари версии
+}
+search-all-show = Показване
 folder-empty = Тази папка е празна.
 versions-title = Версии
 versions-same = { $count ->

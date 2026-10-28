@@ -443,7 +443,7 @@ page at that snapshot.
 | **Browse** | Pick a snapshot from the list (newest first) and move through its folders. Ticked items can also be taken out of the backup altogether with **Remove…** (see [Taking files out of your backups](#taking-files-out)). **Search this snapshot** finds names anywhere in it. **Mount as Folder…** mounts the whole snapshot read-only at a folder you choose, so any application can open it directly (nothing in it can be run as a program from there), with **Open Folder** and **Unmount** while it is live; one left behind by a crash is unmounted the next time Stellarshot starts. Every row has a **Download…** button, saving that file or folder as it is in the chosen snapshot without restoring it, readable only by you. Click a file to see every snapshot that has it; versions identical to the one above them are marked, so you can see when it actually changed. **Open Copy** opens one version read-only without restoring it; **Download…** saves that one version; **Restore This Version…** restores just that one |
 | **Deleted files** | Files under a folder (your first backed-up folder unless you choose another) that are in a backup from the last 30 days but no longer on disk. Each comes back from the newest snapshot that still has it |
 | **Compare** | Choose two snapshots to list what was added, removed and changed between them, grouped by folder behind a count and expanded on request (a folder with only one change is shown directly). Ticking a changed or removed item restores it as it was in the snapshot on the left |
-| **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match shows the snapshots it was found in (up to 20, with a count of the rest); clicking one jumps straight to Browse at that snapshot and folder |
+| **Search everywhere** | Find a file by name across every snapshot at once, not just the one open. Each match lists its distinct versions, newest first, with the snapshot's date, the file's size and modification time, and how many snapshots in a row kept it unchanged; a file that never changed is one line however many snapshots have it (identical means the same content, not merely the same name and size). Up to 20 versions are listed, with a count of the older ones. **Show** opens Browse at that snapshot and folder with the file already ticked and marked, scrolled into view, ready for **Restore…** |
 
 Tick the files and folders you want and press **Restore…**. Then choose:
 
@@ -802,7 +802,8 @@ stored there, only in the keyring when you ask.
 - **Getting files back without the command line.** Browse any snapshot as a
   folder tree, search it, and see every version of a file, with identical
   versions marked. **Search everywhere** finds a file by name across every
-  snapshot at once, not just the one open, and jumps straight to it.
+  snapshot at once, not just the one open, lists each version it went
+  through by size and date, and jumps straight to it, selected.
   **Deleted files** lists what your backups still have that is no longer on
   disk, and **Compare** shows what changed between two snapshots, grouped by
   folder. **Mount as Folder…** opens a whole snapshot read-only, browsable
@@ -1103,8 +1104,8 @@ tagged by category (`ENGINE`, `UI`, `CONFIG`, `SCHED`, `MOUNT`) so you can
 - **Search, Search everywhere, Deleted files, Compare and Versions show at
   most 500 entries, and Manage Snapshots… 200.** Narrow the search or filter,
   choose a smaller folder, or compare snapshots closer together. **Search
-  everywhere** also lists at most 20 snapshots for each file it finds, with a
-  count of the rest. **Search everywhere** finds a name across every snapshot,
+  everywhere** also lists at most 20 versions of each file it finds, with a
+  count of the older ones. **Search everywhere** finds a name across every snapshot,
   not what is inside a file: rustic has no support for searching file
   content, only filenames.
 - **Opening the restore page reads the whole index first,** which can take a

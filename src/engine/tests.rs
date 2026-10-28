@@ -1145,10 +1145,62 @@ fn search_all_finds_every_snapshot_a_name_appears_in() {
     );
     assert_eq!(found[0].path, fixture.source.join("keepme.txt"));
     assert_eq!(
-        found[0].snapshots.len(),
-        2,
+        found[0].found_in, 2,
         "found only in the two snapshots that actually had it"
     );
+    let versions = &found[0].versions;
+    assert_eq!(versions.len(), 2, "its content differs between them");
+    assert_eq!(found[0].version_count, 2);
+    assert_eq!(versions[0].size, 6, "newest first: \"second\"");
+    assert_eq!(versions[1].size, 5, "then \"first\"");
+    assert!(versions[0].time >= versions[1].time);
+    assert!(
+        versions
+            .iter()
+            .all(|v| v.snapshots == 1 && v.modified.is_some())
+    );
+}
+
+#[test]
+fn search_all_shows_a_file_that_never_changed_as_one_version() {
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("steady.txt"), b"same").unwrap();
+    for round in 0..3 {
+        fs::write(fixture.source.join("other.txt"), format!("{round}")).unwrap();
+        back_up(&fixture, &sources(&fixture.source));
+    }
+
+    let found = browser(&fixture).search_all("steady", 10).unwrap().matches;
+
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].found_in, 3);
+    assert_eq!(found[0].version_count, 1, "identical in every snapshot");
+    assert_eq!(found[0].versions.len(), 1);
+    assert_eq!(found[0].versions[0].snapshots, 3, "held by all three");
+}
+
+#[test]
+fn search_all_does_not_merge_a_version_across_a_gap() {
+    // Present, absent, then back with the same content: two runs of the
+    // same version, since the snapshot between them did not have it.
+    let fixture = fixture();
+    fs::create_dir_all(&fixture.source).unwrap();
+    fs::write(fixture.source.join("comeback.txt"), b"x").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    fs::remove_file(fixture.source.join("comeback.txt")).unwrap();
+    fs::write(fixture.source.join("other.txt"), b"y").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+    fs::write(fixture.source.join("comeback.txt"), b"x").unwrap();
+    back_up(&fixture, &sources(&fixture.source));
+
+    let found = browser(&fixture)
+        .search_all("comeback", 10)
+        .unwrap()
+        .matches;
+
+    assert_eq!(found[0].found_in, 2);
+    assert_eq!(found[0].version_count, 2);
 }
 
 #[test]
@@ -1210,12 +1262,20 @@ fn search_all_stays_bounded_on_a_broad_query() {
     assert!(found.truncated, "and the caller is told there were more");
     for found in &found.matches {
         assert_eq!(found.found_in, snapshots, "counted in every snapshot");
-        assert_eq!(
-            found.snapshots.len(),
-            crate::constants::GLOBAL_MATCH_SNAPSHOTS,
-            "but only so many listed"
-        );
+        assert_eq!(found.versions.len(), 1, "never changed: one version");
+        assert_eq!(found.versions[0].snapshots, snapshots);
     }
+    let changing = browser(&fixture).search_all("changing", 10).unwrap();
+    let changing = &changing.matches[0];
+    assert_eq!(
+        changing.version_count, snapshots,
+        "a new version every time"
+    );
+    assert_eq!(
+        changing.versions.len(),
+        crate::constants::GLOBAL_MATCH_SNAPSHOTS,
+        "but only so many listed"
+    );
     let narrow = browser(&fixture).search_all("file-7.txt", 10).unwrap();
     assert_eq!(narrow.matches.len(), 1);
     assert!(!narrow.truncated, "a narrow search is complete");

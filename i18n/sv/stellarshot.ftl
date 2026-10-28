@@ -275,10 +275,21 @@ search-all-placeholder = Sök i alla ögonblicksbilder
 search-all-intro = Hitta en fil efter namn i alla ögonblicksbilder, oavsett var den säkerhetskopierades.
 search-all-none = Inget matchade i någon ögonblicksbild.
 search-all-truncated = Fler träffar än som kan visas. Sök på något mer specifikt för att se resten.
-search-all-more-snapshots = { $count ->
-    [one] och 1 ögonblicksbild till
-   *[other] och { $count } ögonblicksbilder till
+version-modified = Ändrad { $time }
+search-all-identical = { $snapshots ->
+    [one] I en ögonblicksbild
+   *[other] Likadan i alla { $snapshots } ögonblicksbilder
 }
+search-all-summary = { $versions } versioner i { $snapshots } ögonblicksbilder
+search-all-version-snapshots = { $count ->
+    [one] 1 ögonblicksbild
+   *[other] { $count } ögonblicksbilder
+}
+search-all-older-versions = { $count ->
+    [one] och 1 äldre version
+   *[other] och { $count } äldre versioner
+}
+search-all-show = Visa
 folder-empty = Den här mappen är tom.
 versions-title = Versioner
 versions-same = { $count ->

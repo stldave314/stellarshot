@@ -286,10 +286,21 @@ search-all-placeholder = Search every snapshot
 search-all-intro = Find a file by name across every snapshot, wherever it was backed up.
 search-all-none = Nothing matched in any snapshot.
 search-all-truncated = More matched than can be shown. Search for something more specific to see the rest.
-search-all-more-snapshots = { $count ->
-    [one] and 1 more snapshot
-   *[other] and { $count } more snapshots
+version-modified = Modified { $time }
+search-all-identical = { $snapshots ->
+    [one] In one snapshot
+   *[other] The same in all { $snapshots } snapshots
 }
+search-all-summary = { $versions } versions in { $snapshots } snapshots
+search-all-version-snapshots = { $count ->
+    [one] 1 snapshot
+   *[other] { $count } snapshots
+}
+search-all-older-versions = { $count ->
+    [one] and 1 older version
+   *[other] and { $count } older versions
+}
+search-all-show = Show
 folder-empty = This folder is empty.
 versions-title = Versions
 versions-same = { $count ->

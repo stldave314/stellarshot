@@ -237,10 +237,11 @@ pub const APPLET_IDLE_REFRESH: std::time::Duration = std::time::Duration::from_s
 /// many widgets per frame, not the folder's or diff's own real size.
 pub const RESTORE_RESULT_LIMIT: usize = 500;
 
-/// How many snapshots "Search everywhere" lists for one path, as buttons to
-/// jump to it; the rest are counted. A path found in every snapshot of a
-/// years-old hourly backup would otherwise carry thousands of them, cloned
-/// and drawn for each of up to [`RESTORE_RESULT_LIMIT`] rows.
+/// How many distinct versions "Search everywhere" lists for one path, each
+/// with a button to jump to it; the rest are counted. A file changed in
+/// every snapshot of a years-old hourly backup would otherwise carry
+/// thousands of them, cloned and drawn for each of up to
+/// [`RESTORE_RESULT_LIMIT`] rows.
 pub const GLOBAL_MATCH_SNAPSHOTS: usize = 20;
 
 /// The most folders a backup made by opening an existing repository takes

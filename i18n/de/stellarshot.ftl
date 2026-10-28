@@ -275,10 +275,21 @@ search-all-placeholder = Jede Momentaufnahme durchsuchen
 search-all-intro = Finde eine Datei anhand ihres Namens über jede Momentaufnahme hinweg, egal wo sie gesichert wurde.
 search-all-none = Nichts hat in irgendeiner Momentaufnahme übereingestimmt.
 search-all-truncated = Es gibt mehr Treffer, als angezeigt werden können. Suche genauer, um den Rest zu sehen.
-search-all-more-snapshots = { $count ->
-    [one] und 1 weitere Momentaufnahme
-   *[other] und { $count } weitere Momentaufnahmen
+version-modified = Geändert { $time }
+search-all-identical = { $snapshots ->
+    [one] In einer Momentaufnahme
+   *[other] Gleich in allen { $snapshots } Momentaufnahmen
 }
+search-all-summary = { $versions } Versionen in { $snapshots } Momentaufnahmen
+search-all-version-snapshots = { $count ->
+    [one] 1 Momentaufnahme
+   *[other] { $count } Momentaufnahmen
+}
+search-all-older-versions = { $count ->
+    [one] und 1 ältere Version
+   *[other] und { $count } ältere Versionen
+}
+search-all-show = Zeigen
 folder-empty = Dieser Ordner ist leer.
 versions-title = Versionen
 versions-same = { $count ->

@@ -275,10 +275,21 @@ search-all-placeholder = Jedi Momentuufnahm durchsueche
 search-all-intro = Find e Datei nach ihrem Name über jedi Momentuufnahm windurch, egal wo si gsicheret worde isch.
 search-all-none = Nüt hät i irgendere Momentuufnahm übereigstimmt.
 search-all-truncated = Es git meh Träffer, als zeigt wärde chönd. Sueche gnauer, zum de Rescht z gseh.
-search-all-more-snapshots = { $count ->
-    [one] und 1 wiiteri Momentuufnahm
-   *[other] und { $count } wiiteri Momentuufnahme
+version-modified = Gänderet { $time }
+search-all-identical = { $snapshots ->
+    [one] I einere Momentuufnahm
+   *[other] Gliich i allne { $snapshots } Momentuufnahme
 }
+search-all-summary = { $versions } Versione i { $snapshots } Momentuufnahme
+search-all-version-snapshots = { $count ->
+    [one] 1 Momentuufnahm
+   *[other] { $count } Momentuufnahme
+}
+search-all-older-versions = { $count ->
+    [one] und 1 älteri Version
+   *[other] und { $count } älteri Versione
+}
+search-all-show = Zeige
 folder-empty = De Ordner isch leer.
 versions-title = Versione
 versions-same = { $count ->

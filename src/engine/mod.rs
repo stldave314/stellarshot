@@ -30,8 +30,8 @@ mod uploads;
 
 pub use backup::{BackupReport, BackupRequest};
 pub use browse::{
-    Browser, Change, DiffEntry, EntryKind, FileVersion, GlobalMatch, GlobalSearch, MissingEntry,
-    MountEntry, TreeEntry,
+    Browser, Change, DiffEntry, EntryKind, FileVersion, GlobalMatch, GlobalSearch, MatchVersion,
+    MissingEntry, MountEntry, TreeEntry,
 };
 pub use disk_tree::{DiskEntry, list_with_sizes};
 pub use error::{EngineError, ErrorKind};

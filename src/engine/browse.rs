@@ -109,12 +109,32 @@ pub struct MissingEntry {
 pub struct GlobalMatch {
     pub path: PathBuf,
     pub kind: EntryKind,
+    /// The newest version's size.
     pub size: u64,
-    /// The IDs of the snapshots this exact path was found in, newest first,
-    /// at most [`GLOBAL_MATCH_SNAPSHOTS`] of them.
-    pub snapshots: Vec<String>,
-    /// How many snapshots it was found in, including those not listed.
+    /// Each distinct version of this path, newest first, at most
+    /// [`GLOBAL_MATCH_SNAPSHOTS`] of them: snapshots in a row that hold the
+    /// same content are one version, so a file that never changed is one
+    /// entry however many snapshots have it.
+    pub versions: Vec<MatchVersion>,
+    /// How many distinct versions there are, including those not listed.
+    pub version_count: usize,
+    /// How many snapshots it was found in.
     pub found_in: usize,
+}
+
+/// One version of a path a search found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchVersion {
+    /// The newest snapshot holding this version.
+    pub snapshot: String,
+    /// When that snapshot was taken, in Unix seconds.
+    pub time: i64,
+    pub size: u64,
+    /// The file's own modification time in that snapshot.
+    pub modified: Option<i64>,
+    /// How many snapshots in a row hold exactly this content, the newest
+    /// one included.
+    pub snapshots: usize,
 }
 
 /// What [`Browser::search_all`] found.
@@ -142,6 +162,15 @@ impl std::fmt::Debug for Browser {
             .field("snapshots", &self.snapshots.len())
             .finish()
     }
+}
+
+/// What makes two versions of a path the same: a file's data blobs, a
+/// folder's tree, and the size. Not the modification time: a file touched
+/// without changing holds the same content.
+type ContentKey<'a> = (Option<&'a Vec<rustic_core::DataId>>, Option<TreeId>, u64);
+
+fn content_key(node: &Node) -> ContentKey<'_> {
+    (node.content.as_ref(), node.subtree, node.meta.size)
 }
 
 fn kind_of(node: &rustic_core::repofile::Node) -> EntryKind {
@@ -660,7 +689,9 @@ impl Browser {
             accepted.insert(path.to_path_buf());
             true
         })?;
-        let mut by_path: BTreeMap<PathBuf, (usize, Vec<usize>)> = BTreeMap::new();
+        // Each path's (snapshot, node) pairs, newest snapshot first: the
+        // order `self.snapshots`, and so `result.matches`, are in.
+        let mut by_path: BTreeMap<PathBuf, Vec<(usize, usize)>> = BTreeMap::new();
         for (snapshot_index, hits) in result.matches.iter().enumerate() {
             for &(path_index, node_index) in hits {
                 // `find_matching_nodes` returns paths relative to the tree
@@ -668,32 +699,72 @@ impl Browser {
                 // module carries; same fix-up as `search` above.
                 reject_unsafe_relative_path(&result.paths[path_index])?;
                 let path = Path::new("/").join(&result.paths[path_index]);
-                let (_, snapshot_indices) = by_path.entry(path).or_insert((node_index, Vec::new()));
-                snapshot_indices.push(snapshot_index);
+                by_path
+                    .entry(path)
+                    .or_default()
+                    .push((snapshot_index, node_index));
             }
         }
         let matches = by_path
             .into_iter()
             .take(limit)
-            .map(|(path, (node_index, snapshot_indices))| {
-                let node = &result.nodes[node_index];
-                GlobalMatch {
-                    path,
-                    kind: kind_of(node),
-                    size: node.meta.size,
-                    found_in: snapshot_indices.len(),
-                    snapshots: snapshot_indices
-                        .into_iter()
-                        .take(GLOBAL_MATCH_SNAPSHOTS)
-                        .map(|index| self.snapshots[index].1.id.clone())
-                        .collect(),
-                }
-            })
+            .map(|(path, found)| self.global_match(path, &found, &result.nodes))
             .collect();
         Ok(GlobalSearch {
             matches,
             truncated: truncated.get(),
         })
+    }
+
+    /// One [`GlobalMatch`]: `found` is the path's (snapshot index, node
+    /// index) pairs, newest snapshot first, indexing `self.snapshots` and
+    /// `nodes`.
+    fn global_match(&self, path: PathBuf, found: &[(usize, usize)], nodes: &[Node]) -> GlobalMatch {
+        let mut versions: Vec<MatchVersion> = Vec::new();
+        let mut version_count = 0;
+        // What the version being counted holds, and the snapshot index it
+        // was last seen at: the next one only extends it if it is the very
+        // next snapshot and holds the same content, the same rule
+        // `versions_with` uses for "identical to the newer one".
+        let mut current: Option<(ContentKey<'_>, usize)> = None;
+        for &(snapshot_index, node_index) in found {
+            let node = &nodes[node_index];
+            let key = content_key(node);
+            if let Some((held, last)) = &mut current
+                && *held == key
+                && snapshot_index == *last + 1
+            {
+                *last = snapshot_index;
+                // Counted only while it is the last version listed.
+                if version_count == versions.len()
+                    && let Some(version) = versions.last_mut()
+                {
+                    version.snapshots += 1;
+                }
+                continue;
+            }
+            current = Some((key, snapshot_index));
+            version_count += 1;
+            if versions.len() < GLOBAL_MATCH_SNAPSHOTS {
+                let summary = &self.snapshots[snapshot_index].1;
+                versions.push(MatchVersion {
+                    snapshot: summary.id.clone(),
+                    time: summary.time,
+                    size: node.meta.size,
+                    modified: node.meta.mtime.map(jiff::Timestamp::as_second),
+                    snapshots: 1,
+                });
+            }
+        }
+        let newest = &nodes[found[0].1];
+        GlobalMatch {
+            path,
+            kind: kind_of(newest),
+            size: newest.meta.size,
+            versions,
+            version_count,
+            found_in: found.len(),
+        }
     }
 
     /// `path` in every snapshot that has it, newest first.

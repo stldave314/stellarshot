@@ -196,6 +196,9 @@ pub struct RestorePage {
     expanded: Option<PathBuf>,
     versions: Option<Vec<FileVersion>>,
     selection: BTreeSet<PathBuf>,
+    /// The file a search result jumped to: marked in the listing, and
+    /// scrolled to once the listing arrives, until browsing moves on.
+    highlight: Option<PathBuf>,
     // Deleted files
     scope: PathBuf,
     missing: Option<Vec<MissingEntry>>,
@@ -264,7 +267,8 @@ pub enum Message {
     GlobalSearch(String),
     GlobalSearchNow,
     GlobalFound(String, Result<GlobalSearch, EngineError>),
-    /// Jump to `path`'s folder, in `snapshot`, on the Browse tab.
+    /// Jump to `path`'s folder, in `snapshot`, on the Browse tab, with
+    /// `path` selected and marked.
     JumpToMatch(String, PathBuf),
     /// Open the restore sheet for the current tab's selection.
     RestoreSelection,
@@ -316,6 +320,9 @@ pub enum Effect {
         query: String,
     },
     Versions(PathBuf),
+    /// Scroll the Browse listing this far down, from 0 (top) to 1 (end):
+    /// to bring the file a search result jumped to into view.
+    ScrollBrowse(f32),
     Missing {
         scope: PathBuf,
         since: i64,
@@ -396,6 +403,7 @@ impl RestorePage {
             expanded: None,
             versions: None,
             selection: BTreeSet::new(),
+            highlight: None,
             scope: root,
             missing: None,
             missing_selection: BTreeSet::new(),
@@ -471,6 +479,20 @@ impl RestorePage {
         self.snapshot
             .and_then(|index| self.snapshots.get(index))
             .map(|snapshot| snapshot.id.clone())
+    }
+
+    /// Where the highlighted entry sits in `entries`, as a fraction of the
+    /// listing's height: rows are all the same height, near enough.
+    fn highlight_offset(&self, entries: &[TreeEntry]) -> Option<f32> {
+        let target = self.highlight.as_ref()?;
+        let shown = entries.len().min(RESULT_LIMIT);
+        let index = entries.iter().take(shown).position(|e| &e.path == target)?;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a row index, at most RESULT_LIMIT"
+        )]
+        let offset = index as f32 / shown.saturating_sub(1).max(1) as f32;
+        Some(offset)
     }
 
     fn list(&mut self) -> Vec<Effect> {
@@ -604,12 +626,14 @@ impl RestorePage {
                 self.snapshot = Some(index);
                 // A selection belongs to one snapshot.
                 self.selection.clear();
+                self.highlight = None;
                 self.results = None;
                 self.searching = None;
                 self.list()
             }
             Message::Open(dir) => {
                 self.dir = dir;
+                self.highlight = None;
                 self.results = None;
                 // A search still running answers for a view the user left.
                 self.searching = None;
@@ -619,6 +643,7 @@ impl RestorePage {
                 if let Some(parent) = self.dir.parent().map(Path::to_path_buf) {
                     self.dir = parent;
                 }
+                self.highlight = None;
                 self.list()
             }
             Message::Listed(snapshot, dir, result) => {
@@ -627,8 +652,9 @@ impl RestorePage {
                 }
                 match result {
                     Ok(entries) => {
+                        let scroll = self.highlight_offset(&entries);
                         self.entries = Some(entries);
-                        Vec::new()
+                        scroll.map(Effect::ScrollBrowse).into_iter().collect()
                     }
                     // Another snapshot may not have this folder: fall back to
                     // where browsing started, then to the top, before calling
@@ -826,13 +852,16 @@ impl RestorePage {
                 };
                 self.show_tab(Tab::Browse);
                 self.snapshot = Some(index);
-                self.selection.clear();
+                // Selected, ready to restore, and marked so it stands out
+                // among its neighbors.
+                self.selection = BTreeSet::from([path.clone()]);
                 self.results = None;
                 self.searching = None;
                 self.expanded = None;
                 self.dir = path
                     .parent()
                     .map_or_else(|| PathBuf::from("/"), Path::to_path_buf);
+                self.highlight = Some(path);
                 self.list()
             }
             Message::RestoreSelection => {
@@ -1251,7 +1280,11 @@ impl RestorePage {
             .spacing(spacing.space_s)
             .push(top)
             .push(self.mount_row())
-            .push(widget::scrollable(list).height(Length::Fill))
+            .push(
+                widget::scrollable(list)
+                    .id(browse_list_id())
+                    .height(Length::Fill),
+            )
             .into()
     }
 
@@ -1309,7 +1342,7 @@ impl RestorePage {
         let modified = entry.modified.map(format::local_time).unwrap_or_default();
         let is_folder = entry.kind == EntryKind::Directory;
         let download_path = entry.path.clone();
-        widget::row::with_capacity(6)
+        let row = widget::row::with_capacity(6)
             .spacing(spacing.space_s)
             .align_y(Alignment::Center)
             .push(
@@ -1326,8 +1359,14 @@ impl RestorePage {
                     .tooltip(fl!("download"))
                     .name(fl!("download"))
                     .on_press(Message::Download(download_path, is_folder)),
-            )
-            .into()
+            );
+        // Every row padded alike, so the marked one lines up with the rest.
+        let row = widget::container(row).padding([0, spacing.space_xxs]);
+        if self.highlight.as_ref() == Some(&entry.path) {
+            row.class(theme::Container::custom(highlighted)).into()
+        } else {
+            row.into()
+        }
     }
 
     fn versions_view<'a>(&'a self, path: &'a Path, _snapshot: &str) -> Element<'a, Message> {
@@ -1365,7 +1404,7 @@ impl RestorePage {
             }
             let id = version.snapshot.id.clone();
             column = column.push(
-                widget::row::with_capacity(5)
+                widget::row::with_capacity(6)
                     .spacing(spacing.space_s)
                     .align_y(Alignment::Center)
                     .push(
@@ -1373,6 +1412,12 @@ impl RestorePage {
                             .width(Length::Fill),
                     )
                     .push(widget::text::caption(format::bytes(version.size)))
+                    .push_maybe(version.modified.map(|time| {
+                        widget::text::caption(fl!(
+                            "version-modified",
+                            time = format::local_time(time)
+                        ))
+                    }))
                     .push(
                         widget::button::standard(fl!("open-copy"))
                             .on_press(Message::OpenCopy(id.clone(), path.to_path_buf())),
@@ -1612,39 +1657,77 @@ impl RestorePage {
             .into()
     }
 
+    /// One path found by searching every snapshot: where it is, then each
+    /// distinct version — when it was backed up, its size and modification
+    /// time, how many snapshots in a row kept it — with a button to show it
+    /// there. A file that never changed is one row, however many snapshots
+    /// have it.
     fn global_match_row<'a>(&self, found: &'a GlobalMatch) -> Element<'a, Message> {
         let spacing = theme::active().cosmic().spacing;
+        let is_folder = found.kind == EntryKind::Directory;
         let icon = match found.kind {
             EntryKind::Directory => "folder-symbolic",
             EntryKind::Symlink => "emblem-symbolic-link",
             _ => "text-x-generic-symbolic",
         };
-        let mut chips =
-            widget::row::with_capacity(found.snapshots.len() + 1).spacing(spacing.space_xxs);
-        for id in &found.snapshots {
-            chips = chips.push(
-                widget::button::standard(crate::engine::short_id(id).to_owned())
-                    .on_press(Message::JumpToMatch(id.clone(), found.path.clone())),
+        let summary = if found.version_count == 1 {
+            fl!("search-all-identical", snapshots = (found.found_in as i64))
+        } else {
+            fl!(
+                "search-all-summary",
+                versions = (found.version_count as i64),
+                snapshots = (found.found_in as i64)
+            )
+        };
+        let mut versions = widget::column::with_capacity(found.versions.len() + 1)
+            .spacing(spacing.space_xxxs)
+            .padding([0, 0, 0, spacing.space_xl]);
+        for version in &found.versions {
+            versions = versions.push(
+                widget::row::with_capacity(5)
+                    .spacing(spacing.space_s)
+                    .align_y(Alignment::Center)
+                    .push(widget::text::body(format::local_time(version.time)).width(Length::Fill))
+                    .push_maybe(
+                        (!is_folder).then(|| widget::text::caption(format::bytes(version.size))),
+                    )
+                    .push_maybe(version.modified.map(|time| {
+                        widget::text::caption(fl!(
+                            "version-modified",
+                            time = format::local_time(time)
+                        ))
+                    }))
+                    // With only one version, the summary above already
+                    // says how many snapshots hold it.
+                    .push_maybe((found.version_count > 1).then(|| {
+                        widget::text::caption(fl!(
+                            "search-all-version-snapshots",
+                            count = (version.snapshots as i64)
+                        ))
+                    }))
+                    .push(widget::button::standard(fl!("search-all-show")).on_press(
+                        Message::JumpToMatch(version.snapshot.clone(), found.path.clone()),
+                    )),
             );
         }
-        let unlisted = found.found_in.saturating_sub(found.snapshots.len());
-        if unlisted > 0 {
-            chips = chips.push(widget::text::caption(fl!(
-                "search-all-more-snapshots",
-                count = (unlisted as i64)
+        let older = found.version_count.saturating_sub(found.versions.len());
+        if older > 0 {
+            versions = versions.push(widget::text::caption(fl!(
+                "search-all-older-versions",
+                count = (older as i64)
             )));
         }
-        widget::column::with_capacity(2)
-            .spacing(spacing.space_xxxs)
+        widget::column::with_capacity(3)
+            .spacing(spacing.space_xxs)
             .push(
                 widget::row::with_capacity(3)
                     .spacing(spacing.space_s)
                     .align_y(Alignment::Center)
                     .push(widget::icon::from_name(icon).size(LIST_ICON_SIZE))
                     .push(widget::text::body(format::path(&found.path)).width(Length::Fill))
-                    .push(widget::text::caption(format::bytes(found.size))),
+                    .push(widget::text::caption(summary)),
             )
-            .push(chips)
+            .push(versions)
             .into()
     }
 
@@ -1993,6 +2076,31 @@ fn progress(running: &Running) -> Element<'_, Message> {
     .class(theme::Container::Card)
     .width(Length::Fill)
     .into()
+}
+
+/// The Browse listing's scrollable, so a jump from a search result can
+/// scroll the matched file into view.
+pub fn browse_list_id() -> widget::Id {
+    widget::Id::new("restore-browse-list")
+}
+
+/// A listing row standing out from its neighbors: the file a search result
+/// jumped to.
+fn highlighted(theme: &cosmic::Theme) -> cosmic::iced::widget::container::Style {
+    let cosmic = theme.cosmic();
+    let accent: cosmic::iced::Color = cosmic.accent_color().into();
+    cosmic::iced::widget::container::Style {
+        background: Some(cosmic::iced::Background::Color(cosmic::iced::Color {
+            a: 0.18,
+            ..accent
+        })),
+        border: cosmic::iced::Border {
+            color: accent,
+            width: 1.0,
+            radius: cosmic.corner_radii.radius_s.into(),
+        },
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -2819,6 +2927,55 @@ mod tests {
         assert_eq!(page.snapshot, Some(1), "aaaaaaaa is the second snapshot");
         assert_eq!(page.dir, PathBuf::from("/home/alex/project"));
         assert!(matches!(effects.as_slice(), [Effect::List { .. }]));
+    }
+
+    #[test]
+    fn jump_to_match_selects_and_marks_the_file_then_scrolls_to_it() {
+        let mut page = page_with_snapshots();
+        page.selection.insert("/elsewhere".into());
+        let target = PathBuf::from("/home/alex/project/report.txt");
+
+        page.update(Message::JumpToMatch("aaaaaaaa".into(), target.clone()));
+
+        assert_eq!(
+            page.selection,
+            BTreeSet::from([target.clone()]),
+            "only the file jumped to is selected"
+        );
+        assert_eq!(page.highlight.as_ref(), Some(&target));
+
+        let entries: Vec<TreeEntry> = ["a.txt", "b.txt", "report.txt", "z.txt", "zz.txt"]
+            .iter()
+            .map(|name| entry(&format!("/home/alex/project/{name}")))
+            .collect();
+        let effects = page.update(Message::Listed(
+            "aaaaaaaa".into(),
+            "/home/alex/project".into(),
+            Ok(entries),
+        ));
+        match effects.as_slice() {
+            [Effect::ScrollBrowse(offset)] => assert!((offset - 0.5).abs() < f32::EPSILON),
+            other => panic!("expected a scroll halfway down, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn browsing_elsewhere_drops_the_mark() {
+        let mut page = page_with_snapshots();
+        page.update(Message::JumpToMatch(
+            "aaaaaaaa".into(),
+            "/home/alex/project/report.txt".into(),
+        ));
+
+        page.update(Message::Up);
+
+        assert!(page.highlight.is_none());
+        let effects = page.update(Message::Listed(
+            "aaaaaaaa".into(),
+            "/home/alex".into(),
+            Ok(vec![entry("/home/alex/project")]),
+        ));
+        assert!(effects.is_empty(), "nothing to scroll to any more");
     }
 
     #[test]

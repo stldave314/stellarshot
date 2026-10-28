@@ -95,6 +95,13 @@ impl App {
                         },
                     )
                 }
+                restore::Effect::ScrollBrowse(offset) => cosmic::iced::widget::scrollable::snap_to(
+                    restore::browse_list_id(),
+                    cosmic::iced::widget::scrollable::RelativeOffset {
+                        x: None,
+                        y: Some(offset),
+                    },
+                ),
                 restore::Effect::Missing { scope, since } => {
                     let asked = scope.clone();
                     Task::perform(

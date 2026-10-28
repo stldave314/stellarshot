@@ -320,6 +320,18 @@ pub fn describe(kind: &EventKind) -> String {
                 reason = errors::explain(&error)
             )
         }
+        // A skip records only its kind, and these three explain themselves
+        // with a detail it does not have (the destination, the condition,
+        // the keyring's own error): each gets a sentence of its own instead.
+        EventKind::Skipped {
+            kind: ErrorKind::DestinationUnavailable,
+        } => fl!("event-skipped-unreachable"),
+        EventKind::Skipped {
+            kind: ErrorKind::ConditionsNotMet,
+        } => fl!("event-skipped-conditions"),
+        EventKind::Skipped {
+            kind: ErrorKind::KeyringUnavailable,
+        } => fl!("event-skipped-keyring"),
         EventKind::Skipped { kind } => {
             let error = EngineError::new(*kind, String::new());
             fl!("event-skipped", reason = errors::explain(&error))
@@ -377,6 +389,28 @@ pub fn describe(kind: &EventKind) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_skip_reads_as_a_whole_sentence() {
+        crate::core::localization::init();
+        for kind in [
+            ErrorKind::DestinationUnavailable,
+            ErrorKind::Locked,
+            ErrorKind::ConditionsNotMet,
+            ErrorKind::KeyringUnavailable,
+        ] {
+            let text = describe(&EventKind::Skipped { kind });
+            // An empty detail left a gap where the destination's name
+            // belonged: "Skipped:  cannot be reached".
+            let plain: String = text
+                .chars()
+                .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
+                .collect();
+            assert!(!plain.contains("  "), "{kind:?}: {plain:?}");
+            assert!(!plain.contains(": ."), "{kind:?}: {plain:?}");
+            assert!(!plain.trim_end().ends_with(':'), "{kind:?}: {plain:?}");
+        }
+    }
 
     fn event(time: i64, kind: EventKind) -> Event {
         Event {

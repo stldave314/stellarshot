@@ -34,6 +34,9 @@ fn main() -> ExitCode {
     // `--restore` opens the restore page for the selected backup once it is
     // unlocked: the "Restore Files" action.
     flags.start_restore = args.iter().any(|arg| arg == "--restore");
+    // `--back-up-all` backs up every backup, each once it is unlocked: the
+    // panel applet's "Back Up All Now".
+    flags.start_back_up_all = args.iter().any(|arg| arg == "--back-up-all");
     // `--profile <id>` selects a backup: a scheduled run's failure
     // notification opens it this way.
     flags.select = args
@@ -43,7 +46,12 @@ fn main() -> ExitCode {
         .cloned();
     // What an already-running instance is told to do instead of a second
     // window: see `Launch`'s own doc comment.
-    flags.launch = Launch::from_flags(flags.start_wizard, flags.start_restore, &flags.select);
+    flags.launch = Launch::from_flags(
+        flags.start_wizard,
+        flags.start_restore,
+        flags.start_back_up_all,
+        &flags.select,
+    );
     match cosmic::app::run_single_instance::<App>(settings, flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

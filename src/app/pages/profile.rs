@@ -249,8 +249,8 @@ pub enum Effect {
     /// Give a snapshot a new name, notes and tags.
     SetDetails(Secret, String, SnapshotDetails),
     ShowError(String, EngineError),
-    /// A backup finished at this Unix time.
-    RecordSuccess(i64),
+    /// A backup finished, taking this snapshot.
+    RecordSuccess(SnapshotSummary),
     /// Check the repository for damage.
     Check(Secret),
     /// A check finished: `Ok` if sound, the error if it found damage or
@@ -843,7 +843,7 @@ impl ProfileState {
             Ok(Event::Done { report, .. }) => {
                 let mut effects = fetch;
                 if let Some(report) = report {
-                    effects.push(Effect::RecordSuccess(report.snapshot.time));
+                    effects.push(Effect::RecordSuccess(report.snapshot.clone()));
                     effects.push(Effect::LogEvent(EventKind::BackedUp));
                 }
                 effects
@@ -1791,7 +1791,7 @@ mod tests {
         assert!(
             effects
                 .iter()
-                .any(|e| matches!(e, Effect::RecordSuccess(99)))
+                .any(|e| matches!(e, Effect::RecordSuccess(s) if s.time == 99))
         );
         assert!(
             effects

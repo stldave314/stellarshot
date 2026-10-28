@@ -654,6 +654,15 @@ applet-tooltip = Stellarshot
 applet-none = Es ist noch keine Sicherung eingerichtet.
 applet-open = Stellarshot öffnen
 applet-open-failed = Stellarshot konnte nicht gestartet werden.
+applet-back-up-all = Alle jetzt sichern
+applet-restore = Dateien wiederherstellen …
+applet-new-backup = Neue Sicherung …
+applet-quit = Stellarshot verlassen
+applet-backup-figures = { $size } · { $new ->
+    [one] { $new } neue Datei
+   *[other] { $new } neue Dateien
+}, { $changed } geändert · { $added } hinzugefügt
+applet-last-event = { $what } · { $when }
 wizard-exclude-caches = Cache-Ordner auslassen
 wizard-exclude-caches-description = Ordner überspringen, die sich mit einer CACHEDIR.TAG-Datei als temporäre Cache-Daten kennzeichnen.
 wizard-git-ignore = .gitignore beachten

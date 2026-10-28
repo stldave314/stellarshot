@@ -681,6 +681,15 @@ applet-tooltip = Stellarshot
 applet-none = No backups are set up yet.
 applet-open = Open Stellarshot
 applet-open-failed = Stellarshot could not be started.
+applet-back-up-all = Back Up All Now
+applet-restore = Restore Files…
+applet-new-backup = New Backup…
+applet-quit = Quit Stellarshot
+applet-backup-figures = { $size } · { $new ->
+    [one] { $new } new file
+   *[other] { $new } new files
+}, { $changed } changed · { $added } added
+applet-last-event = { $what } · { $when }
 snapshot-label = { $time } · { $id }
 hook-row = { $timing } · { $command }
 size-removed = −{ $size }

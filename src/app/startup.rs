@@ -74,6 +74,7 @@ pub fn get_flags() -> Flags {
         profiles_unreadable,
         start_wizard: false,
         start_restore: false,
+        start_back_up_all: false,
         select: None,
         launch: None,
     }

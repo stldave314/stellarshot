@@ -185,11 +185,19 @@ impl App {
                     self.show_error(&context, &error);
                     Task::none()
                 }
-                profile::Effect::RecordSuccess(time) => {
+                profile::Effect::RecordSuccess(snapshot) => {
                     let mut updated = profile.clone();
-                    updated.last_success = Some(time);
+                    updated.last_success = Some(snapshot.time);
                     self.upsert_profile(updated);
-                    Task::none()
+                    // Its figures, for the panel applet: off the UI thread,
+                    // since the state store takes a file lock.
+                    Task::perform(
+                        tasks::blocking(move || {
+                            run_state::record_backup(&id, &snapshot);
+                            Ok(())
+                        }),
+                        |_: Result<(), EngineError>| app(Message::Noop),
+                    )
                 }
                 // A restore page already open (perhaps restoring right now)
                 // is shown as it is, never replaced: its running restore

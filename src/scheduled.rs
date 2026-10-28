@@ -168,7 +168,7 @@ fn run(
         profile_sources: profile.sources.clone(),
         ..Job::new(location.clone(), secret.clone())
     };
-    operation(
+    let outcome = operation(
         &mut session,
         Operation::Backup,
         Job {
@@ -179,10 +179,17 @@ fn run(
     )
     .map_err(|err| Failed(Stage::Backup, err))?;
     let finished = now();
+    let last_backup = outcome
+        .report
+        .as_ref()
+        .map(|report| run_state::LastBackup::of(&report.snapshot));
     record(profile, |state| {
         state.last_success = Some(finished);
         state.failure = None;
         state.overdue_notified = false;
+        if last_backup.is_some() {
+            state.last_backup = last_backup;
+        }
     });
     event_log::record(
         &profile.id,

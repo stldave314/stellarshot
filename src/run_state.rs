@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::OVERDUE_FACTOR;
 use crate::debug::CONFIG;
-use crate::engine::{EngineError, ErrorKind};
+use crate::engine::{EngineError, ErrorKind, SnapshotSummary};
 use crate::error_log;
 use crate::profile::Profile;
 
@@ -163,6 +163,32 @@ impl Failure {
     }
 }
 
+/// What the last successful backup took in, from whichever started it:
+/// for the panel applet, which cannot open the repository to ask.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastBackup {
+    /// When its snapshot was taken, in Unix seconds.
+    pub time: i64,
+    pub files_new: u64,
+    pub files_changed: u64,
+    /// Bytes of new data it added, before compression.
+    pub data_added: u64,
+    /// Total size of everything it covers.
+    pub total_bytes: u64,
+}
+
+impl LastBackup {
+    pub fn of(snapshot: &SnapshotSummary) -> Self {
+        Self {
+            time: snapshot.time,
+            files_new: snapshot.files_new,
+            files_changed: snapshot.files_changed,
+            data_added: snapshot.data_added,
+            total_bytes: snapshot.total_bytes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunState {
     /// When a scheduled backup last finished, in Unix seconds.
@@ -194,6 +220,11 @@ pub struct RunState {
     /// success.
     #[serde(default)]
     pub overdue_notified: bool,
+    /// The last successful backup's figures, from the window or a
+    /// scheduled run. Missing from state written before it existed, and
+    /// ignored by a version that does not know it.
+    #[serde(default)]
+    pub last_backup: Option<LastBackup>,
     /// What is saved could not be read (a newer version wrote it, or it is
     /// corrupt), so this is a stand-in: never saved, and nothing can update
     /// it until [`reset`] replaces it.
@@ -308,6 +339,15 @@ pub fn save(profile_id: &str, state: &RunState) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
+/// Record what a successful backup took in. Only the applet reads it, so
+/// a failure to save is logged rather than failing the backup it describes.
+pub fn record_backup(profile_id: &str, snapshot: &SnapshotSummary) {
+    let last = LastBackup::of(snapshot);
+    if let Err(err) = update(profile_id, |state| state.last_backup = Some(last)) {
+        error_log!(CONFIG, "last backup of {profile_id} not recorded: {err}");
+    }
+}
+
 /// Change one profile's state in place. Fails, rather than saving a fresh
 /// default over data this process could not read (see [`load_checked`]):
 /// there is nothing sensible to change without first knowing what the
@@ -333,6 +373,41 @@ fn update_unlocked(profile_id: &str, change: impl FnOnce(&mut RunState)) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_saved_before_last_backup_existed_still_reads() {
+        let old = "(last_success: Some(5), total_freed: 9)";
+        let state: RunState = ron::from_str(old).unwrap();
+        assert_eq!(state.last_success, Some(5));
+        assert_eq!(state.last_backup, None);
+    }
+
+    #[test]
+    fn a_version_without_last_backup_can_still_read_state_that_has_it() {
+        // What a window from before this field reads after a newer
+        // scheduled run saved it: the field must be skipped, not make the
+        // whole state unreadable.
+        #[derive(Deserialize)]
+        struct Older {
+            last_success: Option<i64>,
+        }
+        let state = RunState {
+            last_success: Some(7),
+            last_backup: Some(LastBackup {
+                time: 7,
+                files_new: 1,
+                files_changed: 2,
+                data_added: 3,
+                total_bytes: 4,
+            }),
+            ..RunState::default()
+        };
+        let saved = ron::to_string(&state).unwrap();
+        let older: Older = ron::from_str(&saved).unwrap();
+        assert_eq!(older.last_success, Some(7));
+        let back: RunState = ron::from_str(&saved).unwrap();
+        assert_eq!(back, state);
+    }
     use crate::profile::{Destination, Profile, Schedule};
 
     #[test]

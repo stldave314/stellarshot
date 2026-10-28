@@ -18,7 +18,7 @@ impl App {
     /// repository being created or opened by the wizard, or a password
     /// change or deletion running from a dialog (any busy dialog, not only
     /// the one in front: it may be waiting behind another).
-    fn something_running(&self) -> bool {
+    pub(super) fn something_running(&self) -> bool {
         self.pages.values().any(ProfileState::is_busy)
             || self
                 .restore

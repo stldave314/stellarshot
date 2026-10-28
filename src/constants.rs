@@ -225,6 +225,11 @@ pub const WINDOW_CLOCK_TICK: std::time::Duration = std::time::Duration::from_sec
 /// popup is actually open and someone might be looking at it.
 pub const APPLET_REFRESH: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// How wide the applet's popups are, in logical pixels: room for a
+/// backup's name beside its status, with the figures under it wrapping
+/// rather than stretching the popup across the screen.
+pub const APPLET_POPUP_WIDTH: f32 = 360.0;
+
 /// How often the applet does the same while its popup is closed: a lock
 /// probe and a config read per backup are each cheap on their own, but
 /// there is no reason to spend them at all when nothing could be showing

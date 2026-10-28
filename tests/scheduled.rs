@@ -166,6 +166,13 @@ fn a_scheduled_backup_runs_checks_and_is_recorded() {
     assert_eq!(snapshots.len(), 1, "one snapshot from the scheduled run");
     let state = home.run_state(&profile.0).expect("the run is recorded");
     assert!(state.contains("last_success: Some("), "{state}");
+    // What the panel applet shows: the backup's own figures, recorded by
+    // the scheduled run itself.
+    assert!(state.contains("last_backup: Some("), "{state}");
+    assert!(
+        state.contains("files_new: 1"),
+        "one file backed up: {state}"
+    );
     assert!(
         state.contains("last_check: Some("),
         "the first run checks the repository: {state}"

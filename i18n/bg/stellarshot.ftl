@@ -654,6 +654,15 @@ applet-tooltip = Stellarshot
 applet-none = Все още няма настроено архивиране.
 applet-open = Отваряне на Stellarshot
 applet-open-failed = Stellarshot не можа да бъде стартиран.
+applet-back-up-all = Архивиране на всички сега
+applet-restore = Възстановяване на файлове…
+applet-new-backup = Ново резервно копие…
+applet-quit = Спиране на Stellarshot
+applet-backup-figures = { $size } · { $new ->
+    [one] { $new } нов файл
+   *[other] { $new } нови файла
+}, { $changed } променени · { $added } добавени
+applet-last-event = { $what } · { $when }
 wizard-exclude-caches = Пропускане на папки за кеш
 wizard-exclude-caches-description = Пропускане на всяка папка, която се обозначава като временни кеш данни с файл CACHEDIR.TAG.
 wizard-git-ignore = Спазване на .gitignore

@@ -8,7 +8,8 @@ use cosmic::cosmic_config;
 use super::config::StellarshotConfig;
 
 /// What launching `stellarshot` again asked for: the desktop entry's two
-/// actions, and a scheduled run's failure notification. Doubles as the
+/// actions, the panel applet's Back Up All Now, and a scheduled run's
+/// failure notification. Doubles as the
 /// action `CosmicFlags` forwards to an already-running instance over
 /// D-Bus (see the `CosmicFlags` impl below) — its `Display` is the wire
 /// name, `parse_activation` reads it back.
@@ -16,6 +17,11 @@ use super::config::StellarshotConfig;
 pub enum Launch {
     NewBackup,
     Restore,
+    /// Back up every backup now, each once it is unlocked.
+    BackUpAll,
+    /// Quit, as Ctrl+Q does: the applet's Quit. Only ever sent to a window
+    /// already running, never a launch flag of its own.
+    Quit,
     Profile(String),
 }
 
@@ -24,6 +30,8 @@ impl std::fmt::Display for Launch {
         f.write_str(match self {
             Self::NewBackup => "new-backup",
             Self::Restore => "restore",
+            Self::BackUpAll => "back-up-all",
+            Self::Quit => "quit",
             Self::Profile(_) => "profile",
         })
     }
@@ -31,18 +39,21 @@ impl std::fmt::Display for Launch {
 
 impl Launch {
     /// From the flags this process itself was started with: mirrors
-    /// `main.rs`'s own precedence (a new backup, then restore, then a
-    /// specific profile) so a single-instance activation asks the running
+    /// `main.rs`'s own precedence (a new backup, then restore, then backing
+    /// up everything, then a specific profile) so a single-instance activation asks the running
     /// window for exactly what a fresh launch would have done.
     pub fn from_flags(
         start_wizard: bool,
         start_restore: bool,
+        start_back_up_all: bool,
         select: &Option<String>,
     ) -> Option<Self> {
         if start_wizard {
             Some(Self::NewBackup)
         } else if start_restore {
             Some(Self::Restore)
+        } else if start_back_up_all {
+            Some(Self::BackUpAll)
         } else {
             select.clone().map(Self::Profile)
         }
@@ -56,6 +67,8 @@ impl Launch {
         match action {
             "new-backup" => Some(Self::NewBackup),
             "restore" => Some(Self::Restore),
+            "back-up-all" => Some(Self::BackUpAll),
+            "quit" => Some(Self::Quit),
             "profile" => args.first().cloned().map(Self::Profile),
             _ => None,
         }
@@ -75,7 +88,9 @@ pub struct Flags {
     pub select: Option<String>,
     /// Open the restore page for the selected backup once it is unlocked.
     pub start_restore: bool,
-    /// The same three flags above, folded into one: what `CosmicFlags`
+    /// Back up every backup as soon as each is unlocked.
+    pub start_back_up_all: bool,
+    /// The same four flags above, folded into one: what `CosmicFlags`
     /// forwards to an already-running instance instead of starting a
     /// second one (see [`super::App::dbus_activation`]). Kept alongside them,
     /// not derived from `App` at the point `CosmicFlags` needs it, since
@@ -117,24 +132,28 @@ mod tests {
     #[test]
     fn a_launch_survives_the_round_trip_to_wire_strings_and_back() {
         let cases = [
-            (true, false, &None, Some(Launch::NewBackup)),
-            (false, true, &None, Some(Launch::Restore)),
+            (true, false, false, &None, Some(Launch::NewBackup)),
+            (false, true, false, &None, Some(Launch::Restore)),
+            (false, false, true, &None, Some(Launch::BackUpAll)),
             (
+                false,
                 false,
                 false,
                 &Some("home".to_owned()),
                 Some(Launch::Profile("home".to_owned())),
             ),
-            (false, false, &None, None),
+            (false, false, false, &None, None),
         ];
-        for (start_wizard, start_restore, select, expected) in cases {
-            let launch = Launch::from_flags(start_wizard, start_restore, select);
+        for (start_wizard, start_restore, back_up_all, select, expected) in cases {
+            let launch = Launch::from_flags(start_wizard, start_restore, back_up_all, select);
             assert_eq!(launch, expected);
             let Some(launch) = launch else { continue };
             let action = launch.to_string();
             let args: Vec<String> = match &launch {
                 Launch::Profile(id) => vec![id.clone()],
-                Launch::NewBackup | Launch::Restore => Vec::new(),
+                Launch::NewBackup | Launch::Restore | Launch::BackUpAll | Launch::Quit => {
+                    Vec::new()
+                }
             };
             assert_eq!(
                 Launch::from_wire(&action, &args),
@@ -150,12 +169,24 @@ mod tests {
         // than one, a new backup wins, then restore, then a profile ID —
         // the same order `main` checks them in.
         assert_eq!(
-            Launch::from_flags(true, true, &Some("x".to_owned())),
+            Launch::from_flags(true, true, true, &Some("x".to_owned())),
             Some(Launch::NewBackup)
         );
         assert_eq!(
-            Launch::from_flags(false, true, &Some("x".to_owned())),
+            Launch::from_flags(false, true, true, &Some("x".to_owned())),
             Some(Launch::Restore)
+        );
+        assert_eq!(
+            Launch::from_flags(false, false, true, &Some("x".to_owned())),
+            Some(Launch::BackUpAll)
+        );
+    }
+
+    #[test]
+    fn quit_reads_back_from_its_wire_name() {
+        assert_eq!(
+            Launch::from_wire(&Launch::Quit.to_string(), &[]),
+            Some(Launch::Quit)
         );
     }
 

@@ -24,8 +24,12 @@ preview before anything gets written.
   the window is open. Skips a slot on battery or an untrusted network if you
   ask it to, and catches up the next time you're back.
 - **Get files back with confidence.** Browse any snapshot, see every version
-  of a file, search your whole history at once, compare two snapshots, or
-  preview a restore before anything is written.
+  of a file, search your whole history at once — each file's versions laid
+  out by size and date, identical ones shown once — compare two snapshots,
+  or preview a restore before anything is written.
+- **Keep an eye on it from the panel.** The applet shows what each backup
+  last did and when, and its right-click menu backs everything up, opens a
+  restore or starts a new backup without opening the window first.
 - **No lock-in, ever.** Every backup is a standard restic repository. If
   Stellarshot disappeared tomorrow, the `restic` and `rustic` command-line
   tools could still read every snapshot you ever made.
@@ -525,10 +529,24 @@ while a scheduled backup is running, you are told it is busy.
 <summary><strong>The panel applet</strong></summary>
 
 Add **Stellarshot** from COSMIC Settings' panel applet list for a status icon:
-plain when everything is fine, a sync icon while a backup (scheduled or
-started from the window) is running, and a warning icon if one has failed or
-fallen overdue. Its popup lists every backup with when each last succeeded,
-and **Open Stellarshot** and **Quit** buttons.
+Stellarshot's own star-in-a-circular-arrow when everything is fine, a sync
+icon while a backup (scheduled or started from the window) is running, and a
+warning icon if one has failed or fallen overdue.
+
+Clicking it opens a popup listing every backup with its status, when it last
+backed up, that backup's figures (total size, new and changed files, and the
+data it added), and the newest entry in its history when that is something
+else — a check, a clean-up, a skipped run. Click a backup to open the window
+on it. Below the list are **Back Up All Now**, **Open Stellarshot** and
+**Quit Stellarshot**.
+
+Right-clicking it opens a menu of the same actions without the list:
+**Open Stellarshot**, **Back Up All Now**, **Restore Files…**, **New
+Backup…** and **Quit Stellarshot**. **Back Up All Now** opens the window and starts every
+backup that has something to back up and is not already busy, each as soon as
+its remembered password opens it; one with no remembered password waits on its
+page for you to type it. A backup's figures appear once it has backed up with
+this version.
 
 Closing the window minimizes it to the panel rather than quitting — the
 process, and any backup in progress, keeps running — while the applet is on a
@@ -539,12 +557,12 @@ panel, closing the window quits, and so does the app once the last work it
 was watching ends: nothing would show it still there. Opening Stellarshot
 again, from the applet or the launcher, brings the same window back rather
 than starting a second one, asking the keyring (or you) for the passwords
-again. **Quit** (in the window's menu, <kbd>Ctrl</kbd>+<kbd>Q</kbd>,
-or the applet's popup) closes it for real; if a backup is running it asks
-first, since the backup keeps going in its own process either way, but
-nothing is left watching it or showing its progress. Quitting the applet
-itself never affects a backup, which the window (or a scheduled run) runs
-independently of it.
+again. **Quit** (in the window's menu, <kbd>Ctrl</kbd>+<kbd>Q</kbd>, or
+**Quit Stellarshot** in the applet) closes it for real; if a backup is running
+it asks first, in the window, since the backup keeps going in its own process
+either way, but nothing is left watching it or showing its progress. The
+applet itself stays on the panel, showing each backup's status, and a
+scheduled backup runs whether or not the window is open.
 
 </details>
 
@@ -686,6 +704,7 @@ from **Manage Snapshots…** (see [How snapshots work](#how-snapshots-work)).
 | `stellarshot` | Open the window, or bring an already-running one to the front |
 | `stellarshot --new-backup` | Open the window straight into the setup wizard (the launcher's **New Backup** action) |
 | `stellarshot --restore` | Open the selected backup's restore page as soon as it is unlocked (the launcher's **Restore Files** action) |
+| `stellarshot --back-up-all` | Back up every backup now, each as soon as it is unlocked (the applet's **Back Up All Now**) |
 | `stellarshot --profile <id>` | Open the window on one backup (what clicking a failure notification does) |
 | `stellarshot --scheduled <id>` | Run one backup as its timer does: back up, forget, check if due, free space. Exits 0 when skipped because the destination is unreachable or a laptop condition is not met |
 | `stellarshot-applet` | The panel applet; run by the panel itself, not normally launched directly |
@@ -1151,9 +1170,11 @@ tagged by category (`ENGINE`, `UI`, `CONFIG`, `SCHED`, `MOUNT`) so you can
   timers  ── systemd user timers run `stellarshot --scheduled <id>`, which
              backs up through the same runner as the window's child process
   applet  ── stellarshot-applet, a separate process the panel runs. Reads
-             each backup's status straight off disk (run history, and
-             whether something holds its repository's lock), the same way
-             the window itself does; no D-Bus link to the window at all
+             each backup's status straight off disk (run history, the last
+             backup's figures, and whether something holds its repository's
+             lock), the same way the window itself does. What it asks the
+             window to do goes through `stellarshot --back-up-all` and the
+             other launch flags, never a link of its own
 ```
 
 Writes (backup, restore, check, clean-up, deleting snapshots) run in a child

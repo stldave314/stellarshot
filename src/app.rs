@@ -325,6 +325,30 @@ impl App {
         self.run_profile_effects(&id, effects)
     }
 
+    /// Back up every backup now: those already unlocked at once, the rest
+    /// as soon as their remembered password opens them. One with nothing
+    /// remembered waits on its page for the password; one already running
+    /// something, or with nothing to back up, is left alone.
+    fn back_up_all(&mut self) -> Task<Message> {
+        let selected = self.selected().map(str::to_owned);
+        let mut tasks = Vec::new();
+        for profile in self.config.profiles.clone() {
+            let page = self.pages.entry(profile.id.clone()).or_default();
+            let mut effects = if page.is_unlocked() {
+                page.back_up(&profile)
+            } else {
+                page.back_up_when_unlocked = true;
+                page.activate(&profile)
+            };
+            // Only the page on screen has an unlock field to focus.
+            if selected.as_deref() != Some(profile.id.as_str()) {
+                effects.retain(|effect| !matches!(effect, profile::Effect::FocusUnlock));
+            }
+            tasks.push(self.run_profile_effects(&profile.id, effects));
+        }
+        Task::batch(tasks)
+    }
+
     /// Read every backup's history from disk, off the UI thread: reloaded
     /// every time the History page is opened rather than cached, since
     /// nothing about the page's own state can go stale that way.
@@ -489,6 +513,22 @@ impl Application for App {
     /// or a notification's `--profile <id>`), does that too, the same as
     /// [`Self::init`] would have for a fresh start.
     fn dbus_activation(&mut self, msg: cosmic::dbus_activation::Message) -> Task<Self::Message> {
+        // D-Bus carries only plain strings either way, whatever `Flags`'s
+        // own `CosmicFlags::SubCommand`/`Args` are typed as on the sending
+        // side (see `Launch`'s own doc comment) — never automatically
+        // turned back into `Launch` the way sending it out was typed.
+        let launch = match msg.msg {
+            cosmic::dbus_activation::Details::ActivateAction { action, args } => {
+                Launch::from_wire(&action, &args)
+            }
+            cosmic::dbus_activation::Details::Activate
+            | cosmic::dbus_activation::Details::Open { .. } => None,
+        };
+        // The applet's Quit: straight out when nothing would be cut off,
+        // without bringing a window up first only to close it again.
+        if launch == Some(Launch::Quit) && !self.something_running() {
+            return cosmic::iced::exit();
+        }
         let raise = if let Some(id) = self.core.main_window_id() {
             Task::batch([window::gain_focus(id), window::minimize(id, false)])
         } else {
@@ -506,17 +546,6 @@ impl Application for App {
             self.core.set_main_window_id(Some(id));
             open.map(|_| cosmic::Action::App(Message::Noop))
         };
-        // D-Bus carries only plain strings either way, whatever `Flags`'s
-        // own `CosmicFlags::SubCommand`/`Args` are typed as on the sending
-        // side (see `Launch`'s own doc comment) — never automatically
-        // turned back into `Launch` the way sending it out was typed.
-        let launch = match msg.msg {
-            cosmic::dbus_activation::Details::ActivateAction { action, args } => {
-                Launch::from_wire(&action, &args)
-            }
-            cosmic::dbus_activation::Details::Activate
-            | cosmic::dbus_activation::Details::Open { .. } => None,
-        };
         let requested = match launch {
             Some(Launch::NewBackup) => self.update(Message::NewBackup),
             Some(Launch::Restore) => match self.selected().map(str::to_owned) {
@@ -533,6 +562,9 @@ impl Application for App {
                 }
                 None => Task::none(),
             },
+            Some(Launch::BackUpAll) => self.back_up_all(),
+            // Something is running: ask first, in the window just raised.
+            Some(Launch::Quit) => self.update(Message::Quit),
             Some(Launch::Profile(id)) => {
                 self.rebuild_nav(Some(&id));
                 self.activate_selected()
@@ -568,6 +600,7 @@ impl Application for App {
     fn init(core: Core, flags: Self::Flags) -> (Self, Task<Self::Message>) {
         let flags_start_wizard = flags.start_wizard;
         let flags_start_restore = flags.start_restore;
+        let flags_start_back_up_all = flags.start_back_up_all;
         let about = About::default()
             .name(fl!("stellarshot"))
             .icon(widget::icon::from_name(APP_ID))
@@ -636,6 +669,11 @@ impl Application for App {
         // A REST server backup cannot be opened before its password is read.
         let secure = app.secure_rest_passwords();
         let activate = secure.chain(app.activate_selected());
+        let activate = if flags_start_back_up_all {
+            activate.chain(app.back_up_all())
+        } else {
+            activate
+        };
         // Timers follow the settings, which may have changed while the
         // window was closed, or the program may have moved. Skipped
         // entirely while `profiles_read_only` is set: reconciling against

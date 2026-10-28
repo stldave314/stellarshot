@@ -10,8 +10,9 @@
 use serde::Serialize;
 
 use crate::engine::lock;
+use crate::event_log;
 use crate::profile::Profile;
-use crate::run_state::{self, RunState};
+use crate::run_state::{self, LastBackup, RunState};
 
 /// One backup's status right now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -28,6 +29,10 @@ pub struct Status {
     pub overdue: bool,
     /// The repository's last check found damage.
     pub damaged: bool,
+    /// The last successful backup's figures, once one has recorded them.
+    pub last_backup: Option<LastBackup>,
+    /// The newest entry in the backup's history: what last happened.
+    pub last_event: Option<event_log::Event>,
 }
 
 impl Status {
@@ -51,6 +56,8 @@ pub fn of(profile: &Profile, run: &RunState, now: i64) -> Status {
         failed: run.current_failure(profile.last_success, now).is_some(),
         overdue: run_state::is_overdue(profile, run, now),
         damaged: run.damaged,
+        last_backup: run.last_backup,
+        last_event: None,
     }
 }
 
@@ -58,7 +65,10 @@ pub fn of(profile: &Profile, run: &RunState, now: i64) -> Status {
 pub fn all(profiles: &[Profile], now: i64) -> Vec<Status> {
     profiles
         .iter()
-        .map(|profile| of(profile, &run_state::load(&profile.id), now))
+        .map(|profile| Status {
+            last_event: event_log::load(&profile.id).pop(),
+            ..of(profile, &run_state::load(&profile.id), now)
+        })
         .collect()
 }
 

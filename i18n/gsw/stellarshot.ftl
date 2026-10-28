@@ -654,6 +654,15 @@ applet-tooltip = Stellarshot
 applet-none = Es isch na kei Sicherig igrichtet.
 applet-open = Stellarshot öffne
 applet-open-failed = Stellarshot het nöd chöne gstartet wärde.
+applet-back-up-all = Alli jetzt sichere
+applet-restore = Dateie widerherstelle …
+applet-new-backup = Neui Sicherig …
+applet-quit = Stellarshot verlah
+applet-backup-figures = { $size } · { $new ->
+    [one] { $new } neui Datei
+   *[other] { $new } neui Dateie
+}, { $changed } gänderet · { $added } dezuecho
+applet-last-event = { $what } · { $when }
 wizard-exclude-caches = Cache-Ordner uslah
 wizard-exclude-caches-description = Ordner überspringe, wo sich mit re CACHEDIR.TAG-Datei als temporäri Cache-Date kennzeichnet.
 wizard-git-ignore = .gitignore beachte

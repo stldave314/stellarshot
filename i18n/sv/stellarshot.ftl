@@ -654,6 +654,15 @@ applet-tooltip = Stellarshot
 applet-none = Ingen säkerhetskopiering är inställd ännu.
 applet-open = Öppna Stellarshot
 applet-open-failed = Stellarshot kunde inte startas.
+applet-back-up-all = Säkerhetskopiera alla nu
+applet-restore = Återställ filer…
+applet-new-backup = Ny säkerhetskopia…
+applet-quit = Avsluta Stellarshot
+applet-backup-figures = { $size } · { $new ->
+    [one] { $new } ny fil
+   *[other] { $new } nya filer
+}, { $changed } ändrade · { $added } tillagt
+applet-last-event = { $what } · { $when }
 wizard-exclude-caches = Utelämna cachemappar
 wizard-exclude-caches-description = Hoppa över mappar som märker sig själva som utbytbar cachedata med en CACHEDIR.TAG-fil.
 wizard-git-ignore = Följ .gitignore

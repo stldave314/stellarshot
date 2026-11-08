@@ -82,7 +82,7 @@ gethostname = "1"
 tar = "0.4"
 flate2 = "1"
 # Desktop notifications; already built for the keyring and the portals.
-zbus = { version = "5", default-features = false, features = ["tokio"] }
+zbus = { version = "6", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
 # Stopping a backup together with the rclone process rustic starts under it.
 rustix = { version = "1", features = ["process", "fs"] }
